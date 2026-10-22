@@ -269,6 +269,8 @@ kbd { font-family: var(--font-display); font-size: 0.8em; color: #fff; border: 1
   #zone .net { font-size: 12px; white-space: normal; }
   #chat { top: 136px; bottom: auto; left: var(--gap); right: var(--gap); width: auto; min-width: 0; font-size: 14px; }
   #chat .log { max-height: 128px; }
+  /* notices go under the chat instead of over it */
+  body:has(#chat:not(.hidden)) #feed { top: 336px; }
   #scoreboard { top: 130px; }
   #scoreboard table { font-size: 13px; }
   #throttle { height: 84px; width: 12px; }
@@ -294,4 +296,10 @@ kbd { font-family: var(--font-display); font-size: 0.8em; color: #fff; border: 1
   #chat .log { max-height: 66px; }
   #throttle { height: 70px; }
   .big { font-size: 24px; }
+}
+
+/* short and narrow: keep the chat to the left of the radar */
+@media (max-width: 820px) and (max-height: 520px) {
+  #chat { right: auto; width: calc(50% - 110px); }
+  body:has(#chat:not(.hidden)) #feed { top: 96px; left: auto; right: var(--gap); transform: none; max-width: calc(50% - 110px); }
 }
