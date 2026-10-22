@@ -1,0 +1,94 @@
+import { describe, expect, it } from 'vitest';
+import { Vector3 } from 'three';
+import { World, TICK_DT } from '../src/shared/sim/world';
+import { buildZone } from '../src/shared/sim/zone';
+import { SHIP_CLASSES } from '../src/shared/sim/shipClasses';
+import { forwardOf } from '../src/shared/math';
+
+function emptyWorld() {
+  const zone = buildZone(1);
+  zone.colliders.length = 0; // open space for isolated physics tests
+  return new World(zone);
+}
+const run = (w: World, seconds: number) => {
+  for (let i = 0; i < Math.round(seconds / TICK_DT); i++) w.step();
+};
+
+describe('ship physics', () => {
+  it('accelerates along -Z with inertia up to the throttle speed', () => {
+    const w = emptyWorld();
+    const s = w.spawnShip({ classId: 'falcon', faction: 'union', name: 't', position: new Vector3(5e4, 0, 0) });
+    s.input.throttle = 1;
+    run(w, 0.5);
+    const early = s.velocity.length();
+    expect(early).toBeGreaterThan(20);
+    expect(early).toBeLessThan(SHIP_CLASSES.falcon.maxSpeed); // not instantaneous
+    run(w, 5);
+    expect(s.velocity.z).toBeCloseTo(-SHIP_CLASSES.falcon.maxSpeed, 0);
+    expect(Math.abs(s.velocity.x)).toBeLessThan(1e-6);
+  });
+
+  it('boost raises top speed and drains energy', () => {
+    const w = emptyWorld();
+    const s = w.spawnShip({ classId: 'falcon', faction: 'union', name: 't', position: new Vector3(5e4, 0, 0) });
+    s.input.throttle = 1;
+    s.input.boost = true;
+    run(w, 1.5);
+    expect(s.velocity.length()).toBeGreaterThan(SHIP_CLASSES.falcon.maxSpeed);
+    expect(s.energy).toBeLessThan(SHIP_CLASSES.falcon.energy);
+  });
+
+  it('turning with flight assist produces drift that decays', () => {
+    const w = emptyWorld();
+    const s = w.spawnShip({ classId: 'falcon', faction: 'union', name: 't', position: new Vector3(5e4, 0, 0) });
+    s.input.throttle = 1;
+    run(w, 5);
+    s.input.yaw = 1;
+    run(w, 1.0);
+    s.input.yaw = 0;
+    const fwd = forwardOf(s.rotation);
+    const lateral = s.velocity.clone().sub(fwd.clone().multiplyScalar(s.velocity.dot(fwd))).length();
+    expect(lateral).toBeGreaterThan(10); // velocity lags the nose: inertia
+    run(w, 4);
+    const fwd2 = forwardOf(s.rotation);
+    const lateral2 = s.velocity.clone().sub(fwd2.clone().multiplyScalar(s.velocity.dot(fwd2))).length();
+    expect(lateral2).toBeLessThan(1);
+  });
+
+  it('flight assist off keeps drifting (Newtonian)', () => {
+    const w = emptyWorld();
+    const s = w.spawnShip({ classId: 'falcon', faction: 'union', name: 't', position: new Vector3(5e4, 0, 0) });
+    s.input.throttle = 1;
+    run(w, 2);
+    s.input.flightAssist = false;
+    s.input.throttle = 0;
+    const v = s.velocity.clone();
+    s.input.yaw = 1;
+    run(w, 1);
+    expect(s.velocity.distanceTo(v)).toBeLessThan(1e-6);
+  });
+
+  it('yaw right turns the nose toward +X, pitch up toward +Y', () => {
+    const w = emptyWorld();
+    const a = w.spawnShip({ classId: 'falcon', faction: 'union', name: 'a', position: new Vector3(5e4, 0, 0) });
+    const b = w.spawnShip({ classId: 'falcon', faction: 'union', name: 'b', position: new Vector3(-5e4, 0, 0) });
+    a.input.yaw = 1;
+    b.input.pitch = 1;
+    run(w, 0.4);
+    expect(forwardOf(a.rotation).x).toBeGreaterThan(0.1);
+    expect(forwardOf(b.rotation).y).toBeGreaterThan(0.1);
+  });
+
+  it('bounces off asteroids and takes impact damage', () => {
+    const zone = buildZone(1);
+    zone.colliders.length = 0;
+    zone.colliders.push({ kind: 'asteroid', center: new Vector3(0, 0, -300), radius: 50 });
+    const w = new World(zone);
+    const s = w.spawnShip({ classId: 'falcon', faction: 'union', name: 't', position: new Vector3(0, 0, 0), velocity: new Vector3(0, 0, -200) });
+    s.input.throttle = 1;
+    run(w, 2);
+    expect(s.position.distanceTo(new Vector3(0, 0, -300))).toBeGreaterThanOrEqual(50 + SHIP_CLASSES.falcon.radius - 0.01);
+    expect(s.shield + s.hull).toBeLessThan(SHIP_CLASSES.falcon.shield + SHIP_CLASSES.falcon.hull);
+    expect(w.drainEvents().some((e) => e.type === 'collision')).toBe(true);
+  });
+});
