@@ -19,6 +19,7 @@ import { ShipView } from './render/ShipView';
 import { buildSky, type SkyResult } from './render/Sky';
 import { SpaceDust } from './render/SpaceDust';
 import { Station } from './render/Station';
+import type { Settings } from './settings';
 
 export interface GameOptions {
   quality: 'low' | 'high';
@@ -60,11 +61,13 @@ export class Game {
   private respawnIn = 0;
   private seq = 0;
   private targetId: number | null = null;
-  private clock = new THREE.Clock();
+  private timer = new THREE.Timer();
   private fps = 60;
   private alarmIn = 0;
   private time = 0;
   running = false;
+  /** Pause menu open: the local simulation does not advance. */
+  paused = false;
   private lastMe: InterpolatedShip | null = null;
   private damageFx = 0;
   private maxPixelRatio: number;
@@ -72,9 +75,9 @@ export class Game {
   private perfTimer = 0;
   private perfFrames = 0;
   /** Exposed for automated smoke tests. */
-  readonly debug = { frames: 0, ships: 0, bolts: 0, events: 0, explosions: 0 };
+  readonly debug = { frames: 0, ships: 0, bolts: 0, events: 0, explosions: 0, myShots: 0, myHits: 0, myKills: 0, hitsTaken: 0 };
 
-  constructor(canvas: HTMLCanvasElement, private transport: Transport, private opts: GameOptions) {
+  constructor(canvas: HTMLCanvasElement, private transport: Transport, private opts: GameOptions, settings: Settings) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
     this.maxPixelRatio = Math.min(window.devicePixelRatio, opts.quality === 'high' ? 1.5 : 1);
     this.pixelRatio = this.maxPixelRatio;
@@ -87,7 +90,9 @@ export class Game {
     this.cam = new ChaseCamera(window.innerWidth / window.innerHeight);
     this.scene.add(this.cam.camera);
     this.post = new PostFX(this.renderer, this.scene, this.cam.camera, opts.quality === 'high' ? 4 : 0);
-    this.input = new InputManager(canvas);
+    this.input = new InputManager(canvas, settings.bindings);
+    this.applySettings(settings);
+    this.timer.connect(document);
     this.scene.add(this.lasers.group, this.effects.group, this.dust.lines);
 
     window.addEventListener('resize', () => this.resize());
@@ -159,24 +164,52 @@ export class Game {
     this.audio.start();
   }
 
+  applySettings(s: Settings) {
+    this.input.bindings = s.bindings;
+    this.input.invertY = s.invertY;
+    this.input.sensitivity = s.sensitivity;
+    this.audio.setVolume(s.volume, s.muted);
+    this.hud.setBindings(s.bindings);
+  }
+
+  setPaused(p: boolean) {
+    this.paused = p;
+    this.input.enabled = !p;
+    this.input.releaseAll();
+    this.audio.setPaused(p);
+    this.hud.setPaused(p);
+  }
+
   /** One frame. Called from requestAnimationFrame. */
   frame() {
-    const dt = Math.min(this.clock.getDelta(), 0.1);
+    this.timer.update();
+    const dt = Math.min(this.timer.getDelta(), 0.1);
     this.time += dt;
     this.fps += (1 / Math.max(dt, 1e-4) - this.fps) * 0.05;
     this.debug.frames++;
 
     // 1) Input → server
     const input = this.input.update(dt);
-    if (this.running) {
+    if (this.running && !this.paused) {
       this.transport.send({ t: 'input', seq: ++this.seq, input });
     }
-    if (this.input.consume('KeyT')) this.cycleTarget();
-    if (this.input.consume('KeyV')) this.cam.cycleMode();
-    if (this.input.consume('KeyM')) this.audio.toggleMute();
+    if (this.input.consume('target')) this.cycleTarget();
+    if (this.input.consume('camera')) {
+      this.cam.cycleMode();
+      this.hud.notice(`Caméra : ${{ chase: 'poursuite', close: 'proche', cinematic: 'cinématique' }[this.cam.mode]}`, 'info');
+    }
+    if (this.input.consume('mute')) {
+      this.audio.toggleMute();
+      this.hud.notice(this.audio.muted ? 'Son coupé' : 'Son activé', 'info');
+    }
     this.input.endFrame();
 
-    // 2) Advance the (local) server and receive messages
+    // 2) Advance the (local) server and receive messages. While paused the
+    //    simulation is frozen and the render clock stops with it.
+    if (this.paused) {
+      this.renderPaused(dt);
+      return;
+    }
     this.transport.update(dt);
     const latest = this.buffer.latest;
     if (!latest || !this.zone) {
@@ -291,6 +324,18 @@ export class Game {
     this.post.render(this.time, this.damageFx);
   }
 
+  /** Paused frame: same scene, no simulation, no clock advance. */
+  private renderPaused(dt: number) {
+    if (!this.zone) {
+      this.renderer.render(this.scene, this.cam.camera);
+      return;
+    }
+    this.sky?.update(this.cam.camera);
+    this.effects.update(0);
+    this.hud.updatePaused(dt);
+    this.post.render(this.time, 0);
+  }
+
   /**
    * Dynamic resolution: every 2 s, lower the render scale when the frame rate
    * stays under 45 FPS and raise it again above 58 FPS.
@@ -324,6 +369,10 @@ export class Game {
       case 'shot': {
         this.lasers.add(e.projectile, e.faction, e.pos, e.vel, time, e.life);
         this.debug.bolts++;
+        if (e.shooter === this.myShipId) {
+          this.debug.myShots++;
+          this.hud.fired();
+        }
         _p.set(...e.pos);
         this.effects.muzzle(_p, new THREE.Vector3(...e.vel).multiplyScalar(0.05), e.faction === 'union' ? UNION_BOLT : RAIDER_BOLT);
         this.audio.laser(_p.distanceTo(camPos), e.faction !== 'union');
@@ -342,12 +391,14 @@ export class Game {
           this.audio.hullHit(_p.distanceTo(camPos));
         }
         if (e.target === this.myShipId) {
+          this.debug.hitsTaken++;
           this.hud.damageTaken(e.damage, e.shield);
           this.cam.addShake(e.shield ? 0.12 : 0.3);
           if (!e.shield) this.damageFx = Math.min(1, this.damageFx + 0.3);
         }
         if (e.attacker === this.myShipId) {
-          this.hud.hitConfirm();
+          this.debug.myHits++;
+          this.hud.hitConfirm(e.shield);
           this.audio.hitMarker();
           if (this.targetId === null) this.targetId = e.target;
         }
@@ -373,6 +424,10 @@ export class Game {
         const d = _p.distanceTo(camPos);
         this.audio.explosion(d, big);
         this.cam.addShake(Math.max(0, 1 - d / 900) * (big ? 1.2 : 0.8));
+        if (e.by !== null && e.by === this.myShipId) {
+          this.debug.myKills++;
+          this.hud.killConfirm();
+        }
         if (e.ship === this.myShipId) {
           this.cam.addShake(1.5);
           this.hud.notice('Coque détruite — éjection', 'warn');

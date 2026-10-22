@@ -9,6 +9,10 @@ import type { ZoneDef } from './zone';
 
 export const TICK_RATE = 60;
 export const TICK_DT = 1 / TICK_RATE;
+/** Energy recharges only after the guns have been silent this long (s). */
+export const ENERGY_REGEN_DELAY = 0.6;
+/** After emptying the capacitor, guns come back online at this energy fraction. */
+export const WEAPON_UNLOCK_FRACTION = 0.3;
 
 const _p0 = new Vector3();
 const _muzzle = new Vector3();
@@ -67,6 +71,8 @@ export class World {
       weaponCooldown: 0,
       nextHardpoint: 0,
       sinceDamage: 999,
+      sinceFire: 999,
+      weaponsLocked: false,
       lastAttacker: null,
     };
     this.ships.set(ship.id, ship);
@@ -114,9 +120,11 @@ export class World {
     if (ship.sinceDamage > cls.shieldDelay) {
       ship.shield = Math.min(cls.shield, ship.shield + cls.shieldRegen * dt);
     }
-    if (!ship.boosting) {
+    ship.sinceFire += dt;
+    if (!ship.boosting && ship.sinceFire > ENERGY_REGEN_DELAY) {
       ship.energy = Math.min(cls.energy, ship.energy + cls.energyRegen * dt);
     }
+    if (ship.weaponsLocked && ship.energy >= cls.energy * WEAPON_UNLOCK_FRACTION) ship.weaponsLocked = false;
 
     // Static collisions: push out along the normal and take damage from impact speed.
     const nearby = this.grid.query(ship.position, cls.radius + 2);
@@ -144,10 +152,15 @@ export class World {
   private fireWeapons(ship: Ship, dt: number) {
     const w = SHIP_CLASSES[ship.classId].weapon;
     ship.weaponCooldown = Math.max(0, ship.weaponCooldown - dt);
-    if (!ship.input.fire || ship.weaponCooldown > 0 || ship.energy < w.energyCost) return;
+    if (!ship.input.fire || ship.weaponCooldown > 0 || ship.weaponsLocked) return;
+    if (ship.energy < w.energyCost) {
+      ship.weaponsLocked = true;
+      return;
+    }
 
     ship.weaponCooldown += w.interval;
     ship.energy -= w.energyCost;
+    ship.sinceFire = 0;
     const hp = w.hardpoints[ship.nextHardpoint % w.hardpoints.length];
     ship.nextHardpoint++;
     _muzzle.set(hp[0], hp[1], hp[2]).applyQuaternion(ship.rotation).add(ship.position);

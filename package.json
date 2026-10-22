@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "ui-check": "node scripts/ui-check.mjs"
   },
   "dependencies": {
     "three": "^0.186.1"

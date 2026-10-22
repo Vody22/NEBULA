@@ -98,7 +98,7 @@ uniform float uInner;
 uniform float uOuter;
 varying vec3 vObj;
 varying vec3 vPosW;
-float hash(float n){ return fract(sin(n)*43758.5453); }
+float hash(float p){ p = fract(p * 0.1031); p *= p + 33.33; p *= p + p; return fract(p); }
 void main(){
   float r = length(vPosW - uPlanetPos);
   float t = (r - uInner) / (uOuter - uInner);

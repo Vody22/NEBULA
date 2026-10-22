@@ -41,7 +41,7 @@ function paint(key: string, base: string, accent: string, glowColor: THREE.Color
       envMapIntensity: 2.4,
       emissive: new THREE.Color(0.05, 0.25, 0.35),
     }),
-    glow: new THREE.MeshBasicMaterial({ color: glowColor.clone().multiplyScalar(0.6), toneMapped: false }),
+    glow: new THREE.MeshBasicMaterial({ color: glowColor.clone().multiplyScalar(0.45), toneMapped: false }),
   };
   paintCache.set(key, p);
   return p;

@@ -9,6 +9,8 @@ export class GameAudio {
   private engine?: { osc: OscillatorNode; osc2: OscillatorNode; gain: GainNode; filter: BiquadFilterNode };
   private lastLaser = 0;
   muted = false;
+  volume = 0.7;
+  private paused = false;
 
   start() {
     if (this.ctx) return;
@@ -19,7 +21,7 @@ export class GameAudio {
     }
     const ctx = this.ctx;
     this.master = ctx.createGain();
-    this.master.gain.value = 0.5;
+    this.master.gain.value = this.effectiveGain();
     const comp = ctx.createDynamicsCompressor();
     this.master.connect(comp).connect(ctx.destination);
     this.noise = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
@@ -46,9 +48,29 @@ export class GameAudio {
     this.engine = { osc, osc2, gain, filter };
   }
 
+  private effectiveGain() {
+    return this.muted || this.paused ? 0 : this.volume * 0.7;
+  }
+
+  private applyGain() {
+    if (this.ctx) this.master.gain.setTargetAtTime(this.effectiveGain(), this.ctx.currentTime, 0.03);
+  }
+
   toggleMute() {
     this.muted = !this.muted;
-    if (this.ctx) this.master.gain.value = this.muted ? 0 : 0.5;
+    this.applyGain();
+  }
+
+  setVolume(v: number, muted: boolean) {
+    this.volume = v;
+    this.muted = muted;
+    this.applyGain();
+  }
+
+  /** Silences everything while the pause menu is open. */
+  setPaused(p: boolean) {
+    this.paused = p;
+    this.applyGain();
   }
 
   private vol(distance: number) {

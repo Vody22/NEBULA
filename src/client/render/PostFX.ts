@@ -21,7 +21,7 @@ const FinalShader = {
     uniform float uVignette;
     uniform float uDamage;
     varying vec2 vUv;
-    float rand(vec2 co){ return fract(sin(dot(co, vec2(12.9898,78.233))) * 43758.5453); }
+    float rand(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
     void main(){
       vec2 c = vUv - 0.5;
       float d = length(c);
@@ -32,7 +32,7 @@ const FinalShader = {
       col.b = texture2D(tDiffuse, vUv - off).b;
       float vig = smoothstep(0.85, 0.25, d * uVignette);
       col *= mix(0.55, 1.0, vig);
-      col += (rand(vUv * 1000.0 + uTime) - 0.5) * 0.025;
+      col += (rand(gl_FragCoord.xy + fract(uTime) * 61.0) - 0.5) * 0.025;
       gl_FragColor = vec4(col, 1.0);
     }`,
 };
@@ -53,7 +53,7 @@ export class PostFX {
     });
     this.composer = new EffectComposer(renderer, target);
     this.composer.addPass(new RenderPass(scene, camera));
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x / 2, size.y / 2), 0.6, 0.5, 0.95);
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x / 2, size.y / 2), 0.5, 0.45, 0.95);
     this.composer.addPass(this.bloom);
     this.composer.addPass(new OutputPass());
     this.final = new ShaderPass(FinalShader);

@@ -4,6 +4,7 @@ import type { PlayerStats } from '../../shared/net/protocol';
 import { SHIP_CLASSES } from '../../shared/sim/shipClasses';
 import type { ShipInput } from '../../shared/sim/types';
 import type { InterpolatedShip } from '../net/SnapshotBuffer';
+import type { Action } from '../settings';
 import './hud.css';
 
 export interface HudFrame {
@@ -66,6 +67,11 @@ export class Hud {
   private deathTimer: HTMLParagraphElement;
   private fpsEl: HTMLDivElement;
   private hitTimer = 0;
+  private fireTimer = 0;
+  private hitMarker: HTMLDivElement;
+  private hitMarkerTimer = 0;
+  private killTimer = 0;
+  private killEl: HTMLDivElement;
   private damage = 0;
   private shieldFx = 0;
   private cache = new Map<HTMLElement, string>();
@@ -95,13 +101,16 @@ export class Hud {
     this.stationMarker = this.makeMarker('station');
 
     this.crosshair = el('div', 'abs crosshair', this.root, '<div class="ring"></div><i class="t u"></i><i class="t d"></i><i class="t l"></i><i class="t r"></i><i class="dot"></i>') as HTMLDivElement;
+    this.hitMarker = el('div', 'abs hitmarker', this.root, '<i></i><i></i><i></i><i></i>') as HTMLDivElement;
+    this.hitMarker.setAttribute('aria-hidden', 'true');
+    this.killEl = el('div', 'abs killconfirm', this.root, 'CIBLE DÉTRUITE') as HTMLDivElement;
     this.cursorEl = el('div', 'abs cursor', this.root) as HTMLDivElement;
     this.lead = el('div', 'abs lead', this.root) as HTMLDivElement;
     this.bracket = el('div', 'abs bracket', this.root, '<i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>') as HTMLDivElement;
     this.bracketInfo = el('div', 'info', this.bracket) as HTMLDivElement;
     this.arrow = el('div', 'abs arrow', this.root) as HTMLDivElement;
 
-    const zone = el('div', 'abs', this.root, '<div class="label">Secteur</div><div class="name" id="zoneName">AURORA</div>') as HTMLDivElement;
+    const zone = el('div', 'abs', this.root, '<div class="label">Secteur</div><div class="name" id="zoneName">AURORA</div><div class="help"><kbd>Échap</kbd> pause et aide</div>') as HTMLDivElement;
     zone.id = 'zone';
     this.fpsEl = el('div', 'abs', this.root) as HTMLDivElement;
     this.fpsEl.id = 'fps';
@@ -184,8 +193,31 @@ export class Hud {
     while (this.feed.children.length > 4) this.feed.firstChild?.remove();
   }
 
-  hitConfirm() {
+  /** Our shot hit something: an X marker (blue = shield, orange = hull). */
+  hitConfirm(shield = true) {
     this.hitTimer = 0.12;
+    this.hitMarkerTimer = 0.18;
+    this.hitMarker.classList.toggle('hull', !shield);
+  }
+
+  killConfirm() {
+    this.killTimer = 1.6;
+  }
+
+  fired() {
+    this.fireTimer = 0.07;
+  }
+
+  setBindings(_b: Record<Action, string>) {
+    /* reserved: on-screen key hints */
+  }
+
+  setPaused(p: boolean) {
+    this.root.classList.toggle('paused', p);
+  }
+
+  updatePaused(_dt: number) {
+    /* HUD stays frozen behind the pause menu */
   }
 
   damageTaken(amount: number, shield: boolean) {
@@ -221,7 +253,14 @@ export class Hud {
     }
 
     this.hitTimer -= dt;
+    this.fireTimer -= dt;
+    this.hitMarkerTimer -= dt;
+    this.killTimer -= dt;
     this.crosshair.classList.toggle('hit', this.hitTimer > 0);
+    this.crosshair.classList.toggle('firing', this.fireTimer > 0);
+    this.hitMarker.style.display = this.hitMarkerTimer > 0 ? '' : 'none';
+    this.killEl.style.display = this.killTimer > 0 ? '' : 'none';
+    this.killEl.style.opacity = String(Math.min(1, this.killTimer * 2));
     this.damage = Math.max(0, this.damage - dt * 1.4);
     this.shieldFx = Math.max(0, this.shieldFx - dt * 2.5);
     this.vignette.style.opacity = String(this.damage + (me && me.snap.hull < SHIP_CLASSES[me.snap.classId].hull * 0.3 ? 0.25 + 0.15 * Math.sin(performance.now() / 150) : 0));
@@ -249,6 +288,8 @@ export class Hud {
     this.project(aim, f.camera, pt);
     this.crosshair.style.display = '';
     this.crosshair.style.transform = `translate(${pt.x}px, ${pt.y}px)`;
+    this.hitMarker.style.transform = `translate(${pt.x}px, ${pt.y}px)`;
+    this.killEl.style.transform = `translate(${pt.x}px, ${pt.y + 44}px)`;
     this.cursorEl.style.display = '';
     this.cursorEl.style.transform = `translate(${cx}px, ${cy}px)`;
     this.cursorLine.setAttribute('x1', String(W / 2));
@@ -265,6 +306,11 @@ export class Hud {
     this.html(this.chips,
       `<span class="chip ${f.input.flightAssist ? 'on' : 'off'}">${f.input.flightAssist ? 'ASSIST. VOL' : 'NEWTONIEN'}</span>` +
       (me.snap.boosting ? '<span class="chip boost">BOOST</span>' : '') +
+      (me.snap.weaponsLocked
+        ? '<span class="chip off">⚠ ARMES EN RECHARGE</span>'
+        : me.snap.energy < cls.energy * 0.2
+          ? '<span class="chip off">⚠ ÉNERGIE BASSE</span>'
+          : '') +
       `<span class="chip">${(f.input.throttle * 100).toFixed(0)}%</span>`);
 
     // Status panel
@@ -278,7 +324,7 @@ export class Hud {
     segs(this.hullSeg, hFrac);
     this.hullSeg.classList.toggle('crit', hFrac < 0.3);
     this.shieldTxt.textContent = `${Math.round(sFrac * 100)}%`;
-    this.hullTxt.textContent = `${Math.round(hFrac * 100)}%`;
+    this.hullTxt.textContent = `${hFrac < 0.3 ? '⚠ CRITIQUE ' : ''}${Math.round(hFrac * 100)}%`;
     this.energyBar.style.transform = `scaleX(${me.snap.energy / cls.energy})`;
 
     // Ship markers
@@ -396,7 +442,7 @@ export class Hud {
     ctx.fill();
 
     const inv = _q.copy(me.rotation).invert();
-    const plot = (p: THREE.Vector3, color: string, size: number, isTarget: boolean, square = false) => {
+    const plot = (p: THREE.Vector3, color: string, size: number, isTarget: boolean, shape: 'circle' | 'square' | 'diamond' = 'circle') => {
       _v.copy(p).sub(me.position).applyQuaternion(inv);
       const d = _v.length();
       let scale = 1 / range;
@@ -412,8 +458,16 @@ export class Hud {
       ctx.lineTo(x, y + h);
       ctx.stroke();
       ctx.fillStyle = color;
-      if (square) ctx.fillRect(x - size, y + h - size, size * 2, size * 2);
-      else {
+      if (shape === 'square') ctx.fillRect(x - size, y + h - size, size * 2, size * 2);
+      else if (shape === 'diamond') {
+        const s = size * 1.35;
+        ctx.beginPath();
+        ctx.moveTo(x, y + h - s);
+        ctx.lineTo(x + s, y + h);
+        ctx.lineTo(x, y + h + s);
+        ctx.lineTo(x - s, y + h);
+        ctx.fill();
+      } else {
         ctx.beginPath();
         ctx.arc(x, y + h, size, 0, Math.PI * 2);
         ctx.fill();
@@ -424,11 +478,11 @@ export class Hud {
       }
       ctx.globalAlpha = 1;
     };
-    plot(f.stationPos, '#7fe3ff', 6, false, true);
+    plot(f.stationPos, '#7fe3ff', 6, false, 'square');
     for (const s of f.ships.values()) {
       if (s.snap.id === me.snap.id) continue;
       const hostile = s.snap.faction !== me.snap.faction;
-      plot(s.position, hostile ? '#ff5a3c' : '#5cffb0', s.snap.classId === 'marauder' ? 6 : 4, s.snap.id === f.targetId);
+      plot(s.position, hostile ? '#ff5a3c' : '#5cffb0', s.snap.classId === 'marauder' ? 6 : 4, s.snap.id === f.targetId, hostile ? 'diamond' : 'circle');
     }
     ctx.fillStyle = '#fff';
     ctx.beginPath();

@@ -4,37 +4,16 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>NEBULA FRONTIER</title>
+    <meta name="description" content="NEBULA FRONTIER — prototype de combat spatial 3D jouable dans le navigateur." />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Cpath d=%27M16 2 L28 28 L16 22 L4 28 Z%27 fill=%27%237fe3ff%27/%3E%3C/svg%3E" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Rajdhani:wght@500;600&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet" />
   </head>
   <body>
-    <canvas id="game"></canvas>
-    <div id="loading">INITIALISATION DU SECTEUR…</div>
-    <div id="menu" class="hidden">
-      <div class="box">
-        <h1>NEBULA <span>FRONTIER</span></h1>
-        <div class="sub">Secteur Aurora · Prototype de combat v0.1</div>
-        <button id="launch">DÉCOLLER</button>
-        <div class="controls">
-          <div><kbd>Souris</kbd></div><span>Piloter (joystick virtuel)</span>
-          <div><kbd>Clic G</kbd><kbd data-code="KeyF">F</kbd></div><span>Lasers</span>
-          <div><kbd data-code="KeyW">W</kbd><kbd data-code="KeyS">S</kbd></div><span>Poussée + / −</span>
-          <div><kbd>Molette</kbd></div><span>Poussée</span>
-          <div><kbd data-code="KeyA">A</kbd><kbd data-code="KeyD">D</kbd></div><span>Translation latérale</span>
-          <div><kbd>Espace</kbd><kbd data-code="KeyC">C</kbd></div><span>Translation verticale</span>
-          <div><kbd data-code="KeyQ">Q</kbd><kbd data-code="KeyE">E</kbd></div><span>Roulis</span>
-          <div><kbd>Maj</kbd></div><span>Boost</span>
-          <div><kbd data-code="KeyX">X</kbd></div><span>Couper les gaz</span>
-          <div><kbd data-code="KeyZ">Z</kbd></div><span>Assistance de vol on/off</span>
-          <div><kbd data-code="KeyT">T</kbd></div><span>Cible suivante</span>
-          <div><kbd data-code="KeyV">V</kbd></div><span>Caméra</span>
-          <div><kbd>Flèches</kbd></div><span>Tangage / lacet</span>
-          <div><kbd data-code="KeyM">M</kbd></div><span>Son</span>
-        </div>
-        <div class="note">Défendez la station Aurora-7 contre les vagues de pirates. Échap pour libérer la souris.</div>
-      </div>
-    </div>
+    <canvas id="game" aria-label="Vue 3D du jeu"></canvas>
+    <div id="loading" role="status">INITIALISATION DU SECTEUR…</div>
+    <div id="menu" class="hidden"></div>
+    <div id="capture" class="hidden" role="status">Cliquez dans la scène pour capturer la souris · <kbd>Échap</kbd> pause</div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

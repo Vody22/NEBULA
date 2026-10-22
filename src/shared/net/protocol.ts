@@ -22,6 +22,7 @@ export interface ShipSnapshot {
   throttle: number;
   boosting: boolean;
   firing: boolean;
+  weaponsLocked: boolean;
 }
 
 export interface PlayerStats {
@@ -65,6 +66,7 @@ export function snapshotShip(s: Ship): ShipSnapshot {
     throttle: s.boosting ? 1.6 : r2(s.input.throttle),
     boosting: s.boosting,
     firing: s.input.fire,
+    weaponsLocked: s.weaponsLocked,
   };
 }
 

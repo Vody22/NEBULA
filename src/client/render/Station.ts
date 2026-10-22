@@ -36,7 +36,7 @@ export class Station {
       map: hull.map,
       roughnessMap: hull.roughnessMap,
       emissiveMap: hull.emissiveMap,
-      emissive: new THREE.Color(2.2, 1.8, 1.3),
+      emissive: new THREE.Color(1.6, 1.3, 0.95),
       metalness: 0.65,
       roughness: 0.55,
     });

@@ -60,6 +60,10 @@ export interface Ship {
   nextHardpoint: number;
   /** Seconds since the last damage taken (drives shield regen delay). */
   sinceDamage: number;
+  /** Seconds since the last shot (energy only recharges once the guns rest). */
+  sinceFire: number;
+  /** Capacitor emptied: guns stay offline until energy recovers to 30 %. */
+  weaponsLocked: boolean;
   /** Last entity that damaged us (kill credit). */
   lastAttacker: EntityId | null;
 }
