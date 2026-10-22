@@ -121,7 +121,7 @@ export class Station {
     this.ring.add(ringMesh);
     // window strips on the inner and outer faces
     for (const off of [-def.ringTube * 0.98, def.ringTube * 0.98]) {
-      const w = new THREE.Mesh(new THREE.TorusGeometry(def.ringRadius + off, 2.2, 6, 256), new THREE.MeshBasicMaterial({ color: new THREE.Color(2.6, 2.2, 1.6), toneMapped: false }));
+      const w = new THREE.Mesh(new THREE.TorusGeometry(def.ringRadius + off, 2.2, 6, 256), new THREE.MeshBasicMaterial({ color: new THREE.Color(1.15, 0.85, 0.5), toneMapped: false }));
       w.rotation.x = Math.PI / 2;
       this.ring.add(w);
     }

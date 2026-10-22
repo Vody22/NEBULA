@@ -87,7 +87,7 @@ try {
   const menuText = await P.page.evaluate(() => document.getElementById('menu').textContent);
   check(menuText.includes('Commandes tactiles') && !menuText.includes('Clavier et souris requis'), 'start menu explains the touch controls instead of refusing the device');
   const quality = await P.page.evaluate(() => window.__game.renderPath);
-  check(quality === 'composer', `lighter rendering by default on mobile (${quality})`);
+  check(quality === 'direct', `lighter rendering by default on mobile (${quality})`);
   await P.page.screenshot({ path: `${out}/phone-menu.png` });
   await P.page.tap('[data-act="solo"]');
   await P.page.waitForFunction(() => window.__game.running, null, { timeout: 120000 });

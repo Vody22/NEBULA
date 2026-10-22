@@ -154,11 +154,11 @@ Il y a aujourd'hui deux niveaux (`?q=low` et `high`). Il en faut quatre, réglab
 | | Bas | Moyen | Élevé | Ultra |
 | --- | --- | --- | --- | --- |
 | Résolution interne | 0,7 à 1× | 1× | 1× à 1,5× | 1,5× à 2× |
-| Antialiasing | — | FXAA | MSAA 4× | MSAA 4× |
-| Bloom | non | demi-résolution | oui | oui + lueurs larges |
+| Antialiasing | — | — (FXAA prévu) | MSAA 4× | MSAA 4× |
+| Post-traitement (bloom, objectif) | non : rendu direct | oui | oui | oui |
 | Ombres | non | joueur seulement | joueur + station | ombres 4K, filtrage doux |
 | Textures | 512 | 1024 | 2048 | 2048 + détail de près |
-| Ciel | cube 512 | 1024 | 2048 | 2048 + nuages de premier plan |
+| Ciel | cube 512 | 1024 | 1024 | 2048 (+ nuages de premier plan) |
 | Particules | 35 % | 70 % | 100 % | 100 % + débris persistants |
 | Astéroïdes | LOD bas | LOD standard | LOD élevé | LOD élevé, plus de petits cailloux |
 
