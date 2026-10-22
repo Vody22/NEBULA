@@ -20,7 +20,7 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.05;
 
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 0.1, 5000);
+const camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 0.1, 250000);
 // Same light rig as Game.buildWorld (zone 0 sun direction).
 const sunDir = new THREE.Vector3(-0.8, 0.35, 0.12).normalize();
 const sun = new THREE.DirectionalLight(0xfff0dc, 4.2);

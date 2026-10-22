@@ -279,6 +279,7 @@ export class Game {
     this.outputChecks = 0;
     this.blackSamples = 0;
     if (this.zone && this.skySize !== this.quality.skySize) this.buildSkyFor(this.zone);
+    this.asteroids?.setDetail(level !== 'low');
     this.resize();
   }
 
@@ -311,6 +312,7 @@ export class Game {
     this.planets = new Planets(zone.planets, zone.sunDirection);
     this.station = new Station(zone.station);
     this.asteroids = new Asteroids(zone.asteroids, zone.beltCenter);
+    this.asteroids.setDetail(this.quality.level !== 'low');
     this.worldRoot.add(this.planets.group, this.station.group, this.asteroids.group);
     this.hud.setZoneName(zone.name);
   }

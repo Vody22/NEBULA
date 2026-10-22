@@ -398,6 +398,11 @@ Chaque étape fait l'objet d'un commit séparé sur `v0.2.5-graphics`, avec des 
   - Le Warden reprend provisoirement cette coque avec sa propre peinture ; sa silhouette distincte arrive à l'étape 6.
   - Visionneuse `hangar.html` (`?ship=`, `?view=`), captures `scripts/ship-capture.mjs`, export GLB par le bouton « Exporter GLB ».
   - Limite honnête : c'est un modèle procédural détaillé, pas un asset de production modélisé et texturé à la main.
+- **Étape 3 (univers, en revue) :**
+  - Ciel : un cœur de nébuleuse lumineux par système, dégradé cyan, magenta puis ambre, masses de gaz sur environ 60 % du ciel, bandes de poussière en absorption. Les étoiles brillantes sont désormais des points nets calculés à chaque image (6 000, couleurs spectrales O à M, magnitudes variées), au lieu d'être cuites floues dans le cube.
+  - Planètes : côté nuit noir, lumière rougie au terminateur, lumières de villes sur Thalassa, ombre douce des nuages, assombrissement du limbe des géantes, brume de distance (Kerys 0,26). Anneaux : annelets par bruit avec filtrage par octave (plus de moiré), divisions nettes, face non éclairée plus sombre.
+  - Astéroïdes : quatre familles selon la variante déjà partagée avec le serveur (carbonées, agglomérats, silicatées à cassures planes, métalliques veinées), poussière claire dans les creux, relief fin par pixel (désactivé en Bas). Les formes restent entre 0,8 et 1,25 fois le rayon, ce qui reste cohérent avec la sphère de collision.
+  - Non fait : déplacer ou réduire Kerys, car sa position et son rayon font partie de la zone partagée avec le serveur ; nappes de gaz de premier plan ; LOD et imposteurs des astéroïdes (étape 7).
 
 ### Budgets par image (niveau Élevé)
 
