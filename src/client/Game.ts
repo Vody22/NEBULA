@@ -41,7 +41,11 @@ export class Game {
   readonly input: InputManager;
   readonly hud = new Hud();
   readonly audio = new GameAudio();
-  private post: PostFX;
+  private post: PostFX | null;
+  /** Render path: MSAA composer, composer without MSAA, or plain render (no post-processing). */
+  renderPath: 'msaa' | 'composer' | 'direct';
+  private framesRunning = 0;
+  private outputChecks = 0;
   private zone: ZoneDef | null = null;
   private sky: SkyResult | null = null;
   private station: Station | null = null;
@@ -89,7 +93,9 @@ export class Game {
 
     this.cam = new ChaseCamera(window.innerWidth / window.innerHeight);
     this.scene.add(this.cam.camera);
-    this.post = new PostFX(this.renderer, this.scene, this.cam.camera, opts.quality === 'high' ? 4 : 0);
+    const msaa = opts.quality === 'high' ? 4 : 0;
+    this.post = new PostFX(this.renderer, this.scene, this.cam.camera, msaa);
+    this.renderPath = msaa ? 'msaa' : 'composer';
     this.input = new InputManager(canvas, settings.bindings);
     this.applySettings(settings);
     this.timer.connect(document);
@@ -105,7 +111,7 @@ export class Game {
     const h = window.innerHeight;
     this.renderer.setPixelRatio(this.pixelRatio);
     this.renderer.setSize(w, h, false);
-    this.post.setSize(w, h, this.pixelRatio);
+    this.post?.setSize(w, h, this.pixelRatio);
     this.cam.camera.aspect = w / h;
     this.cam.camera.updateProjectionMatrix();
     this.effects.setPixelScale(h * this.renderer.getPixelRatio(), this.cam.camera.fov);
@@ -321,7 +327,49 @@ export class Game {
     this.damageFx = Math.max(0, this.damageFx - dt * 2);
     this.adaptResolution(dt);
     this.debug.ships = ships.size;
-    this.post.render(this.time, this.damageFx);
+    this.renderScene(this.damageFx);
+    this.checkOutput();
+  }
+
+  private renderScene(damage: number) {
+    if (this.post) this.post.render(this.time, damage);
+    else this.renderer.render(this.scene, this.cam.camera);
+  }
+
+  /**
+   * Some GPU/driver combinations render the post-processing chain as a black
+   * image (the HUD keeps working). The sky is never black, so sample the frame
+   * a few times after take-off and step down to a simpler render path if it is.
+   */
+  private checkOutput() {
+    this.framesRunning++;
+    if (this.outputChecks >= 3 || this.framesRunning < 15 || this.framesRunning % 15 !== 0) return;
+    this.outputChecks++;
+    const gl = this.renderer.getContext();
+    const px = new Uint8Array(4);
+    let max = 0;
+    for (let i = 1; i < 8; i++)
+      for (let j = 1; j < 8; j++) {
+        gl.readPixels(Math.floor((gl.drawingBufferWidth * i) / 8), Math.floor((gl.drawingBufferHeight * j) / 8), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+        max = Math.max(max, px[0], px[1], px[2]);
+      }
+    if (max > 12) {
+      this.outputChecks = 3;
+      return;
+    }
+    if (this.renderPath === 'direct') return;
+    this.post?.dispose();
+    if (this.renderPath === 'msaa') {
+      this.post = new PostFX(this.renderer, this.scene, this.cam.camera, 0);
+      this.renderPath = 'composer';
+      this.resize();
+    } else {
+      this.post = null;
+      this.renderPath = 'direct';
+    }
+    this.outputChecks = 0;
+    console.warn(`NEBULA: image noire détectée, passage au rendu de secours « ${this.renderPath} ».`);
+    this.hud.notice('Mode graphique de secours activé', 'warn');
   }
 
   /** Paused frame: same scene, no simulation, no clock advance. */
@@ -333,7 +381,7 @@ export class Game {
     this.sky?.update(this.cam.camera);
     this.effects.update(0);
     this.hud.updatePaused(dt);
-    this.post.render(this.time, 0);
+    this.renderScene(0);
   }
 
   /**

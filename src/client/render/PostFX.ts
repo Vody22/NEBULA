@@ -66,6 +66,11 @@ export class PostFX {
     this.bloom.resolution.set(w / 2, h / 2);
   }
 
+  dispose() {
+    this.bloom.dispose();
+    this.composer.dispose();
+  }
+
   render(time: number, damage: number) {
     this.final.uniforms.uTime.value = time % 100;
     this.final.uniforms.uDamage.value = damage;
