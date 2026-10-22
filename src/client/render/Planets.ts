@@ -66,7 +66,7 @@ void main(){
   float diff = smoothstep(-0.08, 0.5, ndl) * max(ndl, 0.0) * 0.6 + max(ndl,0.0)*0.4;
   vec3 h = normalize(uSunDir + v);
   float sp = pow(max(dot(n,h),0.0), 60.0) * spec * 0.8 * step(0.0, ndl);
-  float fres = pow(1.0 - max(dot(n, v), 0.0), 3.0);
+  float fres = pow(clamp(1.0 - dot(n, v), 0.0, 1.0), 3.0);
   vec3 col = albedo * diff * 1.6 + sp * vec3(1.0,0.9,0.8);
   // atmospheric scattering at the limb and a warm terminator
   float term = smoothstep(-0.25, 0.0, ndl) * (1.0 - smoothstep(0.0, 0.35, ndl));
@@ -84,7 +84,7 @@ varying vec3 vPosW;
 void main(){
   vec3 n = normalize(vNormalW);
   vec3 v = normalize(cameraPosition - vPosW);
-  float rim = 1.0 - abs(dot(n, v));
+  float rim = clamp(1.0 - abs(dot(n, v)), 0.0, 1.0);
   float a = pow(rim, 5.0);
   float lit = smoothstep(-0.35, 0.5, dot(n, uSunDir));
   gl_FragColor = vec4(uAtmo * a * lit * 2.2, 1.0);
@@ -105,7 +105,7 @@ void main(){
   if (t < 0.0 || t > 1.0) discard;
   float bands = 0.0;
   for (int i=0;i<6;i++){ float f = pow(1.9, float(i))*7.0 + hash(float(i)+3.0)*5.0; bands += sin(t*f*6.283 + hash(float(i))*6.0)*0.5/float(i+1); }
-  float dens = smoothstep(0.0,0.06,t)*smoothstep(1.0,0.9,t)*(0.45+bands*0.3);
+  float dens = smoothstep(0.0,0.06,t)*(1.0 - smoothstep(0.9,1.0,t))*(0.45+bands*0.3);
   dens *= 1.0 - smoothstep(0.48,0.5,t)*(1.0-smoothstep(0.52,0.56,t))*0.9; // Cassini-like gap
   // planet shadow on the rings
   vec3 toP = uPlanetPos - vPosW;

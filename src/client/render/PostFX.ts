@@ -30,10 +30,28 @@ const FinalShader = {
       col.r = texture2D(tDiffuse, vUv + off).r;
       col.g = texture2D(tDiffuse, vUv).g;
       col.b = texture2D(tDiffuse, vUv - off).b;
-      float vig = smoothstep(0.85, 0.25, d * uVignette);
+      float vig = 1.0 - smoothstep(0.25, 0.85, d * uVignette);
       col *= mix(0.55, 1.0, vig);
       col += (rand(gl_FragCoord.xy + fract(uTime) * 61.0) - 0.5) * 0.025;
       gl_FragColor = vec4(col, 1.0);
+    }`,
+};
+
+/**
+ * Replaces NaN/Inf pixels of the HDR scene with black before bloom. Some GPUs
+ * return NaN for edge cases in shader math, and the bloom blur would spread a
+ * single such pixel over the whole screen (black image, HUD still fine).
+ */
+const SanitizeShader = {
+  uniforms: { tDiffuse: { value: null as THREE.Texture | null } },
+  vertexShader: /* glsl */ `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+  fragmentShader: /* glsl */ `
+    uniform sampler2D tDiffuse;
+    varying vec2 vUv;
+    void main(){
+      vec4 c = texture2D(tDiffuse, vUv);
+      if (any(isnan(c)) || any(isinf(c))) c = vec4(0.0, 0.0, 0.0, 1.0);
+      gl_FragColor = clamp(c, 0.0, 64000.0);
     }`,
 };
 
@@ -53,6 +71,7 @@ export class PostFX {
     });
     this.composer = new EffectComposer(renderer, target);
     this.composer.addPass(new RenderPass(scene, camera));
+    this.composer.addPass(new ShaderPass(SanitizeShader));
     this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x / 2, size.y / 2), 0.5, 0.45, 0.95);
     this.composer.addPass(this.bloom);
     this.composer.addPass(new OutputPass());

@@ -26,6 +26,8 @@ import type { Settings } from './settings';
 
 export interface GameOptions {
   quality: 'low' | 'high';
+  /** 'direct' skips post-processing entirely (?render=direct). */
+  render?: 'auto' | 'direct';
 }
 
 const UNION_BOLT = new THREE.Color(1.5, 4, 9);
@@ -61,6 +63,9 @@ export class Game {
   renderPath: 'msaa' | 'composer' | 'direct';
   private framesRunning = 0;
   private outputChecks = 0;
+  private blackSamples = 0;
+  /** Graphics diagnostics (pause menu, ?diag). */
+  readonly gfx = { lastSample: -1, blackSamples: 0, fallbacks: 0, shaderErrors: 0 };
   private zone: ZoneDef | null = null;
   private sky: SkyResult | null = null;
   private station: Station | null = null;
@@ -122,12 +127,21 @@ export class Game {
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.renderer.debug.onShaderError = (gl, program, vs, fs) => {
+      this.gfx.shaderErrors++;
+      console.error('NEBULA: shader en erreur', gl.getProgramInfoLog(program), gl.getShaderInfoLog(vs), gl.getShaderInfoLog(fs));
+    };
 
     this.cam = new ChaseCamera(window.innerWidth / window.innerHeight);
     this.scene.add(this.cam.camera);
     const msaa = opts.quality === 'high' ? 4 : 0;
-    this.post = new PostFX(this.renderer, this.scene, this.cam.camera, msaa);
-    this.renderPath = msaa ? 'msaa' : 'composer';
+    if (opts.render === 'direct') {
+      this.post = null;
+      this.renderPath = 'direct';
+    } else {
+      this.post = new PostFX(this.renderer, this.scene, this.cam.camera, msaa);
+      this.renderPath = msaa ? 'msaa' : 'composer';
+    }
     this.input = new InputManager(canvas, settings.bindings);
     this.applySettings(settings);
     this.timer.connect(document);
@@ -531,12 +545,15 @@ export class Game {
   /**
    * Some GPU/driver combinations render the post-processing chain as a black
    * image (the HUD keeps working). The sky is never black, so sample the frame
-   * a few times after take-off and step down to a simpler render path if it is.
+   * regularly while flying and step down to a simpler render path when it stays
+   * black for three samples in a row.
    */
   private checkOutput() {
     this.framesRunning++;
-    if (this.outputChecks >= 3 || this.framesRunning < 15 || this.framesRunning % 15 !== 0) return;
+    const every = this.outputChecks < 10 ? 20 : 90;
+    if (this.paused || this.framesRunning < 20 || this.framesRunning % every !== 0) return;
     this.outputChecks++;
+    this.renderer.setRenderTarget(null);
     const gl = this.renderer.getContext();
     const px = new Uint8Array(4);
     let max = 0;
@@ -545,11 +562,15 @@ export class Game {
         gl.readPixels(Math.floor((gl.drawingBufferWidth * i) / 8), Math.floor((gl.drawingBufferHeight * j) / 8), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
         max = Math.max(max, px[0], px[1], px[2]);
       }
+    this.gfx.lastSample = max;
     if (max > 12) {
-      this.outputChecks = 3;
+      this.blackSamples = 0;
       return;
     }
-    if (this.renderPath === 'direct') return;
+    this.blackSamples++;
+    this.gfx.blackSamples++;
+    if (this.blackSamples < 3 || this.renderPath === 'direct') return;
+    this.blackSamples = 0;
     this.post?.dispose();
     if (this.renderPath === 'msaa') {
       this.post = new PostFX(this.renderer, this.scene, this.cam.camera, 0);
@@ -559,9 +580,22 @@ export class Game {
       this.post = null;
       this.renderPath = 'direct';
     }
-    this.outputChecks = 0;
+    this.gfx.fallbacks++;
     console.warn(`NEBULA: image noire détectée, passage au rendu de secours « ${this.renderPath} ».`);
     this.hud.notice('Mode graphique de secours activé', 'warn');
+  }
+
+  /** One line describing the graphics setup, shown in the pause menu (and with ?diag). */
+  graphicsInfo() {
+    const gl = this.renderer.getContext();
+    let gpu = '';
+    try {
+      const ext = gl.getExtension('WEBGL_debug_renderer_info');
+      gpu = String(gl.getParameter(ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER));
+    } catch {
+      gpu = '?';
+    }
+    return `${gpu} · rendu ${this.renderPath} · image ${this.gfx.lastSample}/255 · noires ${this.gfx.blackSamples} · secours ${this.gfx.fallbacks} · shaders en erreur ${this.gfx.shaderErrors}`;
   }
 
   /** Paused frame: same scene, no simulation, no clock advance. */

@@ -10,6 +10,7 @@ import { PROTOCOL_VERSION } from './shared/net/protocol';
 
 const params = new URLSearchParams(location.search);
 const quality = params.get('q') === 'low' ? 'low' : 'high';
+const render = params.get('render') === 'direct' ? 'direct' : 'auto';
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const loading = document.getElementById('loading')!;
 const capture = document.getElementById('capture')!;
@@ -37,12 +38,20 @@ window.addEventListener('unhandledrejection', (e) => {
 
 let game: Game;
 try {
-  game = new Game(canvas, { quality }, settings);
+  game = new Game(canvas, { quality, render }, settings);
 } catch (err) {
   showFatal(err);
   throw err;
 }
 (window as unknown as { __game: Game }).__game = game;
+
+// ?diag: graphics diagnostics on screen, to report rendering problems.
+if (params.has('diag')) {
+  const el = document.createElement('div');
+  el.id = 'diag';
+  document.body.appendChild(el);
+  setInterval(() => (el.textContent = game.graphicsInfo()), 1000);
+}
 
 const serverUrl = resolveServerUrl();
 let started = false;
@@ -196,7 +205,7 @@ function pause() {
   chat.close();
   game.setPaused(true);
   if (document.pointerLockElement) document.exitPointerLock();
-  menu.show('pause', { online: mode === 'online' });
+  menu.show('pause', { online: mode === 'online', diag: game.graphicsInfo() });
 }
 
 function resume() {

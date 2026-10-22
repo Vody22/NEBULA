@@ -12,7 +12,7 @@ uniform float uTime;
 uniform float uPower;
 varying vec2 vUv;
 void main(){
-  float along = 1.0 - vUv.y;        // 1 at nozzle, 0 at tip
+  float along = clamp(1.0 - vUv.y, 0.0, 1.0); // 1 at nozzle, 0 at tip
   float around = vUv.x;
   float flick = 0.85 + 0.15*sin(uTime*60.0 + around*25.0) * sin(uTime*37.0);
   float core = pow(along, 2.5);
@@ -41,14 +41,15 @@ varying vec3 vN;
 varying vec3 vLocal;
 varying vec3 vView;
 void main(){
-  float fres = pow(1.0 - abs(dot(normalize(vN), normalize(vView))), 2.5);
+  float fres = pow(clamp(1.0 - abs(dot(normalize(vN), normalize(vView))), 0.0, 1.0), 2.5);
   float hex = 0.6 + 0.4*sin(vLocal.x*40.0)*sin(vLocal.y*40.0)*sin(vLocal.z*40.0);
   float a = fres * uFlash * 0.9 * hex;
   for (int i=0;i<4;i++){
     float age = uTime - uHits[i].w;
     if (age < 0.0 || age > 0.8) continue;
     float d = acos(clamp(dot(vLocal, uHits[i].xyz), -1.0, 1.0));
-    float ring = exp(-pow((d - age*3.2)*7.0, 2.0)) * (1.0 - age/0.8);
+    float rd = (d - age*3.2)*7.0;
+    float ring = exp(-rd*rd) * (1.0 - age/0.8);
     float spot = exp(-d*d*18.0) * (1.0 - age/0.35) * step(age, 0.35);
     a += (ring*1.3 + spot*2.5) * hex;
   }

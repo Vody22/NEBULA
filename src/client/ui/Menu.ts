@@ -73,13 +73,17 @@ export class Menu {
     this.root.addEventListener('change', (e) => this.onInput(e));
   }
 
+  /** Graphics diagnostics line (pause menu), so a player can report rendering problems. */
+  private diag = '';
+
   get isOpen() {
     return !this.root.classList.contains('hidden');
   }
 
-  show(mode: Mode, opts: { online?: boolean } = {}) {
+  show(mode: Mode, opts: { online?: boolean; diag?: string } = {}) {
     this.mode = mode;
     this.online = opts.online ?? false;
+    this.diag = opts.diag ?? '';
     this.view = 'main';
     this.capturing = null;
     this.root.classList.remove('hidden');
@@ -171,7 +175,8 @@ export class Menu {
                 <div>${this.kbd(b.chat)} chat · ${this.kbd(b.pvp)} PvP · ${this.kbd(b.scoreboard)} pilotes (en ligne)</div>
               </div>
               <p class="note">Défendez la station Aurora-7 contre les vagues de pirates, seul ou avec d'autres pilotes.</p>`
-            : `<p class="note">Entrée ou clic sur « Reprendre » pour revenir en vol. La souris sera capturée de nouveau.</p>`
+            : `<p class="note">Entrée ou clic sur « Reprendre » pour revenir en vol. La souris sera capturée de nouveau.</p>
+               <p class="diag"></p>`
         }`;
     } else if (this.view === 'controls') {
       const layout = s.layout;
@@ -230,6 +235,8 @@ export class Menu {
         <div class="menu-buttons row"><button class="primary" data-act="back">Retour</button></div>`;
     }
     this.root.innerHTML = `<div class="box view-${this.view}">${html}</div>`;
+    const diag = this.root.querySelector('.diag');
+    if (diag) diag.textContent = this.diag; // GPU names are not trusted HTML
     if (this.view === 'main' && this.mode === 'start') this.setServerStatus(this.server.state, this.server.text);
     this.focusDefault();
   }
