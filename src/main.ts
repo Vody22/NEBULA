@@ -10,10 +10,36 @@ const loading = document.getElementById('loading')!;
 const capture = document.getElementById('capture')!;
 const settings = loadSettings();
 
+// Anything that breaks before or during start-up is shown on screen instead of
+// leaving a black page, so a player can report it.
+function showFatal(err: unknown) {
+  const msg = err instanceof Error ? err.message : String(err);
+  console.error(err);
+  loading.classList.remove('hidden');
+  loading.classList.add('fatal');
+  loading.setAttribute('role', 'alert');
+  loading.innerHTML =
+    '<div><strong>Le jeu n\'a pas pu démarrer.</strong><p>Vérifiez que WebGL et l\'accélération matérielle sont activés, ou essayez la <a href="?q=low">qualité basse</a>.</p><code></code></div>';
+  loading.querySelector('code')!.textContent = msg;
+}
+let booted = false;
+window.addEventListener('error', (e) => {
+  if (!booted) showFatal(e.error ?? e.message);
+});
+window.addEventListener('unhandledrejection', (e) => {
+  if (!booted) showFatal(e.reason);
+});
+
 // Solo mode: the authoritative server runs in-page. Swapping LocalTransport
 // for a WebSocket transport is all that multiplayer requires on the client.
 const transport = new LocalTransport(params.get('name') ?? 'William');
-const game = new Game(canvas, transport, { quality }, settings);
+let game: Game;
+try {
+  game = new Game(canvas, transport, { quality }, settings);
+} catch (err) {
+  showFatal(err);
+  throw err;
+}
 (window as unknown as { __game: Game }).__game = game;
 
 let started = false;
@@ -37,7 +63,13 @@ function loop() {
 // Let the loading text paint before the (one-off) sky bake.
 requestAnimationFrame(() => {
   setTimeout(() => {
-    game.frame();
+    try {
+      game.frame();
+    } catch (err) {
+      showFatal(err);
+      return;
+    }
+    booted = true;
     loading.classList.add('hidden');
     menu.show('start');
     requestAnimationFrame(loop);

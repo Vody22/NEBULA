@@ -180,6 +180,11 @@ kbd { font-family: var(--font-display); font-size: 0.8em; color: #fff; border: 1
 
 #loading { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; font-family: var(--font-display); letter-spacing: 6px; color: var(--hud); background: #000; z-index: 20; text-align: center; padding: 16px; }
 #loading.hidden { display: none; }
+#loading.fatal { letter-spacing: 0; font-family: var(--font); font-size: 18px; color: #e8f6ff; }
+#loading.fatal > div { max-width: 640px; }
+#loading.fatal strong { font-size: 24px; color: #ffd166; }
+#loading.fatal a { color: #7fe3ff; }
+#loading.fatal code { display: block; margin-top: 12px; color: #ff9b9b; white-space: pre-wrap; word-break: break-word; }
 
 /* --- Large screens: scale the HUD up a little */
 @media (min-width: 1700px) and (min-height: 950px) {
