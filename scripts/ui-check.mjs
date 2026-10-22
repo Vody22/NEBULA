@@ -198,14 +198,14 @@ for (const [w, h] of [[568, 1244], [1280, 720], [1920, 1080]]) {
   await ctx.close();
 }
 
-// ---- Touch-only device warning ------------------------------------------------
+// ---- Touch-only device: touch controls explained (details in mobile-check.mjs) ----
 {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, locale: 'fr-FR' });
   const page = await ctx.newPage();
   await page.goto(`${url}/?q=low`, { waitUntil: 'domcontentloaded', timeout: 120000 });
   await page.waitForFunction(() => window.__menu?.isOpen, null, { timeout: 300000 });
-  const warn = await page.evaluate(() => document.querySelector('.device-warning')?.textContent ?? '');
-  check(/Clavier et souris requis/.test(warn), 'touch-only device shows "Clavier et souris requis"');
+  const note = await page.evaluate(() => document.querySelector('.touch-note')?.textContent ?? '');
+  check(/Commandes tactiles/.test(note), 'touch-only device shows the touch controls note');
   await page.screenshot({ path: `${out}/touch-390x844.png` });
   await ctx.close();
 }

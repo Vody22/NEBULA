@@ -82,7 +82,8 @@ export class Chat {
     this.applyVisibility();
   }
 
-  open() {
+  /** `focusNow`: opened from a tap, where iOS only shows the keyboard if focus happens in the same gesture. */
+  open(focusNow = false) {
     if (!this.enabled) return;
     if (!this.visible) this.toggle();
     this.root.classList.add('open');
@@ -90,7 +91,8 @@ export class Chat {
     this.renderHint();
     this.cb.onFocusChange(true);
     // Defer focus so the Entrée that opened the chat is not typed into it.
-    setTimeout(() => this.field.focus(), 0);
+    if (focusNow) this.field.focus();
+    else setTimeout(() => this.field.focus(), 0);
   }
 
   close() {

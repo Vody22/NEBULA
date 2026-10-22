@@ -1,4 +1,5 @@
 import { Game } from './client/Game';
+import { isTouchDevice, TouchControls } from './client/input/Touch';
 import { probeServer, resolveServerUrl } from './client/net/config';
 import { LocalTransport } from './client/net/LocalTransport';
 import type { Transport } from './client/net/Transport';
@@ -9,7 +10,9 @@ import { Menu, type PlayMode } from './client/ui/Menu';
 import { PROTOCOL_VERSION } from './shared/net/protocol';
 
 const params = new URLSearchParams(location.search);
-const quality = params.get('q') === 'low' ? 'low' : 'high';
+// Phones and tablets: touch controls, and the lighter quality level by default (?q=high to override).
+const touch = isTouchDevice(params);
+const quality = (params.get('q') ?? (touch ? 'low' : 'high')) === 'low' ? 'low' : 'high';
 const render = params.get('render') === 'direct' ? 'direct' : 'auto';
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const loading = document.getElementById('loading')!;
@@ -44,6 +47,17 @@ try {
   throw err;
 }
 (window as unknown as { __game: Game }).__game = game;
+
+const touchControls = touch
+  ? new TouchControls(game.input, {
+      onPause: () => pause(),
+      onChat: () => chat.open(true),
+    })
+  : null;
+if (touch) {
+  document.body.classList.add('touch');
+  game.input.touchMode = true;
+}
 
 // ?diag: graphics diagnostics on screen, to report rendering problems.
 if (params.has('diag')) {
@@ -103,6 +117,10 @@ const menu = new Menu(document.getElementById('menu')!, settings, {
 function loop() {
   game.frame();
   updateCaptureHint();
+  if (touchControls) {
+    touchControls.setVisible(started && !menu.isOpen && !chat.isOpen);
+    touchControls.update();
+  }
   requestAnimationFrame(loop);
 }
 
@@ -185,7 +203,22 @@ function takeOff(m: PlayMode, _t: Transport) {
   chat.setEnabled(m === 'online');
   game.start();
   game.setPaused(false);
-  game.input.requestLock();
+  touchControls?.setOnline(m === 'online');
+  if (touch) enterFullscreen();
+  else game.input.requestLock();
+}
+
+/** Phones: full screen and landscape when the browser allows it (Android); iOS simply ignores it. */
+function enterFullscreen() {
+  const el = document.documentElement as HTMLElement & { webkitRequestFullscreen?: () => void };
+  try {
+    const p = el.requestFullscreen ? el.requestFullscreen({ navigationUI: 'hide' }) : el.webkitRequestFullscreen?.();
+    Promise.resolve(p)
+      .then(() => (screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> })?.lock?.('landscape'))
+      .catch(() => {});
+  } catch {
+    /* not supported */
+  }
 }
 
 function leave() {
@@ -214,11 +247,11 @@ function resume() {
   game.setPaused(false);
   canvas.focus?.();
   // May be refused (e.g. Échap is not a user gesture): the hint then asks for a click.
-  game.input.requestLock();
+  if (!touch) game.input.requestLock();
 }
 
 function updateCaptureHint() {
-  const show = started && !menu.isOpen && !chat.isOpen && !game.input.locked && 'requestPointerLock' in canvas && !params.has('autostart');
+  const show = !touch && started && !menu.isOpen && !chat.isOpen && !game.input.locked && 'requestPointerLock' in canvas && !params.has('autostart');
   capture.classList.toggle('hidden', !show);
 }
 
@@ -242,5 +275,5 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden) pause();
 });
 canvas.addEventListener('click', () => {
-  if (started && !menu.isOpen && !game.input.locked) game.input.requestLock();
+  if (!touch && started && !menu.isOpen && !game.input.locked) game.input.requestLock();
 });

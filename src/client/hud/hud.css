@@ -21,7 +21,8 @@
 
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; overflow: hidden; background: #000; color: var(--hud-text); font-family: var(--font); user-select: none; }
-canvas#game { display: block; position: fixed; inset: 0; width: 100vw; height: 100vh; outline: none; }
+canvas#game { display: block; position: fixed; inset: 0; width: 100%; height: 100%; outline: none; }
+body.touch canvas#game { touch-action: none; }
 
 #hud { position: fixed; inset: 0; pointer-events: none; text-shadow: var(--legible); }
 #hud.hidden { display: none; }
@@ -199,6 +200,9 @@ kbd { font-family: var(--font-display); font-size: 0.8em; color: #fff; border: 1
 #menu .quickhelp .k { font-family: var(--font-display); font-size: 12px; color: #fff; border: 1px solid var(--hud-line); padding: 1px 7px; background: rgba(127, 227, 255, 0.12); }
 #menu .note, #menu .hint { margin-top: 18px; font-size: 15px; color: var(--hud-dim); line-height: 1.45; }
 #menu .hint { text-align: left; margin: 8px 0 12px; }
+body.touch #menu .quickhelp { display: none; }
+#menu .touch-note { border: 1px solid var(--hud-line); background: rgba(4, 30, 44, 0.55); color: #fff; padding: 10px 14px; margin: 0 0 16px; font-size: 15px; line-height: 1.4; }
+#menu .touch-note strong { color: var(--hud); }
 #menu .device-warning { border: 1px solid var(--warn); background: rgba(80, 50, 0, 0.45); color: #fff; padding: 12px 16px; margin: 0 0 20px; font-size: 16px; line-height: 1.4; }
 #menu .device-warning strong { color: var(--warn); }
 #menu .diag { margin: 14px 0 0; font-size: 11px; line-height: 1.4; color: var(--hud-dim); overflow-wrap: anywhere; user-select: text; }
@@ -305,3 +309,71 @@ kbd { font-family: var(--font-display); font-size: 0.8em; color: #fff; border: 1
   #chat { right: auto; width: calc(50% - 110px); }
   body:has(#chat:not(.hidden)) #feed { top: 96px; left: auto; right: var(--gap); transform: none; max-width: calc(50% - 110px); }
 }
+
+/* --- Touch screens: on-screen controls (#touch) and a HUD that leaves room for the thumbs */
+#touch { position: fixed; inset: 0; z-index: 4; pointer-events: none; font-family: var(--font-display); --sl: env(safe-area-inset-left, 0px); --sr: env(safe-area-inset-right, 0px); --sb: env(safe-area-inset-bottom, 0px); }
+#touch.hidden { display: none; }
+#touch, #touch * { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+#touch .stick-zone { position: absolute; left: 0; bottom: 0; width: 46%; height: 72%; pointer-events: auto; }
+#touch .stick-base { position: fixed; left: 0; top: 0; width: 116px; height: 116px; margin: -58px 0 0 -58px; border-radius: 50%; border: 2px solid var(--hud-line); background: rgba(4, 12, 22, 0.35); opacity: 0; transition: opacity 0.15s; pointer-events: none; }
+#touch .stick-base.active { opacity: 1; }
+#touch .stick-knob { position: absolute; left: 50%; top: 50%; width: 52px; height: 52px; margin: -26px 0 0 -26px; border-radius: 50%; background: rgba(143, 233, 255, 0.45); border: 2px solid var(--hud); box-shadow: 0 0 10px rgba(0, 0, 0, 0.6); }
+#touch .stick-zone::after { content: 'PILOTER'; position: absolute; left: calc(18% + var(--sl)); bottom: calc(34% + var(--sb)); font-size: 10px; letter-spacing: 2px; color: var(--hud-dim); opacity: 0.6; }
+#touch .throttle { position: absolute; left: calc(14px + var(--sl)); bottom: calc(18px + var(--sb)); width: 44px; height: min(170px, 42vh); border: 1px solid var(--hud-line); background: rgba(4, 12, 22, 0.55); pointer-events: auto; }
+#touch .throttle .fill { position: absolute; left: 0; right: 0; background: linear-gradient(to top, rgba(127, 227, 255, 0.35), var(--hud)); }
+#touch .throttle .fill.reverse { background: var(--warn); }
+#touch .throttle .zero { position: absolute; left: -5px; right: -5px; bottom: 28.57%; height: 2px; background: #fff; }
+#touch .throttle span { position: absolute; left: 0; right: 0; top: -18px; text-align: center; font-size: 9px; letter-spacing: 1.5px; color: var(--hud-dim); }
+#touch .tb { position: absolute; pointer-events: auto; display: flex; align-items: center; justify-content: center; font-family: var(--font-display); font-size: 12px; letter-spacing: 1.5px; color: #fff; background: rgba(4, 12, 22, 0.55); border: 2px solid var(--hud-line); border-radius: 50%; padding: 0; text-shadow: var(--legible); }
+#touch .tb.down { background: rgba(143, 233, 255, 0.4); border-color: #fff; }
+#touch .fire { right: calc(20px + var(--sr)); bottom: calc(22px + var(--sb)); width: 96px; height: 96px; font-size: 15px; border-color: var(--hostile); background: rgba(90, 20, 10, 0.5); }
+#touch .fire.down { background: rgba(255, 106, 77, 0.6); }
+#touch .boost { right: calc(128px + var(--sr)); bottom: calc(22px + var(--sb)); width: 68px; height: 68px; font-size: 10px; border-color: var(--energy); }
+#touch .target { right: calc(34px + var(--sr)); bottom: calc(130px + var(--sb)); width: 60px; height: 60px; font-size: 10px; }
+#touch .stop { right: calc(128px + var(--sr)); bottom: calc(104px + var(--sb)); width: 54px; height: 54px; font-size: 10px; }
+#touch .roll-l, #touch .roll-r { width: 46px; height: 46px; font-size: 22px; font-family: var(--font); bottom: calc(168px + var(--sb)); }
+#touch .roll-l { right: calc(160px + var(--sr)); }
+#touch .roll-r { right: calc(106px + var(--sr)); }
+#touch .tbar { position: absolute; right: calc(10px + var(--sr)); top: calc(10px + env(safe-area-inset-top, 0px)); display: flex; gap: 6px; pointer-events: none; }
+#touch .tbar.netbar { right: auto; left: calc(10px + var(--sl)); top: 146px; }
+#touch .tbar .tb { position: static; border-radius: 4px; min-width: 44px; height: 36px; padding: 0 8px; font-size: 10px; }
+#touch .tbar .pause { font-size: 14px; letter-spacing: 0; font-weight: 700; }
+#touch .online { display: none !important; }
+#touch.online .online { display: flex !important; }
+#touch .rotate { display: none; }
+@media (orientation: portrait) and (max-width: 700px) {
+  #touch .rotate { display: flex; position: fixed; inset: 0; align-items: center; justify-content: center; text-align: center; padding: 24px; background: rgba(0, 4, 10, 0.88); pointer-events: auto; z-index: 30; font-family: var(--font); }
+  #touch .rotate b { font-family: var(--font-display); font-size: 18px; letter-spacing: 3px; color: var(--hud); }
+  #touch .rotate p { font-size: 17px; color: #fff; }
+  #touch .rotate div::before { content: '⟳'; display: block; font-size: 54px; color: var(--hud); margin-bottom: 8px; }
+}
+
+/* HUD in touch mode: status and flight info go to the top, the bottom corners belong to the thumbs. */
+body.touch #zone .help { display: none; }
+body.touch #capture { display: none; }
+body.touch #topbar { top: 6px; left: 50%; right: auto; transform: translateX(-50%); justify-content: center; padding: 4px 12px; gap: 12px; }
+body.touch #topbar .label { font-size: 8px; letter-spacing: 1px; }
+body.touch #topbar .v { font-size: 13px; }
+body.touch #zone { top: 8px; left: calc(10px + env(safe-area-inset-left, 0px)); }
+body.touch #zone .label { display: none; }
+body.touch #zone .name { font-size: 11px; letter-spacing: 2px; }
+body.touch #zone .net { font-size: 12px; white-space: normal; max-width: calc(50vw - 160px); }
+body.touch #fps { display: none; }
+body.touch #status { top: 54px; bottom: auto; right: calc(10px + env(safe-area-inset-right, 0px)); width: 190px; padding: 6px 10px; }
+body.touch #status .stat { margin-bottom: 4px; }
+body.touch #status .stat .head { font-size: 11px; }
+body.touch #status .segbar { height: 6px; margin-top: 2px; }
+body.touch #flight { top: 64px; bottom: auto; left: calc(10px + env(safe-area-inset-left, 0px)); width: auto; padding: 6px 10px; }
+body.touch #flight #throttle { display: none; }
+body.touch #flight .label { font-size: 9px; }
+body.touch #flight .big { font-size: 22px; }
+body.touch #flight .chips { margin-top: 4px; }
+body.touch #radarWrap { width: 190px; height: 108px; bottom: calc(6px + env(safe-area-inset-bottom, 0px)); aspect-ratio: auto; }
+body.touch #feed { top: 40%; }
+body.touch #chat { bottom: auto; top: 40px; left: 50%; right: auto; transform: translateX(-50%); width: min(420px, 46vw); min-width: 0; font-size: 13px; }
+body.touch #chat .log { max-height: 62px; }
+body.touch #chat .hint { display: none; }
+body.touch #scoreboard { top: 50px; }
+body.touch:has(#chat:not(.hidden)) #feed { top: 40%; }
+body.touch .bracket .info { font-size: 12px; padding: 3px 6px; }
+body.touch .bracket .bars { width: 80px; }

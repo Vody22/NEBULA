@@ -1,3 +1,4 @@
+import { isTouchDevice } from '../input/Touch';
 import {
   ACTION_LABELS,
   DEFAULT_BINDINGS,
@@ -55,8 +56,7 @@ export class Menu {
     this.root.setAttribute('role', 'dialog');
     this.root.setAttribute('aria-modal', 'true');
     this.root.setAttribute('aria-labelledby', 'menuTitle');
-    this.touchOnly =
-      typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches && !matchMedia('(any-pointer: fine)').matches;
+    this.touchOnly = isTouchDevice();
 
     type LayoutNav = Navigator & { keyboard?: { getLayoutMap?: () => Promise<Map<string, string>> } };
     (navigator as LayoutNav).keyboard
@@ -142,7 +142,7 @@ export class Menu {
         <p class="sub">${start ? 'Secteur Aurora · v0.2 multijoueur' : this.online ? 'En ligne : le secteur continue, votre vaisseau coupe les gaz' : 'La simulation est en pause'}</p>
         ${
           this.touchOnly
-            ? `<p class="device-warning" role="alert"><strong>Clavier et souris requis.</strong> Ce prototype ne propose pas encore de commandes tactiles : sur cet appareil, il est seulement possible de regarder la scène.</p>`
+            ? `<p class="touch-note"><strong>Commandes tactiles.</strong> Pouce gauche : glissez pour piloter. Pouce droit : FEU et BOOST. Curseur GAZ pour la poussée. Jouez en mode paysage.</p>`
             : ''
         }
         ${

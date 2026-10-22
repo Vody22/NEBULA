@@ -76,7 +76,22 @@ Les touches correspondent à des positions physiques : sur un clavier AZERTY, `W
 | `Tab` (maintenir) | Liste des pilotes |
 | `Échap` | Pause : reprendre, commandes, options et son |
 
-Toutes les touches se réaffectent dans **Échap → Commandes** (affichage AZERTY ou QWERTY au choix). Les réglages (touches, volume, sensibilité, inversion verticale) sont enregistrés dans le navigateur. Le jeu demande un clavier et une souris : il n'existe pas encore de commandes tactiles.
+Toutes les touches se réaffectent dans **Échap → Commandes** (affichage AZERTY ou QWERTY au choix). Les réglages (touches, volume, sensibilité, inversion verticale) sont enregistrés dans le navigateur.
+
+### Téléphone et tablette
+
+Sur un écran tactile, le jeu affiche ses commandes à l'écran. Il se joue en mode paysage ; tenu à la verticale, un téléphone affiche « Tournez votre appareil ».
+
+| Commande | Action |
+| --- | --- |
+| Pouce gauche, glisser | Piloter (le joystick apparaît sous le doigt) |
+| Curseur **GAZ** | Poussée (en bas du trait blanc : marche arrière) |
+| **FEU** / **BOOST** (maintenir) | Tirer / boost |
+| **CIBLE**, **STOP**, ⟲ ⟳ | Cible suivante, couper les gaz, roulis |
+| **ASSIST.**, **II** | Assistance de vol, pause |
+| **CHAT**, **PVP**, **PILOTES** | En ligne : écrire, PvP on/off, liste des pilotes |
+
+Sur mobile, la qualité graphique basse est choisie par défaut (`?q=high` pour la forcer). `?touch` affiche les commandes tactiles sur un ordinateur.
 
 Le tir consomme l'énergie du condensateur. Elle ne se recharge que 0,6 s après le dernier tir et hors boost ; si elle tombe à zéro, les armes restent hors ligne jusqu'à 30 % (« ARMES EN RECHARGE »).
 
@@ -115,6 +130,7 @@ npm run preview &   # puis :
 npm run smoke       # lance le jeu dans Chromium headless, pilote, tire et fait des captures
 npm run ui-check    # HUD à 3 tailles, menu pause, réaffectation, réglages, tirs F/clic (solo)
 node scripts/mp-check.mjs    # 3 navigateurs sur le vrai serveur : synchro, chat, combat commun, PvP, latence, reconnexion
+node scripts/mobile-check.mjs   # téléphone et tablette émulés : commandes tactiles, mise en page, chat et PvP en ligne
 node scripts/load-test.mjs 30 30   # 30 pilotes robots pendant 30 s : coût du tick et bande passante
 ```
 

@@ -23,6 +23,8 @@ export class InputManager {
   /** When false (menus open) the ship receives neutral controls. */
   enabled = true;
   locked = false;
+  /** Touch screen: the on-screen stick owns the cursor, emulated mouse events are ignored. */
+  touchMode = false;
   bindings: Record<Action, string>;
   private keys = new Set<string>();
   private mouseDown = false;
@@ -40,14 +42,14 @@ export class InputManager {
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
     window.addEventListener('blur', () => this.releaseAll());
     element.addEventListener('mousedown', (e) => {
-      if (e.button === 0 && this.enabled) this.mouseDown = true;
+      if (e.button === 0 && this.enabled && !this.touchMode) this.mouseDown = true;
     });
     window.addEventListener('mouseup', (e) => {
       if (e.button === 0) this.mouseDown = false;
     });
     element.addEventListener('contextmenu', (e) => e.preventDefault());
     window.addEventListener('mousemove', (e) => {
-      if (!this.enabled) return;
+      if (!this.enabled || this.touchMode) return;
       if (this.locked) {
         const k = 0.0022 * this.sensitivity;
         this.cursor.x += e.movementX * k;
@@ -112,6 +114,20 @@ export class InputManager {
 
   private down(a: Action) {
     return this.keys.has(this.bindings[a]) ? 1 : 0;
+  }
+
+  /** On-screen button held or released (touch controls): behaves like the bound key. */
+  hold(a: Action, on: boolean) {
+    const code = this.bindings[a];
+    if (on) {
+      if (!this.keys.has(code)) this.pressed.add(code);
+      this.keys.add(code);
+    } else this.keys.delete(code);
+  }
+
+  /** On-screen button tapped (touch controls): one press of the bound key. */
+  tap(a: Action) {
+    this.pressed.add(this.bindings[a]);
   }
 
   /** True once per press of the key bound to `a`. */
