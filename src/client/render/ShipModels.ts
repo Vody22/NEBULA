@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { ShipClassId } from '../../shared/sim/types';
 import { mergeByMaterial } from './merge';
 import { makeHullTextures, makeRadialTexture } from './textures';
+import { buildFalconMk2 } from './FalconMk2';
 
 export interface ShipModel {
   root: THREE.Group;
@@ -11,6 +12,12 @@ export interface ShipModel {
   boostColor: THREE.Color;
   /** Shield ellipsoid half-extents. */
   shieldScale: THREE.Vector3;
+  /** Steady position lights (port red, starboard green, white aft). */
+  navs?: { pos: THREE.Vector3; color: THREE.Color; size: number }[];
+  /** Flashing anti-collision lights. */
+  strobes?: { pos: THREE.Vector3; color: THREE.Color }[];
+  /** Manoeuvring thruster nozzles: exit point and exhaust direction (local). */
+  rcs?: { pos: THREE.Vector3; dir: THREE.Vector3 }[];
 }
 
 interface Paint {
@@ -103,102 +110,6 @@ function nozzle(p: Paint, radius: number, length: number, pos: THREE.Vector3) {
   g.add(lip);
   g.position.copy(pos);
   return g;
-}
-
-function buildFalcon(variant: 'falcon' | 'warden'): ShipModel {
-  const engineColor = variant === 'falcon' ? new THREE.Color(0.5, 1.4, 4) : new THREE.Color(0.4, 3, 2);
-  const p =
-    variant === 'falcon'
-      ? paint('falcon', '#c9ced6', '#1f6fd1', engineColor, 41)
-      : paint('warden', '#a9b7ad', '#2e9b6a', engineColor, 57, '#253029');
-  const root = new THREE.Group();
-
-  // Fuselage
-  const body = latheZ(
-    [
-      [0, -9.2], [0.35, -8.7], [0.9, -7.6], [1.5, -5.6], [1.95, -3.2], [2.2, -0.6], [2.25, 2.0],
-      [2.05, 4.6], [1.75, 6.6], [1.45, 7.6], [0, 7.7],
-    ],
-    40,
-    p.hull,
-  );
-  body.scale.set(1.15, 0.78, 1);
-  root.add(body);
-  // Dorsal spine
-  const spine = slab([[-0.5, -3.5], [0.5, -3.5], [0.9, 6.5], [-0.9, 6.5]], 0.6, p.dark);
-  spine.position.y = 1.6;
-  root.add(spine);
-  // Canopy
-  const canopy = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 16), p.glass);
-  canopy.scale.set(1.05, 0.75, 2.6);
-  canopy.position.set(0, 1.15, -3.6);
-  root.add(canopy);
-  const frame = new THREE.Mesh(new THREE.TorusGeometry(1.06, 0.07, 6, 32, Math.PI), p.dark);
-  frame.position.set(0, 1.15, -3.4);
-  frame.scale.set(1, 0.75, 1);
-  root.add(frame);
-
-  // Main wings (swept, with a cranked tip)
-  const wing = slab(
-    [[1.4, -2.2], [4.0, -0.4], [7.6, 2.6], [7.8, 4.2], [6.2, 4.4], [1.4, 4.8]],
-    0.32,
-    p.hull,
-  );
-  wing.position.y = -0.55;
-  wing.rotation.z = -0.06;
-  root.add(wing, mirrored(wing));
-  // Wing-mounted cannon pods (hardpoints at ±4.6, -0.6, -6.5)
-  const pod = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.55, 5.2, 12), p.dark);
-  pod.rotation.x = Math.PI / 2;
-  pod.position.set(4.6, -0.6, -1.6);
-  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.18, 3.4, 8), p.dark);
-  barrel.rotation.x = Math.PI / 2;
-  barrel.position.set(4.6, -0.6, -5.0);
-  const muzzle = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.4, 8), p.hull);
-  muzzle.rotation.x = Math.PI / 2;
-  muzzle.position.set(4.6, -0.6, -6.6);
-  root.add(pod, mirrored(pod), barrel, mirrored(barrel), muzzle, mirrored(muzzle));
-
-  // Engine nacelles
-  for (const sx of [-1, 1]) {
-    const nac = latheZ([[0.0, -1.5], [0.9, -1.2], [1.25, 0.2], [1.25, 4.2], [1.15, 5.6]], 24, p.hull);
-    nac.position.set(sx * 2.25, -0.1, 2.2);
-    root.add(nac);
-    const intake = new THREE.Mesh(new THREE.BoxGeometry(0.9, 1.2, 2.2), p.dark);
-    intake.position.set(sx * 2.4, 0.3, -0.4);
-    root.add(intake);
-    root.add(nozzle(p, 1.05, 1.6, new THREE.Vector3(sx * 2.25, -0.1, 8.4)));
-  }
-  // Canted tail fins
-  const fin = slab([[0, 3.2], [0.0, 7.4], [2.8, 8.4], [2.4, 6.2]], 0.22, p.hull);
-  fin.rotation.z = Math.PI / 2 - 0.35;
-  fin.position.set(1.4, 1.4, 0);
-  root.add(fin, mirrored(fin));
-  // Greebles
-  for (let i = 0; i < 6; i++) {
-    const g = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.25, 0.8 + (i % 3) * 0.4), p.dark);
-    g.position.set((i % 2 ? 1 : -1) * (0.9 + (i % 3) * 0.25), 1.35 - (i % 3) * 0.1, 1 + i * 0.7);
-    root.add(g);
-  }
-  // Glow accents
-  const strip = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 3), p.glow);
-  strip.position.set(1.95, 0.25, -1.5);
-  root.add(strip, mirrored(strip));
-
-  root.add(navLight(new THREE.Color(2.5, 0.2, 0.15), 1.0, [-7.7, -0.55, 3.6]));
-  root.add(navLight(new THREE.Color(0.2, 2.5, 0.3), 1.0, [7.7, -0.55, 3.6]));
-  root.add(navLight(new THREE.Color(2, 2, 2), 0.8, [0, 2.0, 6.6]));
-
-  return {
-    root,
-    engines: [
-      { pos: new THREE.Vector3(-2.25, -0.1, 9.2), radius: 1.0 },
-      { pos: new THREE.Vector3(2.25, -0.1, 9.2), radius: 1.0 },
-    ],
-    engineColor,
-    boostColor: new THREE.Color(2.5, 3.2, 6),
-    shieldScale: new THREE.Vector3(9.5, 4.5, 11),
-  };
 }
 
 function buildRaider(): ShipModel {
@@ -311,9 +222,9 @@ function buildMarauder(): ShipModel {
 function buildRaw(classId: ShipClassId): ShipModel {
   switch (classId) {
     case 'falcon':
-      return buildFalcon('falcon');
+      return buildFalconMk2('falcon');
     case 'warden':
-      return buildFalcon('warden');
+      return buildFalconMk2('warden');
     case 'raider':
       return buildRaider();
     case 'marauder':

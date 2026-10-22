@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
-const KEEP = ['position', 'normal', 'uv'];
+const KEEP = ['position', 'normal', 'uv', 'color'];
 
 function flipWinding(geo: THREE.BufferGeometry) {
   for (const name of KEEP) {
@@ -52,6 +52,15 @@ export function mergeByMaterial(root: THREE.Object3D) {
   });
   for (const v of victims) v.parent?.remove(v);
   for (const [mat, geos] of buckets) {
+    // Vertex colours only survive on materials that read them; elsewhere every
+    // geometry of the bucket needs the same attribute set.
+    const tinted = (mat as THREE.MeshStandardMaterial).vertexColors === true;
+    for (const g of geos) {
+      if (!tinted) g.deleteAttribute('color');
+      else if (!g.getAttribute('color')) {
+        g.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(g.getAttribute('position').count * 3).fill(1), 3));
+      }
+    }
     const merged = mergeGeometries(geos, false);
     for (const g of geos) g.dispose();
     if (merged) root.add(new THREE.Mesh(merged, mat));

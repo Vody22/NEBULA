@@ -1,6 +1,23 @@
 import * as THREE from 'three';
 import type { ShipClassId } from '../../shared/sim/types';
 import { buildShipModel, type ShipModel } from './ShipModels';
+import { makeRadialTexture } from './textures';
+
+let _glint: THREE.Texture | null = null;
+const glint = () =>
+  (_glint ??= makeRadialTexture([
+    [0, 'rgba(255,255,255,1)'],
+    [0.2, 'rgba(255,255,255,0.6)'],
+    [1, 'rgba(255,255,255,0)'],
+  ]));
+function lightSprite(color: THREE.Color, size: number, pos: THREE.Vector3) {
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: glint(), color, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }));
+  s.position.copy(pos);
+  s.scale.setScalar(size);
+  return s;
+}
+const _torque = new THREE.Vector3();
+const _w = new THREE.Vector3();
 
 const flameVert = /* glsl */ `
 varying vec2 vUv;
@@ -137,11 +154,30 @@ export class ShipView {
   private flash = 0;
   private trail: Trail;
   private throttleVis = 0;
+  private strobes: THREE.Sprite[] = [];
+  private strobePhase = Math.random() * 1.4;
+  /** RCS puffs and the axis each one turns the ship around (unit torque). */
+  private rcs: { sprite: THREE.Sprite; torque: THREE.Vector3; level: number }[] = [];
   readonly light: THREE.PointLight | null;
 
   constructor(readonly classId: ShipClassId, scene: THREE.Scene, private isLocal: boolean) {
     this.model = buildShipModel(classId);
     this.group.add(this.model.root);
+    for (const n of this.model.navs ?? []) this.group.add(lightSprite(n.color, n.size, n.pos));
+    for (const st of this.model.strobes ?? []) {
+      const sp = lightSprite(st.color, 1.6, st.pos);
+      sp.visible = false;
+      this.strobes.push(sp);
+      this.group.add(sp);
+    }
+    for (const r of this.model.rcs ?? []) {
+      const sprite = lightSprite(new THREE.Color(1.6, 1.8, 2.2), 0.6, r.pos.clone().addScaledVector(r.dir, 0.25));
+      sprite.visible = false;
+      // Thrust pushes against the exhaust: torque = r × (−dir).
+      const torque = new THREE.Vector3().crossVectors(r.pos, r.dir).negate().normalize();
+      this.rcs.push({ sprite, torque, level: 0 });
+      this.group.add(sprite);
+    }
 
     const flameGeo = new THREE.ConeGeometry(1, 1, 20, 1, true);
     flameGeo.translate(0, 0.5, 0);
@@ -207,7 +243,8 @@ export class ShipView {
     this.flash = 1;
   }
 
-  update(dt: number, time: number, throttle: number, boosting: boolean, camPos: THREE.Vector3) {
+  /** `angular`: local angular velocity (pitch, yaw, roll axes), rad/s, from the snapshot. */
+  update(dt: number, time: number, throttle: number, boosting: boolean, camPos: THREE.Vector3, angular?: ArrayLike<number>) {
     const target = boosting ? 1.8 : Math.max(0.08, throttle);
     this.throttleVis += (target - this.throttleVis) * Math.min(1, dt * 6);
     const tv = this.throttleVis;
@@ -224,6 +261,29 @@ export class ShipView {
     this.shield.visible = this.flash > 0.001 || time - (this.shieldMat.uniforms.uHits.value as THREE.Vector4[]).reduce((m, h) => Math.max(m, h.w), -10) < 0.8;
     if (this.light) this.light.intensity = 40 + tv * 120;
 
+    // Anti-collision: a double flash every 1.4 s.
+    if (this.strobes.length) {
+      const t = (time + this.strobePhase) % 1.4;
+      const on = t < 0.05 || (t > 0.15 && t < 0.2);
+      for (const sp of this.strobes) sp.visible = on;
+    }
+    // Manoeuvring thrusters fire on the side that drives the current rotation.
+    if (this.rcs.length) {
+      if (angular) _w.set(angular[0], angular[1], angular[2]);
+      else _w.set(0, 0, 0);
+      for (const r of this.rcs) {
+        const drive = _torque.copy(r.torque).dot(_w);
+        const target = Math.min(1, Math.max(0, (drive - 0.12) * 2.2));
+        r.level += (target - r.level) * Math.min(1, dt * 14);
+        r.sprite.visible = r.level > 0.03;
+        if (r.sprite.visible) {
+          const flick = 0.8 + 0.2 * Math.sin(time * 90 + r.torque.x * 7);
+          r.sprite.scale.setScalar((0.35 + r.level * 0.9) * flick);
+          (r.sprite.material as THREE.SpriteMaterial).opacity = r.level;
+        }
+      }
+    }
+
     const tail = new THREE.Vector3(0, 0, this.model.shieldScale.z * 0.9).applyQuaternion(this.group.quaternion).add(this.group.position);
     if (!this.isLocal) this.trail.update(tail, camPos, dt, 0.5 + tv * 0.6);
   }
@@ -234,6 +294,7 @@ export class ShipView {
 
   dispose(scene: THREE.Scene) {
     scene.remove(this.group);
+    for (const o of this.group.children) if (o instanceof THREE.Sprite) o.material.dispose();
     scene.remove(this.trail.mesh);
     this.trail.mesh.geometry.dispose();
   }

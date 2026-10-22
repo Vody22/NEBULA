@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NEBULA FRONTIER · Hangar</title>
+    <link rel="icon" href="data:," />
+    <meta name="description" content="Visionneuse des vaisseaux de NEBULA FRONTIER, avec l'éclairage du jeu." />
+    <style>
+      html, body { margin: 0; height: 100%; background: #000; color: #cfe6ff; font: 14px/1.4 system-ui, sans-serif; overflow: hidden; }
+      canvas { display: block; width: 100%; height: 100%; }
+      #ui { position: fixed; top: 12px; left: 12px; display: flex; flex-wrap: wrap; gap: 6px; max-width: calc(100% - 24px); }
+      #ui button, #ui select { background: rgba(10, 20, 32, 0.8); color: #cfe6ff; border: 1px solid #2c4a66; border-radius: 4px; padding: 6px 10px; font: inherit; cursor: pointer; }
+      #ui button:hover { border-color: #7fe3ff; }
+      #stats { position: fixed; bottom: 12px; left: 12px; font: 12px ui-monospace, monospace; color: #8fb3d0; white-space: pre; }
+      body.clean #ui, body.clean #stats { display: none; }
+    </style>
+  </head>
+  <body>
+    <canvas id="view" aria-label="Vaisseau en 3D"></canvas>
+    <div id="ui"></div>
+    <div id="stats"></div>
+    <script type="module" src="/src/hangar.ts"></script>
+  </body>
+</html>

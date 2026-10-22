@@ -383,6 +383,22 @@ Chaque étape fait l'objet d'un commit séparé sur `v0.2.5-graphics`, avec des 
 | **6. Cohérence** | Warden, Raider et Marauder harmonisés avec les signatures de faction ; palette appliquée à l'interface | Capture 04 et HUD | Chaque faction est reconnaissable à sa silhouette et à ses couleurs |
 | **7. Optimisation** | LOD, réduction de l'overdraw, compression des textures, mesures | Tableau de performances | Cibles du §5 atteintes sur du matériel réel, ou écart documenté |
 
+### Journal de réalisation
+
+- **Étapes 0 et 1 (terminées) :** menu « Qualité graphique » (Automatique, Bas, Moyen, Élevé, Ultra, ou `?q=`), soleil dominant à 4,2 avec contre-jour froid, environnement à 0,55, bloom à seuil 1,05, aberration seulement sous les dégâts. Captures : `screenshots/visual/step1/`.
+- **Étape 2 (Falcon Mk.II, en revue) :** `src/client/render/FalconMk2.ts`, outils `shipKit.ts` et textures `shipTextures.ts`.
+  - Coque profilée à chanfreins en quatre sections de blindage, avec de vrais joints au-dessus d'un noyau sombre ; dos anthracite, bande bleu marine, liseré cyan sous le cockpit.
+  - Nacelles en deux sections, prise d'air avec soufflante, tuyère en trois couches (pétales, anneau chaud, cône d'éjection), brunissement thermique, radiateurs à ailettes.
+  - Cockpit vitré avec arceaux, siège, casque du pilote et deux écrans ; sonde de nez, dôme capteur, antennes.
+  - Canons aux points d'emport de la simulation (±4,6 ; −0,6 ; −6,5) avec manchon de refroidissement et frein de bouche.
+  - Douze tuyères RCS aux quatre coins, qui s'allument selon la vitesse de rotation envoyée par le serveur (aucun changement de protocole) ; feux de position et feux anticollision clignotants.
+  - Trappes de trains repliés, décalques (`FMK2-0147`, `AURORA FLEETWORKS`, `FALCON MK.II`, emblème de l'Union, `NO STEP`, `RESCUE`, chevrons).
+  - Textures générées : peinture à 256 px/m environ, carte normale (joints, rivets, trappes), carte ORM (occlusion, rugosité, métal), éclats de peinture sur les bords, traînées de saleté vers l'arrière.
+  - Mesures : environ 13 700 triangles et 6 appels de dessin pour la coque (peinture, métal sombre, métal nu, verre, émissifs, décalques), plus les feux. C'est au-dessus de l'objectif de 3 matériaux : les trois derniers sont petits, et les regrouper dans un atlas est prévu à l'étape 7.
+  - Le Warden reprend provisoirement cette coque avec sa propre peinture ; sa silhouette distincte arrive à l'étape 6.
+  - Visionneuse `hangar.html` (`?ship=`, `?view=`), captures `scripts/ship-capture.mjs`, export GLB par le bouton « Exporter GLB ».
+  - Limite honnête : c'est un modèle procédural détaillé, pas un asset de production modélisé et texturé à la main.
+
 ### Budgets par image (niveau Élevé)
 
 | Élément | Budget |

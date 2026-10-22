@@ -484,7 +484,7 @@ export class Game {
       view.group.position.copy(s.position);
       view.group.quaternion.copy(s.rotation);
       const throttle = s.snap.boosting ? 1 : Math.max(0, s.snap.throttle);
-      view.update(dt, this.time, throttle, s.snap.boosting, this.cam.camera.position);
+      view.update(dt, this.time, throttle, s.snap.boosting, this.cam.camera.position, s.snap.w);
       const cls = SHIP_CLASSES[s.snap.classId];
       const hullFrac = s.snap.hull / cls.hull;
       if (hullFrac < 0.5) {
