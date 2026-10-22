@@ -67,12 +67,18 @@ export class Game {
   running = false;
   private lastMe: InterpolatedShip | null = null;
   private damageFx = 0;
+  private maxPixelRatio: number;
+  private pixelRatio: number;
+  private perfTimer = 0;
+  private perfFrames = 0;
   /** Exposed for automated smoke tests. */
   readonly debug = { frames: 0, ships: 0, bolts: 0, events: 0, explosions: 0 };
 
   constructor(canvas: HTMLCanvasElement, private transport: Transport, private opts: GameOptions) {
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: opts.quality === 'high', powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, opts.quality === 'high' ? 1.5 : 1));
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
+    this.maxPixelRatio = Math.min(window.devicePixelRatio, opts.quality === 'high' ? 1.5 : 1);
+    this.pixelRatio = this.maxPixelRatio;
+    this.renderer.setPixelRatio(this.pixelRatio);
     this.renderer.setSize(window.innerWidth, window.innerHeight, false);
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
@@ -80,7 +86,7 @@ export class Game {
 
     this.cam = new ChaseCamera(window.innerWidth / window.innerHeight);
     this.scene.add(this.cam.camera);
-    this.post = new PostFX(this.renderer, this.scene, this.cam.camera);
+    this.post = new PostFX(this.renderer, this.scene, this.cam.camera, opts.quality === 'high' ? 4 : 0);
     this.input = new InputManager(canvas);
     this.scene.add(this.lasers.group, this.effects.group, this.dust.lines);
 
@@ -92,8 +98,9 @@ export class Game {
   private resize() {
     const w = window.innerWidth;
     const h = window.innerHeight;
+    this.renderer.setPixelRatio(this.pixelRatio);
     this.renderer.setSize(w, h, false);
-    this.post.setSize(w, h);
+    this.post.setSize(w, h, this.pixelRatio);
     this.cam.camera.aspect = w / h;
     this.cam.camera.updateProjectionMatrix();
     this.effects.setPixelScale(h * this.renderer.getPixelRatio(), this.cam.camera.fov);
@@ -274,13 +281,40 @@ export class Game {
         stationPos: this.zone.station.position,
         stationName: this.zone.station.name,
         fps: this.fps,
-        net: this.transport.label,
+        net: `${this.transport.label} · ${Math.round(this.pixelRatio * 100)}%`,
       },
       dt,
     );
     this.damageFx = Math.max(0, this.damageFx - dt * 2);
+    this.adaptResolution(dt);
     this.debug.ships = ships.size;
     this.post.render(this.time, this.damageFx);
+  }
+
+  /**
+   * Dynamic resolution: every 2 s, lower the render scale when the frame rate
+   * stays under 45 FPS and raise it again above 58 FPS.
+   */
+  private adaptResolution(dt: number) {
+    if (!this.running) return;
+    this.perfTimer += dt;
+    this.perfFrames++;
+    if (this.perfTimer < 2) return;
+    const fps = this.perfFrames / this.perfTimer;
+    this.perfTimer = 0;
+    this.perfFrames = 0;
+    let next = this.pixelRatio;
+    if (fps < 45) next = Math.max(0.6, this.pixelRatio * 0.85);
+    else if (fps > 58) next = Math.min(this.maxPixelRatio, this.pixelRatio * 1.1);
+    if (Math.abs(next - this.pixelRatio) > 0.02) {
+      this.pixelRatio = next;
+      this.resize();
+    }
+  }
+
+  /** Current render scale (for the HUD / diagnostics). */
+  get renderScale() {
+    return this.pixelRatio;
   }
 
   private handleEvent(e: SimEvent, time: number) {

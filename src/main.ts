@@ -43,6 +43,18 @@ function begin() {
 }
 
 launch.addEventListener('click', begin);
+
+// Controls use physical key positions (KeyboardEvent.code), so on AZERTY the
+// "W/A" keys are Z/Q. Show the labels of the player's actual layout.
+type LayoutNav = Navigator & { keyboard?: { getLayoutMap?: () => Promise<Map<string, string>> } };
+(navigator as LayoutNav).keyboard?.getLayoutMap?.()
+  .then((map) => {
+    document.querySelectorAll<HTMLElement>('kbd[data-code]').forEach((k) => {
+      const label = map.get(k.dataset.code!);
+      if (label) k.textContent = label.toUpperCase();
+    });
+  })
+  .catch(() => {});
 launch.textContent = 'DÉCOLLER';
 
 document.addEventListener('pointerlockchange', () => {

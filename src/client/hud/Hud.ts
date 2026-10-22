@@ -68,6 +68,14 @@ export class Hud {
   private hitTimer = 0;
   private damage = 0;
   private shieldFx = 0;
+  private cache = new Map<HTMLElement, string>();
+
+  /** Writes innerHTML only when it changed (avoids re-layout every frame). */
+  private html(el: HTMLElement, value: string) {
+    if (this.cache.get(el) === value) return;
+    this.cache.set(el, value);
+    el.innerHTML = value;
+  }
 
   constructor() {
     this.root = el('div', '', document.body) as HTMLDivElement;
@@ -200,12 +208,12 @@ export class Hud {
     const H = window.innerHeight;
     const pt = { x: 0, y: 0, front: true };
     const me = f.me;
-    this.fpsEl.textContent = `${f.fps.toFixed(0)} IPS · ${f.net}`;
-    this.topbar.innerHTML =
+    this.html(this.fpsEl, `${f.fps.toFixed(0)} IPS · ${f.net}`);
+    this.html(this.topbar,
       `<div><div class="label">Vague</div><div class="v">${f.wave}</div></div>` +
       `<div><div class="label">Éliminations</div><div class="v">${f.stats.kills}</div></div>` +
       `<div><div class="label">Crédits</div><div class="v">${f.stats.credits.toLocaleString('fr-FR')}</div></div>` +
-      `<div><div class="label">Pertes</div><div class="v">${f.stats.deaths}</div></div>`;
+      `<div><div class="label">Pertes</div><div class="v">${f.stats.deaths}</div></div>`);
 
     this.death.classList.toggle('show', !me);
     if (!me) {
@@ -254,10 +262,10 @@ export class Hud {
     const thr = (f.input.throttle + 0.4) / 1.4;
     this.throttleFill.style.height = `${(me.snap.boosting ? 1 : thr) * 100}%`;
     this.throttleBox.classList.toggle('boost', me.snap.boosting);
-    this.chips.innerHTML =
+    this.html(this.chips,
       `<span class="chip ${f.input.flightAssist ? 'on' : 'off'}">${f.input.flightAssist ? 'ASSIST. VOL' : 'NEWTONIEN'}</span>` +
       (me.snap.boosting ? '<span class="chip boost">BOOST</span>' : '') +
-      `<span class="chip">${(f.input.throttle * 100).toFixed(0)}%</span>`;
+      `<span class="chip">${(f.input.throttle * 100).toFixed(0)}%</span>`);
 
     // Status panel
     const sFrac = me.snap.shield / cls.shield;
@@ -323,9 +331,9 @@ export class Hud {
         this.bracket.classList.toggle('friendly', !hostile);
         this.bracket.style.width = this.bracket.style.height = `${size}px`;
         this.bracket.style.transform = `translate(${pt.x - size / 2}px, ${pt.y - size / 2}px)`;
-        this.bracketInfo.innerHTML =
+        this.html(this.bracketInfo,
           `<b>${hostile ? 'HOSTILE' : 'ALLIÉ'} · ${tcls.label.toUpperCase()}</b>${target.snap.name} — ${dist < 1000 ? dist.toFixed(0) + ' m' : (dist / 1000).toFixed(2) + ' km'}` +
-          `<div class="bars"><div class="bar s"><i style="transform:scaleX(${target.snap.shield / tcls.shield})"></i></div><div class="bar h"><i style="transform:scaleX(${target.snap.hull / tcls.hull})"></i></div></div>`;
+          `<div class="bars"><div class="bar s"><i style="transform:scaleX(${target.snap.shield / tcls.shield})"></i></div><div class="bar h"><i style="transform:scaleX(${target.snap.hull / tcls.hull})"></i></div></div>`);
       } else {
         // Edge arrow pointing toward the off-screen target.
         _w.copy(target.position).applyMatrix4(f.camera.matrixWorldInverse);

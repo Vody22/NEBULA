@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { ShipClassId } from '../../shared/sim/types';
+import { mergeByMaterial } from './merge';
 import { makeHullTextures, makeRadialTexture } from './textures';
 
 export interface ShipModel {
@@ -15,6 +16,7 @@ export interface ShipModel {
 interface Paint {
   hull: THREE.MeshStandardMaterial;
   dark: THREE.MeshStandardMaterial;
+  darkDouble: THREE.MeshStandardMaterial;
   glass: THREE.MeshPhysicalMaterial;
   glow: THREE.MeshBasicMaterial;
 }
@@ -29,6 +31,7 @@ function paint(key: string, base: string, accent: string, glowColor: THREE.Color
   const p: Paint = {
     hull: new THREE.MeshStandardMaterial({ map: t.map, roughnessMap: t.roughnessMap, metalness: 0.35, roughness: 0.5, envMapIntensity: 1.4 }),
     dark: new THREE.MeshStandardMaterial({ map: d.map, roughnessMap: d.roughnessMap, metalness: 0.45, roughness: 0.55 }),
+    darkDouble: new THREE.MeshStandardMaterial({ map: d.map, roughnessMap: d.roughnessMap, metalness: 0.45, roughness: 0.55, side: THREE.DoubleSide }),
     glass: new THREE.MeshPhysicalMaterial({
       color: 0x0b1a26,
       metalness: 0.1,
@@ -89,9 +92,7 @@ function mirrored(mesh: THREE.Mesh) {
 
 function nozzle(p: Paint, radius: number, length: number, pos: THREE.Vector3) {
   const g = new THREE.Group();
-  const shell = new THREE.Mesh(new THREE.CylinderGeometry(radius * 1.05, radius * 1.25, length, 24, 1, true), p.dark);
-  shell.material = p.dark.clone();
-  (shell.material as THREE.MeshStandardMaterial).side = THREE.DoubleSide;
+  const shell = new THREE.Mesh(new THREE.CylinderGeometry(radius * 1.05, radius * 1.25, length, 24, 1, true), p.darkDouble);
   shell.rotation.x = Math.PI / 2;
   g.add(shell);
   const inner = new THREE.Mesh(new THREE.CircleGeometry(radius * 0.95, 24), p.glow);
@@ -307,7 +308,7 @@ function buildMarauder(): ShipModel {
   };
 }
 
-export function buildShipModel(classId: ShipClassId): ShipModel {
+function buildRaw(classId: ShipClassId): ShipModel {
   switch (classId) {
     case 'falcon':
       return buildFalcon('falcon');
@@ -318,4 +319,20 @@ export function buildShipModel(classId: ShipClassId): ShipModel {
     case 'marauder':
       return buildMarauder();
   }
+}
+
+const templates = new Map<ShipClassId, ShipModel>();
+
+/**
+ * Returns a ship model. Each class is built and merged (one draw call per
+ * material) once; every ship then shares the template's geometry.
+ */
+export function buildShipModel(classId: ShipClassId): ShipModel {
+  let t = templates.get(classId);
+  if (!t) {
+    t = buildRaw(classId);
+    mergeByMaterial(t.root);
+    templates.set(classId, t);
+  }
+  return { ...t, root: t.root.clone() };
 }

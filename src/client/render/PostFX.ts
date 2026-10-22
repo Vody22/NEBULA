@@ -43,9 +43,15 @@ export class PostFX {
   private bloom: UnrealBloomPass;
   private final: ShaderPass;
 
-  constructor(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera) {
+  constructor(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera, msaa: number) {
     const size = renderer.getSize(new THREE.Vector2());
-    this.composer = new EffectComposer(renderer);
+    // The composer renders off-screen, so the canvas' own antialiasing does not
+    // apply: use a multisampled HDR target instead.
+    const target = new THREE.WebGLRenderTarget(size.x * renderer.getPixelRatio(), size.y * renderer.getPixelRatio(), {
+      type: THREE.HalfFloatType,
+      samples: msaa,
+    });
+    this.composer = new EffectComposer(renderer, target);
     this.composer.addPass(new RenderPass(scene, camera));
     this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x / 2, size.y / 2), 0.6, 0.5, 0.95);
     this.composer.addPass(this.bloom);
@@ -54,7 +60,8 @@ export class PostFX {
     this.composer.addPass(this.final);
   }
 
-  setSize(w: number, h: number) {
+  setSize(w: number, h: number, pixelRatio: number) {
+    this.composer.setPixelRatio(pixelRatio);
     this.composer.setSize(w, h);
     this.bloom.resolution.set(w / 2, h / 2);
   }

@@ -76,7 +76,7 @@ export class Asteroids {
       for (let v = 0; v < variants; v++) {
         const list = defs.filter((d) => d.variant === v && d.radius >= 140 === big);
         if (!list.length) continue;
-        const geo = makeRockGeometry(100 + v * 17 + (big ? 7 : 0), big ? 26 : 10, big ? 6 : 3);
+        const geo = makeRockGeometry(100 + v * 17 + (big ? 7 : 0), big ? 18 : 6, big ? 6 : 3);
         const mesh = new THREE.InstancedMesh(geo, mat, list.length);
         mesh.frustumCulled = false;
         this.sets.push({ mesh, defs: list });

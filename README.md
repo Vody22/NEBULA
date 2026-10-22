@@ -30,6 +30,8 @@ Options d'URL : `?q=low` (qualité réduite pour les petites configurations), `?
 
 ## Commandes
 
+Les touches correspondent à des positions physiques : sur un clavier AZERTY, `W/A/S/D` se jouent avec `Z/Q/S/D`, et `Q/E` avec `A/E`. Le menu du jeu affiche automatiquement les bonnes lettres dans Chrome et Edge.
+
 | Touche | Action |
 | --- | --- |
 | Souris | Piloter (joystick virtuel) |

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { mulberry32 } from '../../shared/rng';
 import type { StationDef } from '../../shared/sim/zone';
+import { mergeByMaterial } from './merge';
 import { makeHullTextures, makeRadialTexture, makeSolarTexture } from './textures';
 
 interface Blinker {
@@ -186,6 +187,7 @@ export class Station {
       t.position.z = 8;
       t.scale.setScalar(9);
       g.add(t);
+      g.userData.dynamic = true;
       this.group.add(g);
       this.shuttles.push({
         mesh: g,
@@ -196,6 +198,10 @@ export class Station {
       });
     }
 
+    // Hundreds of parts → a handful of draw calls (the ring rotates, so it is merged on its own).
+    this.ring.userData.dynamic = true;
+    mergeByMaterial(this.group);
+    mergeByMaterial(this.ring);
     this.group.position.copy(def.position);
   }
 
