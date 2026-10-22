@@ -164,13 +164,15 @@ export class ShipView {
     this.model = buildShipModel(classId);
     this.group.add(this.model.root);
     for (const n of this.model.navs ?? []) this.group.add(lightSprite(n.color, n.size, n.pos));
-    for (const st of this.model.strobes ?? []) {
-      const sp = lightSprite(st.color, 1.6, st.pos);
+    // The pilot's own strobes and thrusters would flicker right in front of the
+    // chase camera: only other ships show them.
+    for (const st of isLocal ? [] : this.model.strobes ?? []) {
+      const sp = lightSprite(st.color, 1.1, st.pos);
       sp.visible = false;
       this.strobes.push(sp);
       this.group.add(sp);
     }
-    for (const r of this.model.rcs ?? []) {
+    for (const r of isLocal ? [] : this.model.rcs ?? []) {
       const sprite = lightSprite(new THREE.Color(1.6, 1.8, 2.2), 0.6, r.pos.clone().addScaledVector(r.dir, 0.25));
       sprite.visible = false;
       // Thrust pushes against the exhaust: torque = r × (−dir).
@@ -273,12 +275,11 @@ export class ShipView {
       else _w.set(0, 0, 0);
       for (const r of this.rcs) {
         const drive = _torque.copy(r.torque).dot(_w);
-        const target = Math.min(1, Math.max(0, (drive - 0.12) * 2.2));
-        r.level += (target - r.level) * Math.min(1, dt * 14);
-        r.sprite.visible = r.level > 0.03;
+        const target = Math.min(1, Math.max(0, (drive - 0.25) * 1.6));
+        r.level += (target - r.level) * Math.min(1, dt * 6);
+        r.sprite.visible = r.level > 0.05;
         if (r.sprite.visible) {
-          const flick = 0.8 + 0.2 * Math.sin(time * 90 + r.torque.x * 7);
-          r.sprite.scale.setScalar((0.35 + r.level * 0.9) * flick);
+          r.sprite.scale.setScalar(0.35 + r.level * 0.8);
           (r.sprite.material as THREE.SpriteMaterial).opacity = r.level;
         }
       }

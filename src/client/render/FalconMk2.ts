@@ -44,8 +44,8 @@ interface Palette {
 const PALETTES: Record<'falcon' | 'warden', Palette> = {
   falcon: {
     hull: [1.0, 0.95, 0.86],
-    back: [0.075, 0.078, 0.088],
-    band: [0.035, 0.06, 0.17],
+    back: [0.3, 0.31, 0.33],
+    band: [0.03, 0.1, 0.42],
     belly: [0.8, 0.78, 0.74],
     engine: new THREE.Color(0.5, 1.4, 4),
     boost: new THREE.Color(2.5, 3.2, 6),
@@ -89,7 +89,7 @@ function kit(variant: 'falcon' | 'warden'): Kit {
     paint: new THREE.MeshStandardMaterial({
       map: sheet.map,
       normalMap: sheet.normalMap,
-      normalScale: new THREE.Vector2(0.7, 0.7),
+      normalScale: new THREE.Vector2(0.4, 0.4),
       roughnessMap: sheet.orm,
       metalnessMap: sheet.orm,
       aoMap: sheet.orm,
@@ -264,7 +264,7 @@ export function buildFalconMk2(variant: 'falcon' | 'warden'): ShipModel {
       const s = sectionAt(FUSE, z);
       pts.push(new THREE.Vector3(sx * (s.w + 0.012), s.y + s.ht * 0.34, z));
     }
-    add(tint(tube(pts, 0.018, 4), [0.35, 1.5, 2.0]), k.glow);
+    add(tint(tube(pts, 0.022, 4), [0.45, 2.0, 2.8]), k.glow);
   }
 
   // Nose probe and chin sensor dome.
@@ -447,9 +447,9 @@ export function buildFalconMk2(variant: 'falcon' | 'warden'): ShipModel {
     { pos: new THREE.Vector3(0, top(7.6) + 0.12, 7.75), color: new THREE.Color(2, 2, 2), size: 0.7 },
   ];
   const strobes = [
-    { pos: new THREE.Vector3(-7.95, WY, 4.75), color: new THREE.Color(4, 4, 4.2) },
-    { pos: new THREE.Vector3(7.95, WY, 4.75), color: new THREE.Color(4, 4, 4.2) },
-    { pos: new THREE.Vector3(0, sectionAt(FUSE, 0.5).y - sectionAt(FUSE, 0.5).hb - 0.08, 0.5), color: new THREE.Color(4, 0.4, 0.3) },
+    { pos: new THREE.Vector3(-7.95, WY, 4.75), color: new THREE.Color(2.4, 2.4, 2.5) },
+    { pos: new THREE.Vector3(7.95, WY, 4.75), color: new THREE.Color(2.4, 2.4, 2.5) },
+    { pos: new THREE.Vector3(0, sectionAt(FUSE, 0.5).y - sectionAt(FUSE, 0.5).hb - 0.08, 0.5), color: new THREE.Color(2.4, 0.25, 0.2) },
   ];
 
   return {

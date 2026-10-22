@@ -145,7 +145,7 @@ void main(){
   float coreD = max(dot(dir, uCore), 0.0);
   float core = pow(coreD, 5.0);
   float coreTight = pow(coreD, 60.0);
-  float mass = smoothstep(-0.28, 0.3, fbm4(dir*0.85 + 5.3));
+  float mass = smoothstep(-0.45, 0.22, fbm4(dir*0.85 + 5.3));
   mass = clamp(max(mass, core*1.3), 0.0, 1.0);
 
   // Medium scale: warped gas and filaments. Fine scale near the core.
@@ -153,7 +153,7 @@ void main(){
   float gas = smoothstep(-0.25, 0.9, fbm(q*1.1 + warp*0.7));
   float fil = pow(max(0.0, 1.0 - abs(fbm4(q*3.2 + warp*1.4))), 12.0);
   float fine = 0.5 + 0.5*fbm4(q*9.0 + warp*3.0);
-  float dens = gas * mass * (0.3 + 1.6*core);
+  float dens = gas * mass * (0.45 + 1.5*core);
   dens += fil * mass * 0.3 * (0.35 + core);
   dens *= mix(1.0, fine*1.3, 0.12 + 0.15*core);
 
@@ -162,16 +162,16 @@ void main(){
   float k = 1.0 - coreD;
   vec3 cCore = vec3(0.3, 0.72, 0.95);
   vec3 cMid = vec3(0.58, 0.1, 0.42);
-  vec3 cOut = vec3(0.62, 0.3, 0.12);
+  vec3 cOut = vec3(0.16, 0.14, 0.5);
   vec3 neb = mix(cCore, cMid, smoothstep(0.02, 0.4, k + fbm4(q*2.0)*0.15));
   neb = mix(neb, cOut, smoothstep(0.5, 1.0, k + fbm4(q*2.5 + 9.0)*0.25));
-  col += neb * dens * 0.3;
+  col += neb * dens * 0.42;
   col += vec3(0.85, 0.95, 1.0) * coreTight * gas * 0.3;
 
   // Absorption: dark dust lanes in front of the glowing gas give depth.
   float lanes = smoothstep(0.02, 0.5, fbm4(q*2.6 + warp*0.6 + 11.0));
   float lanesFine = smoothstep(0.15, 0.65, fbm4(q*5.0 + warp*0.8 - 3.0));
-  col *= 1.0 - clamp(lanes*0.6 + lanesFine*0.14*mass, 0.0, 0.9);
+  col *= 1.0 - clamp(lanes*0.45 + lanesFine*0.12*mass, 0.0, 0.85);
 
   // Faint unresolved stars (bright stars are live points, see StarField).
   col += starLayer(dir, 330.0, mix(0.985, 0.9, band), 0.05, 0.14) * (0.35 + band);

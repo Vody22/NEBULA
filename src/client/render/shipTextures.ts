@@ -169,7 +169,7 @@ export function makeShipSheet(opts: { seed: number; size?: number; base?: string
       const cy = y + rand() * h;
       const cr = 1 + rand() * (edge ? 2.5 : 1.5);
       g.fillStyle = 'rgba(196,200,206,0.85)';
-      orm.ctx.fillStyle = 'rgb(255,95,170)';
+      orm.ctx.fillStyle = 'rgb(255,120,110)';
       for (let n = 0; n < 3; n++) {
         const ox = (rand() - 0.5) * cr * 1.6;
         const oy = (rand() - 0.5) * cr * 2.6;
