@@ -16,7 +16,7 @@ Render fournit HTTPS/WSS automatiquement, accepte les WebSockets et lit le fichi
 1. Sur https://dashboard.render.com : **New → Blueprint**, puis choisir le dépôt `Vody22/NEBULA` et la branche (`v0.2-multiplayer` pour tester, `main` une fois fusionnée).
 2. Valider : Render construit et lance `nebula-frontier-server`.
 3. Noter l'adresse affichée, du type `https://nebula-frontier-server-xxxx.onrender.com`. Vérifier que `https://…/status` répond.
-4. Côté Vercel, ajouter la variable d'environnement `VITE_SERVER_URL` = `wss://nebula-frontier-server-xxxx.onrender.com/ws` (Settings → Environment Variables, pour Production et Preview), puis redéployer. Une autre solution : envoyer l'adresse au développeur pour qu'il l'inscrive dans le code.
+4. Le client hébergé sur Vercel se connecte par défaut au serveur public `wss://nebula-frontier-server.onrender.com/ws` (constante `PUBLIC_SERVER_URL` dans `src/client/net/config.ts`). Pour en utiliser un autre sans toucher au code, définir `VITE_SERVER_URL` dans Vercel (Settings → Environment Variables), puis redéployer.
 
 Offre gratuite : le service s'endort après 15 minutes sans visite et met environ une minute à se réveiller. Le menu affiche alors « Serveur injoignable » ; il suffit de réessayer après quelques secondes. L'offre *Starter* reste allumée en permanence.
 

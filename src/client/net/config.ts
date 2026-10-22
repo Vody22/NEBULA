@@ -1,9 +1,13 @@
+/** The public game server (Render). */
+export const PUBLIC_SERVER_URL = 'wss://nebula-frontier-server.onrender.com/ws';
+
 /**
  * Where the multiplayer server lives, in order of priority:
  * 1. `?server=wss://…` in the page URL (testing another server),
  * 2. VITE_SERVER_URL at build time (Vercel environment variable),
- * 3. the page's own origin + /ws when the Node server also serves the client,
- * 4. ws://<host>:8080/ws during local development (Vite on :5173).
+ * 3. ws://<host>:8080/ws during local development (Vite on :5173 / :4173),
+ * 4. the public server when the client is hosted on Vercel,
+ * 5. the page's own origin + /ws when the Node server also serves the client.
  */
 export function resolveServerUrl(loc: Location = location, env: Record<string, string | undefined> = import.meta.env ?? {}): string | null {
   const param = new URLSearchParams(loc.search).get('server');
@@ -11,6 +15,7 @@ export function resolveServerUrl(loc: Location = location, env: Record<string, s
   const built = env.VITE_SERVER_URL;
   if (built && /^wss?:\/\//.test(built)) return withPath(built);
   if (env.DEV || loc.port === '5173' || loc.port === '4173') return `ws://${loc.hostname}:8080/ws`;
+  if (loc.hostname.endsWith('.vercel.app')) return PUBLIC_SERVER_URL;
   if (loc.protocol === 'https:' || loc.protocol === 'http:') return `${loc.protocol === 'https:' ? 'wss' : 'ws'}://${loc.host}/ws`;
   return null;
 }
