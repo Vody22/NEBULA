@@ -41,6 +41,7 @@ describe('server & protocol', () => {
     const ship = [...server.world.ships.values()][0];
     server.receive(id, { t: 'input', seq: 5, input: { ...ship.input, throttle: 1 } });
     server.receive(id, { t: 'input', seq: 4, input: { ...ship.input, throttle: 0 } });
+    server.tick(); // inputs are applied one per tick
     expect(ship.input.throttle).toBe(1);
   });
 

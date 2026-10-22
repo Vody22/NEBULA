@@ -2,17 +2,15 @@ import { Quaternion, Vector3 } from 'three';
 import { segmentSphere } from '../math';
 import { SHIP_CLASSES } from './shipClasses';
 import { stepShipPhysics } from './shipPhysics';
+import { stepShipSystems } from './shipSystems';
 import { StaticGrid } from './spatialGrid';
 import type { EntityId, FactionId, Projectile, Ship, ShipClassId, ShipInput, SimEvent } from './types';
-import { neutralInput } from './types';
+import { canDamage, neutralInput } from './types';
 import type { ZoneDef } from './zone';
 
 export const TICK_RATE = 60;
 export const TICK_DT = 1 / TICK_RATE;
-/** Energy recharges only after the guns have been silent this long (s). */
-export const ENERGY_REGEN_DELAY = 0.6;
-/** After emptying the capacitor, guns come back online at this energy fraction. */
-export const WEAPON_UNLOCK_FRACTION = 0.3;
+export { ENERGY_REGEN_DELAY, WEAPON_UNLOCK_FRACTION } from './shipSystems';
 
 const _p0 = new Vector3();
 const _muzzle = new Vector3();
@@ -74,6 +72,8 @@ export class World {
       sinceFire: 999,
       weaponsLocked: false,
       lastAttacker: null,
+      pvp: false,
+      lastPvpCombat: -999,
     };
     this.ships.set(ship.id, ship);
     this.events.push({ type: 'spawned', ship: ship.id });
@@ -115,38 +115,10 @@ export class World {
   }
 
   private updateSystems(ship: Ship, dt: number) {
-    const cls = SHIP_CLASSES[ship.classId];
-    ship.sinceDamage += dt;
-    if (ship.sinceDamage > cls.shieldDelay) {
-      ship.shield = Math.min(cls.shield, ship.shield + cls.shieldRegen * dt);
-    }
-    ship.sinceFire += dt;
-    if (!ship.boosting && ship.sinceFire > ENERGY_REGEN_DELAY) {
-      ship.energy = Math.min(cls.energy, ship.energy + cls.energyRegen * dt);
-    }
-    if (ship.weaponsLocked && ship.energy >= cls.energy * WEAPON_UNLOCK_FRACTION) ship.weaponsLocked = false;
-
-    // Static collisions: push out along the normal and take damage from impact speed.
-    const nearby = this.grid.query(ship.position, cls.radius + 2);
-    for (const c of nearby) {
-      _n.subVectors(ship.position, c.center);
-      const dist = _n.length();
-      const minDist = c.radius + cls.radius;
-      if (dist >= minDist || dist < 1e-6) continue;
-      _n.divideScalar(dist);
-      ship.position.copy(c.center).addScaledVector(_n, minDist + 0.05);
-      const vn = ship.velocity.dot(_n);
-      if (vn < 0) {
-        // Bounce with restitution 0.35, lose some tangential speed too.
-        ship.velocity.addScaledVector(_n, -vn * 1.35).multiplyScalar(0.8);
-        const impact = -vn;
-        if (impact > 25) {
-          const damage = (impact - 25) * 0.9;
-          this.events.push({ type: 'collision', ship: ship.id, pos: arr(ship.position), damage });
-          this.applyDamage(ship, damage, null);
-        }
-      }
-    }
+    stepShipSystems(ship, dt, this.grid, (damage) => {
+      this.events.push({ type: 'collision', ship: ship.id, pos: arr(ship.position), damage });
+      this.applyDamage(ship, damage, null);
+    });
   }
 
   private fireWeapons(ship: Ship, dt: number) {
@@ -174,6 +146,7 @@ export class World {
       velocity: _dir.clone().multiplyScalar(w.speed).add(ship.velocity),
       damage: w.damage,
       life: w.life,
+      pvp: ship.pvp && ship.ownerId !== null,
     };
     this.projectiles.push(proj);
     this.events.push({
@@ -198,7 +171,7 @@ export class World {
       let hitT = 2;
       let hitShip: Ship | null = null;
       for (const ship of this.ships.values()) {
-        if (!ship.alive || ship.id === p.ownerId || ship.faction === p.faction) continue;
+        if (!ship.alive || !canDamage({ id: p.ownerId, faction: p.faction, pvp: p.pvp }, ship)) continue;
         const r = SHIP_CLASSES[ship.classId].radius;
         const t = segmentSphere(_p0, p.position, ship.position, r);
         if (t >= 0 && t < hitT) {
@@ -222,6 +195,12 @@ export class World {
       if (hitShip || hitStatic) {
         const hitPos = _p0.clone().lerp(p.position, hitT);
         if (hitShip) {
+          if (hitShip.faction === p.faction) {
+            // Player-vs-player hit: both stay "in combat" for the PvP switch-off rule.
+            hitShip.lastPvpCombat = this.time;
+            const shooter = this.ships.get(p.ownerId);
+            if (shooter) shooter.lastPvpCombat = this.time;
+          }
           const shield = this.applyDamage(hitShip, p.damage, p.ownerId);
           this.events.push({
             type: 'hit',
