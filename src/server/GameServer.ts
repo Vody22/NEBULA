@@ -30,6 +30,8 @@ interface Session {
   lastSeq: number;
   ackSeq: number;
   inputs: { seq: number; input: ShipInput }[];
+  /** Sim time of the last input received (a silent client lets go of the controls). */
+  lastInputAt: number;
   stats: PlayerStats;
   pvp: boolean;
   pvpChangedAt: number;
@@ -62,6 +64,7 @@ const CHAT_HISTORY = 30;
 /** Inputs buffered beyond this are dropped (keeps input latency bounded). */
 const MAX_QUEUED_INPUTS = 6;
 const PVP_SWITCH_COOLDOWN = 5;
+const INPUT_TIMEOUT = 1;
 const PVP_COMBAT_LOCK = 15;
 const PVP_KILL_BOUNTY = 0;
 
@@ -141,6 +144,9 @@ export class GameServer {
         s.link = link;
         s.offlineSince = -1;
         s.inputs.length = 0;
+        // The client may have restarted (page reload): its input sequence starts over.
+        s.lastSeq = 0;
+        s.ackSeq = 0;
         this.welcome(s, true);
         if (s.shipId === null && s.respawnAt <= 0) this.spawnPlayer(s);
         this.system(`${s.name} est de retour dans le secteur`);
@@ -164,6 +170,7 @@ export class GameServer {
       lastSeq: 0,
       ackSeq: 0,
       inputs: [],
+      lastInputAt: 0,
       stats: { kills: 0, deaths: 0, credits: 0 },
       pvp: false,
       pvpChangedAt: -999,
@@ -253,6 +260,7 @@ export class GameServer {
         const input = sanitizeInput(msg.input);
         if (!input) return;
         s.lastSeq = msg.seq;
+        s.lastInputAt = this.world.time;
         s.inputs.push({ seq: msg.seq, input });
         // A client far ahead of the server clock (or flooding): keep only the newest inputs.
         if (s.inputs.length > MAX_QUEUED_INPUTS) s.inputs.splice(0, s.inputs.length - MAX_QUEUED_INPUTS);
@@ -357,7 +365,14 @@ export class GameServer {
     // One buffered input per player per tick, so client prediction replays the same steps.
     for (const s of this.sessions.values()) {
       const next = s.inputs.shift();
-      if (!next) continue;
+      if (!next) {
+        // No input for a second (frozen or backgrounded client): cut the engines and the guns.
+        if (s.shipId !== null && w.time - s.lastInputAt > INPUT_TIMEOUT && w.time - s.lastInputAt < INPUT_TIMEOUT + TICK_DT * 1.5) {
+          const ship = w.ships.get(s.shipId);
+          if (ship) w.setInput(s.shipId, { ...neutralInput(), flightAssist: ship.input.flightAssist });
+        }
+        continue;
+      }
       s.ackSeq = next.seq;
       if (s.shipId !== null) w.setInput(s.shipId, next.input);
     }

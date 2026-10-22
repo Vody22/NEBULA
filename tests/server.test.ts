@@ -45,6 +45,18 @@ describe('server & protocol', () => {
     expect(ship.input.throttle).toBe(1);
   });
 
+  it('a client that stops sending inputs lets go of the controls after a second', () => {
+    const server = new GameServer({ npcs: false });
+    const id = server.connect({ send: () => {} });
+    const ship = [...server.world.ships.values()][0];
+    server.receive(id, { t: 'input', seq: 1, input: { ...ship.input, throttle: 1, fire: true } });
+    for (let i = 0; i < 30; i++) server.tick();
+    expect(ship.input.throttle).toBe(1);
+    for (let i = 0; i < 40; i++) server.tick();
+    expect(ship.input.throttle).toBe(0);
+    expect(ship.input.fire).toBe(false);
+  });
+
   it('spawns pirate waves which engage and damage an idle player', () => {
     const server = new GameServer();
     const notices: string[] = [];

@@ -19,7 +19,7 @@ const check = (ok, what) => {
   if (!ok) failures.push(what);
 };
 
-const HUD_IDS = ['zone', 'topbar', 'flight', 'status', 'radarWrap', 'feed'];
+const HUD_IDS = ['zone', 'topbar', 'flight', 'status', 'radarWrap', 'feed', 'chat'];
 
 async function open(viewport, query = 'q=low') {
   const ctx = await browser.newContext({ viewport, locale: 'fr-FR' });
@@ -57,7 +57,7 @@ for (const [w, h] of [[568, 1244], [1280, 720], [1920, 1080]]) {
   const { ctx, page, errors } = await open({ width: w, height: h });
   await page.waitForTimeout(800);
   await page.screenshot({ path: `${out}/start-${w}x${h}.png` });
-  await page.keyboard.press('Enter'); // focused "Décoller" button
+  await page.click('[data-act="solo"]');
   await page.waitForFunction(() => !window.__menu.isOpen, null, { timeout: 60000 });
   await page.waitForTimeout(2500);
   await page.screenshot({ path: `${out}/hud-${w}x${h}.png` });
@@ -67,6 +67,7 @@ for (const [w, h] of [[568, 1244], [1280, 720], [1920, 1080]]) {
     check(e && e.visible && e.x >= 0 && e.y >= 0 && e.x + e.w <= vw + 0.5 && e.y + e.h <= vh + 0.5, `${w}x${h}: #${id} visible and inside the window`);
   }
   const ids = Object.keys(r).filter((k) => r[k].visible && k !== 'feed');
+  check(!r.chat?.visible, `${w}x${h}: no chat panel in solo`);
   for (let i = 0; i < ids.length; i++)
     for (let j = i + 1; j < ids.length; j++) check(!overlaps(r[ids[i]], r[ids[j]]), `${w}x${h}: #${ids[i]} does not overlap #${ids[j]}`);
   check(errors.length === 0, `${w}x${h}: no console errors/warnings ${errors.join(' | ')}`);
@@ -76,7 +77,7 @@ for (const [w, h] of [[568, 1244], [1280, 720], [1920, 1080]]) {
 // ---- Pause menu, keyboard navigation, rebinding, persistence ----------------
 {
   const { ctx, page, errors } = await open({ width: 1280, height: 720 });
-  await page.keyboard.press('Enter');
+  await page.click('[data-act="solo"]');
   await page.waitForFunction(() => !window.__menu.isOpen);
   await page.keyboard.down('KeyW');
   await page.waitForTimeout(1500);
@@ -161,7 +162,7 @@ for (const [w, h] of [[568, 1244], [1280, 720], [1920, 1080]]) {
 // ---- F key with defaults, kill credit and energy lock in the real client ---
 {
   const { ctx, page, errors } = await open({ width: 1280, height: 720 });
-  await page.keyboard.press('Enter');
+  await page.click('[data-act="solo"]');
   await page.waitForFunction(() => !window.__menu.isOpen);
   await page.evaluate(() => {
     const s = window.__game.transport.server;

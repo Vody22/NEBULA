@@ -19,6 +19,8 @@ export interface NodeServerOptions {
   staticDir?: string;
   reconnectGrace?: number;
   npcs?: boolean;
+  /** permessage-deflate on large frames (default on). */
+  compression?: boolean;
   log?: (msg: string) => void;
 }
 
@@ -103,7 +105,9 @@ export function startServer(opts: NodeServerOptions): Promise<RunningServer> {
   });
   const origins = (opts.allowedOrigins ?? []).map((o) => o.trim().replace(/\/$/, '')).filter(Boolean);
   const anyOrigin = origins.length === 0 || origins.includes('*');
-  const originAllowed = (o: string | undefined) => anyOrigin || (o !== undefined && origins.includes(o));
+  // "https://nebula-*.vercel.app" style patterns cover Vercel preview deployments.
+  const originPatterns = origins.map((o) => new RegExp(`^${o.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[a-z0-9-]*')}$`, 'i'));
+  const originAllowed = (o: string | undefined) => anyOrigin || (o !== undefined && originPatterns.some((r) => r.test(o)));
   const links = new Set<WsLink>();
   const started = Date.now();
   const staticRoot = opts.staticDir && existsSync(opts.staticDir) ? resolve(opts.staticDir) : null;
@@ -158,7 +162,14 @@ export function startServer(opts: NodeServerOptions): Promise<RunningServer> {
     res.writeHead(404, { 'Content-Type': 'text/plain' }).end('NEBULA FRONTIER server: WebSocket endpoint at /ws');
   }
 
-  const wss = new WebSocketServer({ noServer: true, maxPayload: 16 * 1024, perMessageDeflate: false });
+  // JSON snapshots compress ~4x: deflate frames above 1 KB (snapshots), keep small ones raw.
+  const wss = new WebSocketServer({
+    noServer: true,
+    maxPayload: 16 * 1024,
+    perMessageDeflate: opts.compression === false
+      ? false
+      : { threshold: 1024, serverMaxWindowBits: 13, zlibDeflateOptions: { level: 3, memLevel: 7 }, concurrencyLimit: 8 },
+  });
 
   http.on('upgrade', (req, socket, head) => {
     const url = new URL(req.url ?? '/', 'http://x');

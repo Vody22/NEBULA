@@ -1,0 +1,24 @@
+# Render Blueprint: the persistent WebSocket server for NEBULA FRONTIER.
+# Render → New → Blueprint → this repository. TLS is provided by Render,
+# so the server is reachable at wss://<service>.onrender.com/ws.
+services:
+  - type: web
+    name: nebula-frontier-server
+    runtime: node
+    plan: free # "starter" keeps it awake 24/7 (free instances sleep after 15 min idle)
+    region: frankfurt
+    buildCommand: npm ci && npm run build && npm run build:server
+    startCommand: node dist-server/server.mjs
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: ALLOWED_ORIGINS
+        value: https://nebula-iota-rust.vercel.app,https://nebula-*.vercel.app,https://nebula-frontier-server*.onrender.com
+      - key: MAX_PLAYERS
+        value: "30"
+      - key: SNAPSHOT_EVERY
+        value: "3"
+      - key: RECONNECT_GRACE
+        value: "20"

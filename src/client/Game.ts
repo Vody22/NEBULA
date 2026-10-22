@@ -1,13 +1,16 @@
 import * as THREE from 'three';
-import type { PlayerStats, ServerMessage } from '../shared/net/protocol';
+import type { ChatLine, ErrorCode, PlayerInfo, PlayerStats, ServerMessage } from '../shared/net/protocol';
 import { SHIP_CLASSES } from '../shared/sim/shipClasses';
-import type { SimEvent } from '../shared/sim/types';
-import { TICK_RATE } from '../shared/sim/world';
+import { StaticGrid } from '../shared/sim/spatialGrid';
+import { neutralInput, type SimEvent } from '../shared/sim/types';
+import { TICK_DT, TICK_RATE } from '../shared/sim/world';
 import { buildZone, type ZoneDef } from '../shared/sim/zone';
 import { GameAudio } from './audio/Audio';
 import { ChaseCamera } from './camera/ChaseCamera';
+import { isHostile } from './hostility';
 import { Hud } from './hud/Hud';
 import { InputManager } from './input/Input';
+import { Predictor } from './net/Predictor';
 import { SnapshotBuffer, type InterpolatedShip } from './net/SnapshotBuffer';
 import type { Transport } from './net/Transport';
 import { Asteroids } from './render/Asteroids';
@@ -28,6 +31,18 @@ export interface GameOptions {
 const UNION_BOLT = new THREE.Color(1.5, 4, 9);
 const RAIDER_BOLT = new THREE.Color(9, 2.2, 0.8);
 const _p = new THREE.Vector3();
+const _shotOffset = new THREE.Vector3();
+export const DEFAULT_SECTOR_SEED = 1337;
+
+export { isHostile };
+
+export interface GameCallbacks {
+  onChat?(line: ChatLine): void;
+  onChatHistory?(lines: ChatLine[]): void;
+  onFatal?(code: ErrorCode, text: string): void;
+  onOpenChat?(): void;
+  onToggleChat?(): void;
+}
 
 /**
  * The game client: renders interpolated server snapshots, plays events as
@@ -56,6 +71,23 @@ export class Game {
   private dust = new SpaceDust();
   private views = new Map<number, ShipView>();
   private buffer = new SnapshotBuffer(1.5 / TICK_RATE);
+  private _transport: Transport | null = null;
+  private predictor: Predictor | null = null;
+  private grid: StaticGrid | null = null;
+  private inputAcc = 0;
+  /** Where the server (interpolated) shows my ship, versus where prediction renders it. */
+  private myServerPos = new THREE.Vector3();
+  private myRenderPos = new THREE.Vector3();
+  private hasMyPose = false;
+  private worldRoot = new THREE.Group();
+  players: PlayerInfo[] = [];
+  maxPlayers = 0;
+  private playersByShip = new Map<number, PlayerInfo>();
+  myName = '';
+  sessionId = '';
+  resumed = false;
+  private myPvp = false;
+  callbacks: GameCallbacks = {};
   private eventQueue: { time: number; e: SimEvent }[] = [];
   private renderTime = -1;
   private myShipId: number | null = null;
@@ -81,7 +113,7 @@ export class Game {
   /** Exposed for automated smoke tests. */
   readonly debug = { frames: 0, ships: 0, bolts: 0, events: 0, explosions: 0, myShots: 0, myHits: 0, myKills: 0, hitsTaken: 0 };
 
-  constructor(canvas: HTMLCanvasElement, private transport: Transport, private opts: GameOptions, settings: Settings) {
+  constructor(canvas: HTMLCanvasElement, private opts: GameOptions, settings: Settings) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
     this.maxPixelRatio = Math.min(window.devicePixelRatio, opts.quality === 'high' ? 1.5 : 1);
     this.pixelRatio = this.maxPixelRatio;
@@ -99,11 +131,89 @@ export class Game {
     this.input = new InputManager(canvas, settings.bindings);
     this.applySettings(settings);
     this.timer.connect(document);
-    this.scene.add(this.lasers.group, this.effects.group, this.dust.lines);
+    this.scene.add(this.lasers.group, this.effects.group, this.dust.lines, this.worldRoot);
 
     window.addEventListener('resize', () => this.resize());
     this.resize();
+  }
+
+  get transport() {
+    return this._transport;
+  }
+
+  /** Connects the game to a server (solo LocalTransport or online WebSocketTransport). */
+  attach(transport: Transport) {
+    this.detach();
+    this._transport = transport;
+    this.buffer.delay = transport.interpolationDelay;
     transport.onMessage((m) => this.onMessage(m));
+  }
+
+  /** Leaves the current server and clears everything that came from it. */
+  detach() {
+    this._transport?.close();
+    this._transport = null;
+    this.running = false;
+    this.paused = false;
+    this.resetSession();
+    this.players = [];
+    this.playersByShip.clear();
+    this.hud.show(false);
+  }
+
+  /** Forgets all server-driven state (new session, or server restarted). */
+  private resetSession() {
+    for (const v of this.views.values()) v.dispose(this.scene);
+    this.views.clear();
+    this.buffer = new SnapshotBuffer(this._transport?.interpolationDelay ?? 1.5 / TICK_RATE);
+    this.eventQueue.length = 0;
+    this.renderTime = -1;
+    this.myShipId = null;
+    this.lastMyShipId = null;
+    this.lastMe = null;
+    this.targetId = null;
+    this.seq = 0;
+    this.inputAcc = 0;
+    this.predictor?.reset();
+    this.lasers.clear();
+    this.stats = { kills: 0, deaths: 0, credits: 0 };
+    this.wave = 0;
+    this.myPvp = false;
+  }
+
+  /** Network state for automated tests and debugging (window.__game.inspect()). */
+  inspect() {
+    const latest = this.buffer.latest;
+    return {
+      running: this.running,
+      paused: this.paused,
+      status: this._transport ? { ...this._transport.status } : null,
+      myShipId: this.myShipId,
+      myName: this.myName,
+      sessionId: this.sessionId,
+      resumed: this.resumed,
+      myPvp: this.myPvp,
+      stats: { ...this.stats },
+      ships: latest ? latest.ships.map((s) => ({ id: s.id, name: s.name, owner: s.owner, faction: s.faction, p: s.p, hull: s.hull, pvp: s.pvp })) : [],
+      players: this.players.map((p) => ({ ...p })),
+      corrections: this.predictor?.corrections ?? 0,
+      lastCorrection: this.predictor?.lastCorrection ?? 0,
+      predicted: this.predictor?.ship ? this.predictor.ship.position.toArray() : null,
+      debug: { ...this.debug },
+    };
+  }
+
+  /** Online only: ask the server to switch PvP (it decides and answers with a notice). */
+  togglePvp() {
+    if (!this._transport?.online) {
+      this.hud.notice('Le PvP n\'existe qu\'en ligne', 'info');
+      return;
+    }
+    this._transport.send({ t: 'pvp', on: !this.myPvp });
+  }
+
+  sendChat(text: string) {
+    if (this._transport?.online) this._transport.send({ t: 'chat', text });
   }
 
   private resize() {
@@ -119,40 +229,77 @@ export class Game {
 
   /** Builds the static zone (identical to the server's, from the same seed). */
   private buildWorld(seed: number) {
+    if (this.zone?.seed === seed) return;
+    this.scene.remove(this.worldRoot);
+    this.worldRoot = new THREE.Group();
+    this.scene.add(this.worldRoot);
     const zone = (this.zone = buildZone(seed));
+    this.grid = new StaticGrid(zone.colliders);
+    this.predictor = new Predictor(this.grid);
     const sun = new THREE.DirectionalLight(0xfff1e0, 3.4);
     sun.position.copy(zone.sunDirection).multiplyScalar(1000);
-    this.scene.add(sun, sun.target);
+    this.worldRoot.add(sun, sun.target);
     // Cool fill from the nebula side so hulls in shadow still read.
     const fill = new THREE.DirectionalLight(0x8a7cff, 0.9);
     fill.position.copy(zone.sunDirection).multiplyScalar(-1000).add(new THREE.Vector3(0, 400, 0));
-    this.scene.add(fill, fill.target);
-    this.scene.add(new THREE.HemisphereLight(0x5a7ab0, 0x3a2040, 0.6));
+    this.worldRoot.add(fill, fill.target);
+    this.worldRoot.add(new THREE.HemisphereLight(0x5a7ab0, 0x3a2040, 0.6));
 
     this.sky = buildSky(this.renderer, zone.sunDirection, this.opts.quality === 'high' ? 1024 : 512);
     this.scene.background = this.sky.background;
     this.scene.environment = this.sky.environment;
     this.scene.environmentIntensity = 1.1;
-    this.scene.add(this.sky.sun);
+    this.worldRoot.add(this.sky.sun);
 
     this.planets = new Planets(zone.planets, zone.sunDirection);
     this.station = new Station(zone.station);
     this.asteroids = new Asteroids(zone.asteroids, zone.beltCenter);
-    this.scene.add(this.planets.group, this.station.group, this.asteroids.group);
+    this.worldRoot.add(this.planets.group, this.station.group, this.asteroids.group);
     this.hud.setZoneName(zone.name);
   }
 
   private onMessage(m: ServerMessage) {
     switch (m.t) {
       case 'welcome':
+        if (!m.resumed || this.zone?.seed !== m.zoneSeed) this.resetSession();
+        // Resumed session: the server restarts our input sequence, so prediction starts over too.
+        else this.predictor?.reset();
         this.buildWorld(m.zoneSeed);
+        this.myName = m.name;
+        this.sessionId = m.playerId;
+        this.resumed = m.resumed;
         break;
-      case 'snapshot':
+      case 'snapshot': {
         this.buffer.push(m.snap);
         this.myShipId = m.you;
         this.stats = m.stats;
         this.wave = m.wave;
         this.respawnIn = m.respawnIn;
+        const mine = m.you !== null ? m.snap.ships.find((s) => s.id === m.you) : undefined;
+        if (mine) {
+          this.myPvp = mine.pvp;
+          this.predictor?.reconcile(mine, m.ackSeq);
+        } else this.predictor?.reset();
+        break;
+      }
+      case 'players':
+        this.players = m.list;
+        this.maxPlayers = m.max;
+        this.playersByShip.clear();
+        for (const p of m.list) if (p.ship !== null) this.playersByShip.set(p.ship, p);
+        break;
+      case 'chat':
+        this.callbacks.onChat?.(m.line);
+        if (m.line.from === null) this.hud.notice(m.line.text, 'info');
+        break;
+      case 'chatHistory':
+        this.callbacks.onChatHistory?.(m.lines);
+        break;
+      case 'error':
+        this.hud.notice(m.text, 'warn');
+        this.callbacks.onFatal?.(m.code, m.text);
+        break;
+      case 'pong':
         break;
       case 'events':
         for (const e of m.events) this.eventQueue.push({ time: m.tick / TICK_RATE, e });
@@ -179,6 +326,12 @@ export class Game {
   }
 
   setPaused(p: boolean) {
+    // Online the sector keeps running: tell the server at once that we let go of
+    // the controls (the tab may be hidden next, and then no frame runs).
+    if (p && !this.paused && this.running && this._transport?.online) {
+      this._transport.send({ t: 'input', seq: ++this.seq, input: { ...neutralInput(), flightAssist: this.input.input.flightAssist } });
+      this._transport.update(0);
+    }
     this.paused = p;
     this.input.enabled = !p;
     this.input.releaseAll();
@@ -194,11 +347,11 @@ export class Game {
     this.fps += (1 / Math.max(dt, 1e-4) - this.fps) * 0.05;
     this.debug.frames++;
 
-    // 1) Input → server
+    if (!this.zone) this.buildWorld(DEFAULT_SECTOR_SEED);
+    const transport = this._transport;
+
+    // 1) Input (sent below, at the fixed tick rate)
     const input = this.input.update(dt);
-    if (this.running && !this.paused) {
-      this.transport.send({ t: 'input', seq: ++this.seq, input });
-    }
     if (this.input.consume('target')) this.cycleTarget();
     if (this.input.consume('camera')) {
       this.cam.cycleMode();
@@ -208,18 +361,37 @@ export class Game {
       this.audio.toggleMute();
       this.hud.notice(this.audio.muted ? 'Son coupé' : 'Son activé', 'info');
     }
+    if (this.input.consume('chat')) this.callbacks.onOpenChat?.();
+    if (this.input.consume('chatToggle')) this.callbacks.onToggleChat?.();
+    if (this.input.consume('pvp')) this.togglePvp();
     this.input.endFrame();
 
-    // 2) Advance the (local) server and receive messages. While paused the
-    //    simulation is frozen and the render clock stops with it.
-    if (this.paused) {
+    // 2) Advance the (local) server and receive messages. In solo the pause
+    //    freezes the simulation and the render clock; online the sector keeps
+    //    running and our ship simply cuts its engines.
+    if (this.paused && !transport?.online) {
       this.renderPaused(dt);
       return;
     }
-    this.transport.update(dt);
+    if (transport && this.running) {
+      // One input per simulation tick, predicted locally at once.
+      const send = this.paused ? { ...neutralInput(), flightAssist: input.flightAssist } : input;
+      this.inputAcc += dt;
+      let steps = 0;
+      while (this.inputAcc >= TICK_DT && steps < 8) {
+        this.inputAcc -= TICK_DT;
+        steps++;
+        const seq = ++this.seq;
+        transport.send({ t: 'input', seq, input: { ...send } });
+        this.predictor?.step(seq, send);
+      }
+      if (this.inputAcc > TICK_DT) this.inputAcc = 0;
+    }
+    transport?.update(dt);
     const latest = this.buffer.latest;
     if (!latest || !this.zone) {
-      this.renderer.render(this.scene, this.cam.camera);
+      this.attractCamera(dt);
+      this.renderScene(0);
       return;
     }
 
@@ -228,6 +400,19 @@ export class Game {
     if (this.renderTime < 0 || Math.abs(this.renderTime - targetTime) > 0.25) this.renderTime = targetTime;
     else this.renderTime += dt + (targetTime - (this.renderTime + dt)) * 0.1;
     const ships = this.buffer.sample(this.renderTime);
+
+    // My ship is drawn where prediction puts it, not 100 ms in the past.
+    this.hasMyPose = false;
+    const predicted = this.myShipId !== null ? ships.get(this.myShipId) : undefined;
+    if (predicted && this.predictor?.ship?.id === this.myShipId) {
+      this.predictor.update(dt);
+      this.myServerPos.copy(predicted.position);
+      predicted.position.copy(this.predictor.renderPosition);
+      predicted.rotation.copy(this.predictor.renderRotation);
+      predicted.velocity.copy(this.predictor.ship.velocity);
+      this.myRenderPos.copy(predicted.position);
+      this.hasMyPose = true;
+    }
 
     // 4) Ship views
     for (const [id, s] of ships) {
@@ -320,10 +505,17 @@ export class Game {
         stationPos: this.zone.station.position,
         stationName: this.zone.station.name,
         fps: this.fps,
-        net: `${this.transport.label} · ${Math.round(this.pixelRatio * 100)}%`,
+        net: `${Math.round(this.pixelRatio * 100)}%`,
+        status: transport?.status ?? { state: 'local', rtt: 0 },
+        online: transport?.online ?? false,
+        players: this.playersByShip,
+        playerCount: this.players.filter((p) => p.online).length,
+        maxPlayers: this.maxPlayers,
+        myName: this.myName,
       },
       dt,
     );
+    this.hud.showScoreboard(this.running && !this.paused && this.input.held('scoreboard'), this.players, this.myName, transport?.online ?? false);
     this.damageFx = Math.max(0, this.damageFx - dt * 2);
     this.adaptResolution(dt);
     this.debug.ships = ships.size;
@@ -415,13 +607,18 @@ export class Game {
     const camPos = this.cam.camera.position;
     switch (e.type) {
       case 'shot': {
-        this.lasers.add(e.projectile, e.faction, e.pos, e.vel, time, e.life);
+        _p.set(...e.pos);
+        if (e.shooter === this.myShipId && this.hasMyPose) {
+          // Our own bolts leave the predicted ship, not where the server had it ~RTT ago.
+          _shotOffset.subVectors(this.myRenderPos, this.myServerPos);
+          if (_shotOffset.lengthSq() < 200 * 200) _p.add(_shotOffset);
+        }
+        this.lasers.add(e.projectile, e.faction, [_p.x, _p.y, _p.z], e.vel, time, e.life);
         this.debug.bolts++;
         if (e.shooter === this.myShipId) {
           this.debug.myShots++;
           this.hud.fired();
         }
-        _p.set(...e.pos);
         this.effects.muzzle(_p, new THREE.Vector3(...e.vel).multiplyScalar(0.05), e.faction === 'union' ? UNION_BOLT : RAIDER_BOLT);
         this.audio.laser(_p.distanceTo(camPos), e.faction !== 'union');
         break;
@@ -487,6 +684,22 @@ export class Game {
     }
   }
 
+  /** Before take-off: a slow drift past the station (start menu backdrop). */
+  private attractCamera(dt: number) {
+    const z = this.zone;
+    if (!z) return;
+    const c = this.cam.camera;
+    const a = this.time * 0.03 + 0.6;
+    c.position.copy(z.playerSpawn).add(_p.set(Math.cos(a) * 160, 40 + Math.sin(this.time * 0.05) * 10, Math.sin(a) * 160));
+    c.up.set(0, 1, 0);
+    c.lookAt(z.station.position);
+    this.sky?.update(c);
+    this.station?.update(this.time);
+    this.planets?.update(this.time);
+    this.asteroids?.update(this.time);
+    this.effects.update(dt);
+  }
+
   /** T: cycle hostiles, nearest first. */
   private cycleTarget() {
     const latest = this.buffer.latest;
@@ -495,7 +708,7 @@ export class Game {
     if (!me) return;
     const mp = new THREE.Vector3(...me.p);
     const hostiles = latest.ships
-      .filter((s) => s.faction !== me.faction)
+      .filter((s) => isHostile(me, s))
       .map((s) => ({ id: s.id, d: mp.distanceTo(_p.set(...s.p)) }))
       .sort((a, b) => a.d - b.d);
     if (!hostiles.length) return;
@@ -511,7 +724,7 @@ export class Game {
     let best: number | null = null;
     let bestDot = Math.cos((14 * Math.PI) / 180);
     for (const s of ships.values()) {
-      if (s.snap.faction === me.snap.faction) continue;
+      if (!isHostile(me.snap, s.snap)) continue;
       const to = _p.copy(s.position).sub(me.position);
       const d = to.length();
       if (d > 3500) continue;

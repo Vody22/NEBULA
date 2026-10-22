@@ -1,0 +1,30 @@
+# Alternative to Render: Fly.io (fly launch --copy-config --no-deploy, then fly deploy).
+app = "nebula-frontier-server"
+primary_region = "cdg"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+  MAX_PLAYERS = "30"
+  ALLOWED_ORIGINS = "https://nebula-iota-rust.vercel.app,https://nebula-*.vercel.app,https://nebula-frontier-server.fly.dev"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # One authoritative sector lives in memory: keep exactly one machine running.
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    path = "/health"
+    timeout = "3s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

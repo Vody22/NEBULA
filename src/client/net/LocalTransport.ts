@@ -1,10 +1,14 @@
 import { GameServer } from '../../server/GameServer';
 import type { ClientMessage, ServerMessage } from '../../shared/net/protocol';
-import type { Transport } from './Transport';
+import type { NetStatus, Transport } from './Transport';
+import { TICK_RATE } from '../../shared/sim/world';
 
 /** Runs the authoritative GameServer in-process (solo / offline mode). */
 export class LocalTransport implements Transport {
-  readonly label = 'Serveur local';
+  readonly label = 'Solo (hors ligne)';
+  readonly online = false;
+  readonly status: NetStatus = { state: 'local', rtt: 0 };
+  readonly interpolationDelay = 1.5 / TICK_RATE;
   readonly server: GameServer;
   private handlers: ((msg: ServerMessage) => void)[] = [];
   private queue: ServerMessage[] = [];
@@ -22,6 +26,10 @@ export class LocalTransport implements Transport {
 
   onMessage(handler: (msg: ServerMessage) => void) {
     this.handlers.push(handler);
+  }
+
+  close() {
+    this.handlers.length = 0;
   }
 
   update(dt: number) {

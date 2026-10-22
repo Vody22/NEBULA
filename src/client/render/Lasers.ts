@@ -55,6 +55,11 @@ export class Lasers {
     list.push({ id, p0: new THREE.Vector3(...pos), v: new THREE.Vector3(...vel), t0, life });
   }
 
+  clear() {
+    this.bolts.union.length = 0;
+    this.bolts.raiders.length = 0;
+  }
+
   remove(id: number) {
     for (const f of ['union', 'raiders'] as FactionId[]) {
       const list = this.bolts[f];

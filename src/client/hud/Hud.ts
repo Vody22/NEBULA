@@ -1,9 +1,11 @@
 import * as THREE from 'three';
 import { interceptPoint } from '../../shared/math';
-import type { PlayerStats } from '../../shared/net/protocol';
+import type { PlayerInfo, PlayerStats } from '../../shared/net/protocol';
 import { SHIP_CLASSES } from '../../shared/sim/shipClasses';
 import type { ShipInput } from '../../shared/sim/types';
+import { isHostile } from '../hostility';
 import type { InterpolatedShip } from '../net/SnapshotBuffer';
+import type { NetStatus } from '../net/Transport';
 import type { Action } from '../settings';
 import './hud.css';
 
@@ -21,7 +23,16 @@ export interface HudFrame {
   stationName: string;
   fps: number;
   net: string;
+  status: NetStatus;
+  online: boolean;
+  /** Connected pilots by ship id (names over ships). */
+  players: Map<number, PlayerInfo>;
+  playerCount: number;
+  maxPlayers: number;
+  myName: string;
 }
+
+const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
 const SEGMENTS = 20;
 const _v = new THREE.Vector3();
@@ -66,6 +77,8 @@ export class Hud {
   private death: HTMLDivElement;
   private deathTimer: HTMLParagraphElement;
   private fpsEl: HTMLDivElement;
+  private netEl: HTMLDivElement;
+  private board: HTMLDivElement;
   private hitTimer = 0;
   private fireTimer = 0;
   private hitMarker: HTMLDivElement;
@@ -112,6 +125,9 @@ export class Hud {
 
     const zone = el('div', 'abs', this.root, '<div class="label">Secteur</div><div class="name" id="zoneName">AURORA</div><div class="help"><kbd>Échap</kbd> pause et aide</div>') as HTMLDivElement;
     zone.id = 'zone';
+    this.netEl = el('div', 'net', zone) as HTMLDivElement;
+    this.netEl.id = 'netStatus';
+    this.netEl.setAttribute('role', 'status');
     this.fpsEl = el('div', 'abs', this.root) as HTMLDivElement;
     this.fpsEl.id = 'fps';
     this.topbar = el('div', 'panel', this.root) as HTMLDivElement;
@@ -162,6 +178,10 @@ export class Hud {
     this.radar.height = 340;
     this.radarCtx = this.radar.getContext('2d')!;
 
+    this.board = el('div', 'panel hidden', this.root) as HTMLDivElement;
+    this.board.id = 'scoreboard';
+    this.board.setAttribute('aria-live', 'polite');
+
     this.feed = el('div', '', this.root) as HTMLDivElement;
     this.feed.id = 'feed';
     this.vignette = el('div', '', document.body) as HTMLDivElement;
@@ -175,6 +195,11 @@ export class Hud {
 
   show(v: boolean) {
     this.root.classList.toggle('hidden', !v);
+    if (!v) {
+      this.death.classList.remove('show');
+      this.board.classList.add('hidden');
+      this.vignette.style.opacity = this.shieldFlash.style.opacity = '0';
+    }
   }
 
   setZoneName(name: string) {
@@ -182,7 +207,7 @@ export class Hud {
     if (z) z.textContent = name.toUpperCase();
   }
 
-  private makeMarker(kind: 'hostile' | 'friend' | 'station') {
+  private makeMarker(kind: 'hostile' | 'friend' | 'station' | 'player') {
     const m = el('div', `abs marker ${kind}`, this.markerLayer, '<div class="shape"></div><div class="lbl"></div>') as HTMLDivElement;
     return m;
   }
@@ -235,12 +260,52 @@ export class Hud {
     return out;
   }
 
+  /** Pilots list (held Tab). */
+  showScoreboard(show: boolean, list: PlayerInfo[], myName: string, online: boolean) {
+    this.board.classList.toggle('hidden', !show);
+    if (!show) return;
+    if (!online) {
+      this.html(this.board, '<h3>Pilotes</h3><p>Mode solo : aucun autre pilote.</p>');
+      return;
+    }
+    const rows = [...list]
+      .sort((a, b) => b.kills - a.kills || a.deaths - b.deaths)
+      .map(
+        (p) =>
+          `<tr${p.name === myName ? ' class="me"' : ''}><td>${esc(p.name)}${p.name === myName ? ' (vous)' : ''}</td><td>${p.kills}</td><td>${p.deaths}</td>` +
+          `<td>${p.ping ? p.ping + ' ms' : '—'}</td><td>${p.pvp ? '⚔ oui' : 'non'}</td><td>${p.online ? 'en ligne' : 'déconnecté'}</td></tr>`,
+      )
+      .join('');
+    this.html(this.board,
+      `<h3>Pilotes du secteur · ${list.filter((p) => p.online).length}</h3>` +
+      `<table><thead><tr><th>Pilote</th><th>Élim.</th><th>Pertes</th><th>Ping</th><th>PvP</th><th>État</th></tr></thead><tbody>${rows}</tbody></table>`);
+  }
+
+  private netLine(f: HudFrame) {
+    const st = f.status;
+    const name = f.myName ? `<b>${esc(f.myName)}</b> · ` : '';
+    switch (st.state) {
+      case 'local':
+        return `<span class="dot local"></span>SOLO · hors ligne`;
+      case 'online':
+        return `${name}<span class="dot ok"></span>EN LIGNE · ${f.playerCount}${f.maxPlayers ? '/' + f.maxPlayers : ''} pilote${f.playerCount > 1 ? 's' : ''} · ${st.rtt ? Math.round(st.rtt) + ' ms' : '… ms'}`;
+      case 'connecting':
+        return `<span class="dot warn"></span>CONNEXION…`;
+      case 'reconnecting':
+        return `${name}<span class="dot warn"></span>⚠ RECONNEXION…`;
+      default:
+        return `<span class="dot bad"></span>⚠ HORS LIGNE${st.error ? ' · ' + esc(st.error) : ''}`;
+    }
+  }
+
   update(f: HudFrame, dt: number) {
     const W = window.innerWidth;
     const H = window.innerHeight;
     const pt = { x: 0, y: 0, front: true };
     const me = f.me;
     this.html(this.fpsEl, `${f.fps.toFixed(0)} IPS · ${f.net}`);
+    this.html(this.netEl, this.netLine(f));
+    this.netEl.classList.toggle('warn', f.status.state !== 'online' && f.status.state !== 'local');
     this.html(this.topbar,
       `<div><div class="label">Vague</div><div class="v">${f.wave}</div></div>` +
       `<div><div class="label">Éliminations</div><div class="v">${f.stats.kills}</div></div>` +
@@ -306,6 +371,7 @@ export class Hud {
     this.html(this.chips,
       `<span class="chip ${f.input.flightAssist ? 'on' : 'off'}">${f.input.flightAssist ? 'ASSIST. VOL' : 'NEWTONIEN'}</span>` +
       (me.snap.boosting ? '<span class="chip boost">BOOST</span>' : '') +
+      (me.snap.pvp ? '<span class="chip pvp">⚔ PvP</span>' : '') +
       (me.snap.weaponsLocked
         ? '<span class="chip off">⚠ ARMES EN RECHARGE</span>'
         : me.snap.energy < cls.energy * 0.2
@@ -332,19 +398,31 @@ export class Hud {
     for (const s of f.ships.values()) {
       if (s.snap.id === me.snap.id) continue;
       seen.add(s.snap.id);
-      const hostile = s.snap.faction !== me.snap.faction;
+      const hostile = isHostile(me.snap, s.snap);
+      const pilot = s.snap.owner !== null ? f.players.get(s.snap.id) : undefined;
+      const kind = hostile ? 'hostile' : s.snap.owner !== null ? 'player' : 'friend';
       let m = this.markers.get(s.snap.id);
       if (!m) {
-        m = this.makeMarker(hostile ? 'hostile' : 'friend');
+        m = this.makeMarker(kind);
         this.markers.set(s.snap.id, m);
+      }
+      if (m.dataset.kind !== kind) {
+        m.className = `abs marker ${kind}`;
+        m.dataset.kind = kind;
       }
       const dist = s.position.distanceTo(me.position);
       this.project(s.position, f.camera, pt);
-      const visible = pt.front && pt.x > -20 && pt.x < W + 20 && pt.y > -20 && pt.y < H + 20 && s.snap.id !== f.targetId;
+      // Other pilots stay labelled even when targeted, so their name is always readable.
+      const visible = pt.front && pt.x > -20 && pt.x < W + 20 && pt.y > -20 && pt.y < H + 20 && (s.snap.id !== f.targetId || s.snap.owner !== null);
       m.style.display = visible ? '' : 'none';
       if (visible) {
         m.style.transform = `translate(${pt.x}px, ${pt.y}px)`;
-        (m.lastChild as HTMLElement).textContent = dist > 150 ? `${dist < 1000 ? dist.toFixed(0) + ' m' : (dist / 1000).toFixed(1) + ' km'}` : '';
+        const d = dist > 150 ? `${dist < 1000 ? dist.toFixed(0) + ' m' : (dist / 1000).toFixed(1) + ' km'}` : '';
+        const label =
+          s.snap.owner !== null
+            ? `${s.snap.pvp ? '⚔ ' : ''}${s.snap.name}${pilot && !pilot.online ? ' (déconnecté)' : ''}${d ? ' · ' + d : ''}`
+            : d;
+        (m.lastChild as HTMLElement).textContent = label;
       }
     }
     for (const [id, m] of this.markers) {
@@ -368,7 +446,7 @@ export class Hud {
     if (target) {
       const tcls = SHIP_CLASSES[target.snap.classId];
       const dist = target.position.distanceTo(me.position);
-      const hostile = target.snap.faction !== me.snap.faction;
+      const hostile = isHostile(me.snap, target.snap);
       this.project(target.position, f.camera, pt);
       const onScreen = pt.front && pt.x > 0 && pt.x < W && pt.y > 0 && pt.y < H;
       if (onScreen) {
@@ -378,7 +456,7 @@ export class Hud {
         this.bracket.style.width = this.bracket.style.height = `${size}px`;
         this.bracket.style.transform = `translate(${pt.x - size / 2}px, ${pt.y - size / 2}px)`;
         this.html(this.bracketInfo,
-          `<b>${hostile ? 'HOSTILE' : 'ALLIÉ'} · ${tcls.label.toUpperCase()}</b>${target.snap.name} — ${dist < 1000 ? dist.toFixed(0) + ' m' : (dist / 1000).toFixed(2) + ' km'}` +
+          `<b>${hostile ? 'HOSTILE' : target.snap.owner !== null ? 'PILOTE' : 'ALLIÉ'} · ${tcls.label.toUpperCase()}</b>${esc(target.snap.name)} — ${dist < 1000 ? dist.toFixed(0) + ' m' : (dist / 1000).toFixed(2) + ' km'}` +
           `<div class="bars"><div class="bar s"><i style="transform:scaleX(${target.snap.shield / tcls.shield})"></i></div><div class="bar h"><i style="transform:scaleX(${target.snap.hull / tcls.hull})"></i></div></div>`);
       } else {
         // Edge arrow pointing toward the off-screen target.
@@ -442,7 +520,7 @@ export class Hud {
     ctx.fill();
 
     const inv = _q.copy(me.rotation).invert();
-    const plot = (p: THREE.Vector3, color: string, size: number, isTarget: boolean, shape: 'circle' | 'square' | 'diamond' = 'circle') => {
+    const plot = (p: THREE.Vector3, color: string, size: number, isTarget: boolean, shape: 'circle' | 'square' | 'diamond' | 'triangle' = 'circle') => {
       _v.copy(p).sub(me.position).applyQuaternion(inv);
       const d = _v.length();
       let scale = 1 / range;
@@ -459,6 +537,14 @@ export class Hud {
       ctx.stroke();
       ctx.fillStyle = color;
       if (shape === 'square') ctx.fillRect(x - size, y + h - size, size * 2, size * 2);
+      else if (shape === 'triangle') {
+        const s = size * 1.4;
+        ctx.beginPath();
+        ctx.moveTo(x, y + h - s);
+        ctx.lineTo(x + s, y + h + s * 0.8);
+        ctx.lineTo(x - s, y + h + s * 0.8);
+        ctx.fill();
+      }
       else if (shape === 'diamond') {
         const s = size * 1.35;
         ctx.beginPath();
@@ -481,8 +567,15 @@ export class Hud {
     plot(f.stationPos, '#7fe3ff', 6, false, 'square');
     for (const s of f.ships.values()) {
       if (s.snap.id === me.snap.id) continue;
-      const hostile = s.snap.faction !== me.snap.faction;
-      plot(s.position, hostile ? '#ff5a3c' : '#5cffb0', s.snap.classId === 'marauder' ? 6 : 4, s.snap.id === f.targetId, hostile ? 'diamond' : 'circle');
+      const hostile = isHostile(me.snap, s.snap);
+      const player = s.snap.owner !== null;
+      plot(
+        s.position,
+        hostile ? '#ff5a3c' : player ? '#d4b8ff' : '#5cffb0',
+        s.snap.classId === 'marauder' ? 6 : player ? 5 : 4,
+        s.snap.id === f.targetId,
+        hostile ? 'diamond' : player ? 'triangle' : 'circle',
+      );
     }
     ctx.fillStyle = '#fff';
     ctx.beginPath();

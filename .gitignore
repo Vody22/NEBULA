@@ -5,3 +5,4 @@ dist/
 screenshots/
 .netlify/
 dist-server/
+.mp-check/

@@ -9,9 +9,13 @@ import {
   type Settings,
 } from '../settings';
 
+export type PlayMode = 'online' | 'solo';
+export type ServerState = 'checking' | 'ok' | 'bad' | 'none' | 'busy';
+
 export interface MenuCallbacks {
-  onStart(): void;
+  onStart(mode: PlayMode, name: string): void;
   onResume(): void;
+  onLeave(): void;
   onSettingsChanged(s: Settings): void;
 }
 
@@ -22,6 +26,7 @@ const GROUPS: { title: string; actions: Action[] }[] = [
   { title: 'Vol', actions: ['throttleUp', 'throttleDown', 'stop', 'boost', 'assist'] },
   { title: 'Manœuvres', actions: ['strafeLeft', 'strafeRight', 'strafeUp', 'strafeDown', 'rollLeft', 'rollRight', 'pitchUp', 'pitchDown', 'yawLeft', 'yawRight'] },
   { title: 'Combat et interface', actions: ['fire', 'target', 'camera', 'mute'] },
+  { title: 'En ligne', actions: ['chat', 'chatToggle', 'pvp', 'scoreboard'] },
 ];
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
@@ -38,6 +43,8 @@ export class Menu {
   private layoutMap: Map<string, string> | null = null;
   private touchOnly: boolean;
   private lastFocus: string | null = null;
+  private online = false;
+  private server: { state: ServerState; text: string } = { state: 'checking', text: 'Recherche du serveur en ligne…' };
 
   constructor(
     root: HTMLElement,
@@ -70,8 +77,9 @@ export class Menu {
     return !this.root.classList.contains('hidden');
   }
 
-  show(mode: Mode) {
+  show(mode: Mode, opts: { online?: boolean } = {}) {
     this.mode = mode;
+    this.online = opts.online ?? false;
     this.view = 'main';
     this.capturing = null;
     this.root.classList.remove('hidden');
@@ -81,6 +89,29 @@ export class Menu {
   hide() {
     this.capturing = null;
     this.root.classList.add('hidden');
+  }
+
+  /** Online server reachability, shown under the pilot name without re-rendering the menu. */
+  setServerStatus(state: ServerState, text: string) {
+    this.server = { state, text };
+    const el = this.root.querySelector<HTMLElement>('#serverStatus');
+    if (el) {
+      el.textContent = text;
+      el.className = `server ${state}`;
+    }
+    const online = this.root.querySelector<HTMLButtonElement>('[data-act="online"]');
+    const solo = this.root.querySelector<HTMLButtonElement>('[data-act="solo"]');
+    const busy = state === 'busy';
+    for (const b of this.root.querySelectorAll<HTMLButtonElement>('.menu-buttons button')) b.disabled = busy;
+    if (online) {
+      online.disabled = busy || state === 'none';
+      online.classList.toggle('primary', state !== 'bad' && state !== 'none');
+    }
+    solo?.classList.toggle('primary', state === 'bad' || state === 'none');
+  }
+
+  private pilotName() {
+    return (this.root.querySelector<HTMLInputElement>('#pilotName')?.value ?? this.settings.name).trim();
   }
 
   private effectiveLayout(): KeyboardLayout {
@@ -104,16 +135,31 @@ export class Menu {
       const start = this.mode === 'start';
       html = `
         <h1 id="menuTitle">${start ? 'NEBULA <span>FRONTIER</span>' : 'PAUSE'}</h1>
-        <p class="sub">${start ? 'Secteur Aurora · Prototype de combat v0.1' : 'La simulation est en pause'}</p>
+        <p class="sub">${start ? 'Secteur Aurora · v0.2 multijoueur' : this.online ? 'En ligne : le secteur continue, votre vaisseau coupe les gaz' : 'La simulation est en pause'}</p>
         ${
           this.touchOnly
             ? `<p class="device-warning" role="alert"><strong>Clavier et souris requis.</strong> Ce prototype ne propose pas encore de commandes tactiles : sur cet appareil, il est seulement possible de regarder la scène.</p>`
             : ''
         }
+        ${
+          start
+            ? `<div class="pilot">
+                <label for="pilotName">Pseudo de pilote</label>
+                <input id="pilotName" type="text" maxlength="16" autocomplete="nickname" spellcheck="false" value="${esc(s.name)}" placeholder="2 à 16 caractères">
+                <p id="serverStatus" class="server ${this.server.state}" role="status">${esc(this.server.text)}</p>
+              </div>`
+            : ''
+        }
         <div class="menu-buttons">
-          <button class="primary" data-act="${start ? 'start' : 'resume'}">${start ? 'Décoller' : 'Reprendre'}</button>
+          ${
+            start
+              ? `<button class="primary" data-act="online">Jouer en ligne</button>
+                 <button data-act="solo">Solo hors ligne</button>`
+              : `<button class="primary" data-act="resume">Reprendre</button>`
+          }
           <button data-act="controls">Commandes</button>
           <button data-act="options">Options et son</button>
+          ${start ? '' : `<button data-act="leave">Quitter vers le menu</button>`}
         </div>
         ${
           start
@@ -122,8 +168,9 @@ export class Menu {
                 <div><span class="k">Clic gauche</span> ou ${this.kbd(b.fire)} tirer</div>
                 <div>${this.kbd(b.throttleUp)} ${this.kbd(b.throttleDown)} poussée · ${this.kbd(b.boost)} boost · ${this.kbd(b.stop)} arrêt</div>
                 <div>${this.kbd(b.target)} cible suivante · <kbd>Échap</kbd> pause et aide</div>
+                <div>${this.kbd(b.chat)} chat · ${this.kbd(b.pvp)} PvP · ${this.kbd(b.scoreboard)} pilotes (en ligne)</div>
               </div>
-              <p class="note">Défendez la station Aurora-7 contre les vagues de pirates.</p>`
+              <p class="note">Défendez la station Aurora-7 contre les vagues de pirates, seul ou avec d'autres pilotes.</p>`
             : `<p class="note">Entrée ou clic sur « Reprendre » pour revenir en vol. La souris sera capturée de nouveau.</p>`
         }`;
     } else if (this.view === 'controls') {
@@ -183,13 +230,15 @@ export class Menu {
         <div class="menu-buttons row"><button class="primary" data-act="back">Retour</button></div>`;
     }
     this.root.innerHTML = `<div class="box view-${this.view}">${html}</div>`;
+    if (this.view === 'main' && this.mode === 'start') this.setServerStatus(this.server.state, this.server.text);
     this.focusDefault();
   }
 
   private focusDefault() {
-    const want = this.lastFocus ? this.root.querySelector<HTMLElement>(this.lastFocus) : null;
+    let want = this.lastFocus ? this.root.querySelector<HTMLElement>(this.lastFocus) : null;
     this.lastFocus = null;
-    (want ?? this.root.querySelector<HTMLElement>('button.primary, button'))?.focus();
+    if (!want && this.view === 'main' && this.mode === 'start' && !this.settings.name) want = this.root.querySelector<HTMLElement>('#pilotName');
+    (want ?? this.root.querySelector<HTMLElement>('button.primary:not(:disabled), button:not(:disabled)'))?.focus();
   }
 
   private onClick(e: Event) {
@@ -204,8 +253,23 @@ export class Menu {
       return;
     }
     switch (act) {
-      case 'start':
-        this.cb.onStart();
+      case 'online':
+      case 'solo': {
+        const name = this.pilotName();
+        if (act === 'online' && name.length < 2) {
+          this.setServerStatus(this.server.state === 'busy' ? 'ok' : this.server.state, 'Choisissez un pseudo de 2 à 16 caractères pour jouer en ligne.');
+          this.root.querySelector<HTMLInputElement>('#pilotName')?.focus();
+          break;
+        }
+        if (name !== this.settings.name) {
+          this.settings.name = name;
+          this.changed();
+        }
+        this.cb.onStart(act, name);
+        break;
+      }
+      case 'leave':
+        this.cb.onLeave();
         break;
       case 'resume':
         this.cb.onResume();
@@ -259,6 +323,11 @@ export class Menu {
 
   private onKey(e: KeyboardEvent) {
     if (!this.isOpen) return;
+    if (e.code === 'Enter' && (e.target as HTMLElement).id === 'pilotName') {
+      e.preventDefault();
+      this.root.querySelector<HTMLButtonElement>('.menu-buttons button.primary:not(:disabled)')?.click();
+      return;
+    }
     if (this.capturing) {
       e.preventDefault();
       e.stopImmediatePropagation();

@@ -11,6 +11,7 @@
   --shield: #5cc8ff;
   --hull: #ffd166;
   --energy: #c3a2ff;
+  --pilot: #d4b8ff;
   --font: 'Rajdhani', 'Segoe UI', system-ui, sans-serif;
   --font-display: 'Orbitron', 'Rajdhani', system-ui, sans-serif;
   --gap: 24px;
@@ -83,6 +84,8 @@ kbd { font-family: var(--font-display); font-size: 0.8em; color: #fff; border: 1
 .marker.hostile .lbl { border-left: 2px solid var(--hostile); }
 .marker.friend .lbl { border-left: 2px solid var(--friend); }
 .marker.station .lbl { border-left: 2px solid var(--hud); }
+.marker.player .shape { border-color: var(--pilot); border-radius: 50%; transform: none; box-shadow: 0 0 3px #000, inset 0 0 0 2px rgba(0, 0, 0, 0.6), inset 0 0 0 4px var(--pilot); }
+.marker.player .lbl { border-left: 2px solid var(--pilot); font-size: 14px; font-weight: 700; color: #f3eaff; top: -18px; left: 14px; }
 .arrow { width: 0; height: 0; margin: -9px 0 0 -9px; border-left: 9px solid transparent; border-right: 9px solid transparent; border-bottom: 16px solid var(--hostile); filter: drop-shadow(0 0 2px #000); }
 
 /* --- Panels */
@@ -102,6 +105,7 @@ kbd { font-family: var(--font-display); font-size: 0.8em; color: #fff; border: 1
 .chip.on { background: rgba(127, 227, 255, 0.22); }
 .chip.off { border-color: var(--warn); color: var(--warn); }
 .chip.boost { border-color: var(--energy); background: rgba(180, 140, 255, 0.35); }
+.chip.pvp { border-color: var(--hostile); color: #fff; background: rgba(255, 90, 60, 0.35); }
 
 #status { right: var(--gap); bottom: var(--gap); width: 280px; }
 .stat { margin-bottom: 10px; }
@@ -122,6 +126,40 @@ kbd { font-family: var(--font-display); font-size: 0.8em; color: #fff; border: 1
 #zone { left: var(--gap); top: 20px; }
 #zone .name { font-family: var(--font-display); font-size: 15px; letter-spacing: 4px; color: #fff; }
 #zone .help { margin-top: 6px; font-size: 13px; color: var(--hud-dim); }
+#zone .net { margin-top: 6px; font-size: 14px; font-weight: 600; letter-spacing: 0.5px; color: var(--hud-text); white-space: nowrap; }
+#zone .net b { color: #fff; }
+#zone .net.warn { color: var(--warn); }
+#zone .net .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; background: var(--hud-dim); }
+#zone .net .dot.ok { background: var(--friend); }
+#zone .net .dot.warn { background: var(--warn); }
+#zone .net .dot.bad { background: var(--hostile); }
+
+/* --- Sector chat (bottom-left, above the flight panel) */
+#chat { position: fixed; left: var(--gap); bottom: calc(var(--gap) + 168px); width: min(380px, calc(50vw - 180px)); min-width: 220px; z-index: 5; font-size: 15px; text-shadow: var(--legible); pointer-events: none; }
+#chat.hidden { display: none; }
+#chat .log { max-height: 168px; overflow: hidden; display: flex; flex-direction: column; gap: 2px; }
+#chat .line { padding: 2px 8px; background: rgba(4, 12, 22, 0.6); color: #fff; line-height: 1.3; overflow-wrap: anywhere; border-left: 2px solid var(--hud-line); transition: opacity 1s; }
+#chat .line b { color: var(--hud); font-weight: 700; }
+#chat .line.system { color: var(--hud-dim); font-style: italic; border-left-color: transparent; }
+#chat .line.stale { opacity: 0; }
+#chat.open .log { overflow-y: auto; pointer-events: auto; background: rgba(4, 12, 22, 0.55); }
+#chat.open .line.stale { opacity: 1; }
+#chat form { display: none; margin-top: 4px; }
+#chat.open form { display: block; pointer-events: auto; }
+#chat input { width: 100%; box-sizing: border-box; font: inherit; font-size: 16px; color: #fff; background: rgba(4, 12, 22, 0.9); border: 1px solid var(--hud); padding: 7px 10px; outline: none; }
+#chat input:focus-visible { outline: 3px solid #ffd166; outline-offset: 1px; }
+#chat .hint { margin-top: 4px; font-size: 12px; color: var(--hud-dim); }
+#chat.collapsed .log { display: none; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* --- Pilots list (hold Tab) */
+#scoreboard { left: 50%; top: 18%; transform: translateX(-50%); width: min(640px, calc(100vw - 24px)); box-sizing: border-box; z-index: 6; }
+#scoreboard.hidden { display: none; }
+#scoreboard h3 { font-family: var(--font-display); font-size: 14px; letter-spacing: 3px; color: var(--hud); margin: 0 0 10px; }
+#scoreboard table { width: 100%; border-collapse: collapse; font-size: 15px; }
+#scoreboard th { text-align: left; font-family: var(--font-display); font-size: 10px; letter-spacing: 1.5px; color: var(--hud-dim); padding: 4px 6px; border-bottom: 1px solid var(--hud-line); }
+#scoreboard td { padding: 5px 6px; color: #fff; border-bottom: 1px solid var(--hud-faint); }
+#scoreboard tr.me td { color: var(--hud); font-weight: 700; }
 #fps { left: auto; right: 18px; top: 16px; font-size: 12px; color: var(--hud-dim); }
 
 #feed { position: absolute; left: 50%; top: 86px; transform: translateX(-50%); text-align: center; width: max-content; max-width: calc(100vw - 24px); }
@@ -163,6 +201,16 @@ kbd { font-family: var(--font-display); font-size: 0.8em; color: #fff; border: 1
 #menu .hint { text-align: left; margin: 8px 0 12px; }
 #menu .device-warning { border: 1px solid var(--warn); background: rgba(80, 50, 0, 0.45); color: #fff; padding: 12px 16px; margin: 0 0 20px; font-size: 16px; line-height: 1.4; }
 #menu .device-warning strong { color: var(--warn); }
+#menu .pilot { margin: 0 auto 22px; max-width: 420px; text-align: left; }
+#menu .pilot label { display: block; font-family: var(--font-display); font-size: 12px; letter-spacing: 3px; color: var(--hud); text-transform: uppercase; margin-bottom: 6px; }
+#menu .pilot input { width: 100%; box-sizing: border-box; font: inherit; font-size: 20px; font-weight: 600; color: #fff; background: rgba(4, 12, 22, 0.85); border: 1px solid var(--hud-line); padding: 10px 12px; }
+#menu .server { margin: 8px 0 0; font-size: 15px; color: var(--hud-dim); min-height: 1.4em; }
+#menu .server.ok { color: var(--friend); }
+#menu .server.ok::before { content: '● '; }
+#menu .server.bad, #menu .server.none { color: var(--warn); }
+#menu .server.bad::before, #menu .server.none::before { content: '⚠ '; }
+#menu .server.busy::before, #menu .server.checking::before { content: '… '; }
+#menu button:disabled { opacity: 0.45; cursor: not-allowed; }
 #menu .binds { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 22px; text-align: left; }
 #menu .bind-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 16px; padding: 2px 0; border-bottom: 1px solid rgba(127, 227, 255, 0.08); }
 #menu .bind-row button.key, #menu .fixedkey { min-width: 92px; padding: 5px 10px; font-size: 13px; letter-spacing: 1px; text-transform: none; text-align: center; }
@@ -218,6 +266,11 @@ kbd { font-family: var(--font-display); font-size: 0.8em; color: #fff; border: 1
   #feed { top: 96px; }
   .notice { font-size: 13px; letter-spacing: 1px; padding: 5px 12px; white-space: normal; }
   #flight, #status { width: calc(50% - var(--gap) * 1.5); padding: 10px 12px; }
+  #zone .net { font-size: 12px; white-space: normal; }
+  #chat { top: 136px; bottom: auto; left: var(--gap); right: var(--gap); width: auto; min-width: 0; font-size: 14px; }
+  #chat .log { max-height: 128px; }
+  #scoreboard { top: 130px; }
+  #scoreboard table { font-size: 13px; }
   #throttle { height: 84px; width: 12px; }
   #flight .row { gap: 10px; }
   .big { font-size: 26px; }
@@ -237,6 +290,8 @@ kbd { font-family: var(--font-display); font-size: 0.8em; color: #fff; border: 1
 /* very short landscape windows: keep the radar from covering the reticle */
 @media (max-height: 520px) {
   #radarWrap { width: 200px; height: 113px; }
+  #chat { bottom: calc(var(--gap) + 140px); }
+  #chat .log { max-height: 66px; }
   #throttle { height: 70px; }
   .big { font-size: 24px; }
 }

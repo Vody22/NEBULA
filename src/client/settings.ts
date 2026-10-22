@@ -23,7 +23,11 @@ export type Action =
   | 'assist'
   | 'target'
   | 'camera'
-  | 'mute';
+  | 'mute'
+  | 'chat'
+  | 'chatToggle'
+  | 'pvp'
+  | 'scoreboard';
 
 export type KeyboardLayout = 'auto' | 'azerty' | 'qwerty';
 
@@ -35,6 +39,9 @@ export interface Settings {
   muted: boolean;
   invertY: boolean;
   sensitivity: number;
+  /** Pilot name shown to other players. */
+  name: string;
+  chatVisible: boolean;
 }
 
 /** Bindings are physical key positions (KeyboardEvent.code): ZQSD on AZERTY = WASD on QWERTY. */
@@ -58,6 +65,10 @@ export const DEFAULT_BINDINGS: Record<Action, string> = {
   target: 'KeyT',
   camera: 'KeyV',
   mute: 'KeyM',
+  chat: 'Enter',
+  chatToggle: 'KeyH',
+  pvp: 'KeyP',
+  scoreboard: 'Tab',
 };
 
 export const ACTION_LABELS: Record<Action, string> = {
@@ -80,6 +91,10 @@ export const ACTION_LABELS: Record<Action, string> = {
   target: 'Cible suivante',
   camera: 'Changer de caméra',
   mute: 'Couper / remettre le son',
+  chat: 'Écrire dans le chat',
+  chatToggle: 'Afficher / masquer le chat',
+  pvp: 'PvP on/off (en ligne)',
+  scoreboard: 'Liste des pilotes (maintenir)',
 };
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -90,6 +105,8 @@ export const DEFAULT_SETTINGS: Settings = {
   muted: false,
   invertY: false,
   sensitivity: 1,
+  name: '',
+  chatVisible: true,
 };
 
 const KEY = 'nebula-frontier.settings';
@@ -115,6 +132,8 @@ export function loadSettings(storage: Pick<Storage, 'getItem'> | null = safeStor
       muted: s.muted === true,
       invertY: s.invertY === true,
       sensitivity: typeof s.sensitivity === 'number' ? Math.min(3, Math.max(0.25, s.sensitivity)) : 1,
+      name: typeof s.name === 'string' ? s.name.slice(0, 16) : '',
+      chatVisible: s.chatVisible !== false,
     };
   } catch {
     return base;

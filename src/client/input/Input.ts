@@ -2,6 +2,12 @@ import type { ShipInput } from '../../shared/sim/types';
 import { neutralInput } from '../../shared/sim/types';
 import type { Action } from '../settings';
 
+/** Keys typed into a text field (chat, pilot name) never fly the ship. */
+function isTyping(e: Event) {
+  const t = e.target as HTMLElement | null;
+  return !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable) && (t as HTMLInputElement).type !== 'range' && (t as HTMLInputElement).type !== 'checkbox';
+}
+
 /**
  * Turns keyboard + mouse into a ShipInput, through rebindable actions.
  * Mouse acts as a virtual joystick: the reticle offset from screen centre
@@ -25,7 +31,7 @@ export class InputManager {
   constructor(private element: HTMLElement, bindings: Record<Action, string>) {
     this.bindings = bindings;
     window.addEventListener('keydown', (e) => {
-      if (!this.enabled) return;
+      if (!this.enabled || isTyping(e)) return;
       // Keep game keys from scrolling the page or moving focus.
       if (e.code === 'Tab' || e.code === 'Space' || e.code.startsWith('Arrow')) e.preventDefault();
       if (!this.keys.has(e.code)) this.pressed.add(e.code);
@@ -85,6 +91,17 @@ export class InputManager {
     this.keys.clear();
     this.pressed.clear();
     this.mouseDown = false;
+  }
+
+  /** Releases held keys but keeps the mouse (opening the chat must not stop the guns or the stick). */
+  releaseKeys() {
+    this.keys.clear();
+    this.pressed.clear();
+  }
+
+  /** Is the key bound to `a` held down? */
+  held(a: Action) {
+    return this.keys.has(this.bindings[a]);
   }
 
   /** Recentres the virtual joystick (after a pause, so the ship doesn't keep turning). */

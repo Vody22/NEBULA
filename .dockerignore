@@ -1,0 +1,7 @@
+node_modules
+dist
+dist-server
+screenshots
+.mp-check
+.git
+.netlify
