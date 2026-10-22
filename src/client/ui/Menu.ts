@@ -1,4 +1,5 @@
 import { isTouchDevice } from '../input/Touch';
+import { isQualityLevel, QUALITY, QUALITY_LEVELS } from '../render/quality';
 import {
   ACTION_LABELS,
   DEFAULT_BINDINGS,
@@ -222,6 +223,12 @@ export class Menu {
       html = `
         <h2 id="menuTitle">Options et son</h2>
         <div class="opts">
+          <label class="opt"><span>Qualité graphique</span>
+            <select id="qualitySel" data-setting="quality">
+              ${(['auto', ...QUALITY_LEVELS] as const)
+                .map((q) => `<option value="${q}"${s.quality === q ? ' selected' : ''}>${q === 'auto' ? 'Automatique' : QUALITY[q].label}</option>`)
+                .join('')}
+            </select></label>
           <label class="opt"><span>Volume</span>
             <input type="range" min="0" max="100" step="5" value="${Math.round(s.volume * 100)}" data-setting="volume" aria-valuetext="${Math.round(s.volume * 100)} %">
             <output>${Math.round(s.volume * 100)} %</output></label>
@@ -314,6 +321,8 @@ export class Menu {
       el.setAttribute('aria-valuetext', `${Math.round(v * 100)} %`);
     } else if (key === 'muted' || key === 'invertY') {
       s[key] = (el as HTMLInputElement).checked;
+    } else if (key === 'quality' && e.type === 'change') {
+      s.quality = isQualityLevel(el.value) ? el.value : 'auto';
     } else if (key === 'layout' && e.type === 'change') {
       s.layout = el.value as KeyboardLayout;
       this.changed();

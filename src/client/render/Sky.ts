@@ -80,6 +80,7 @@ export interface SkyResult {
   environment: THREE.Texture;
   sun: THREE.Group;
   update(camera: THREE.Camera): void;
+  dispose(): void;
 }
 
 /** Bakes the procedural nebula sky into a cubemap once, and builds the live sun. */
@@ -138,13 +139,11 @@ export function buildSky(renderer: THREE.WebGLRenderer, sunDir: THREE.Vector3, r
     [1, 'rgba(140,180,255,0)'],
   ]);
   const ring = makeFlareRing();
+  // Cinematic Realism: the star glows, the lens barely shows (no row of ghosts).
   const lens = new Lensflare();
-  lens.addElement(new LensflareElement(flareMain, 380, 0, new THREE.Color(0.8, 0.7, 0.6)));
-  lens.addElement(new LensflareElement(ring, 120, 0.3, new THREE.Color(0.25, 0.35, 0.5)));
-  lens.addElement(new LensflareElement(flareHex, 50, 0.6, new THREE.Color(0.5, 0.5, 0.6)));
-  lens.addElement(new LensflareElement(flareHex, 90, 0.75, new THREE.Color(0.4, 0.5, 0.6)));
-  lens.addElement(new LensflareElement(flareHex, 130, 0.95, new THREE.Color(0.35, 0.4, 0.55)));
-  lens.addElement(new LensflareElement(ring, 60, 1.1, new THREE.Color(0.5, 0.35, 0.25)));
+  lens.addElement(new LensflareElement(flareMain, 300, 0, new THREE.Color(0.7, 0.62, 0.55)));
+  lens.addElement(new LensflareElement(ring, 90, 0.35, new THREE.Color(0.08, 0.11, 0.16)));
+  lens.addElement(new LensflareElement(flareHex, 70, 0.8, new THREE.Color(0.08, 0.09, 0.12)));
   sun.add(lens);
 
   return {
@@ -153,6 +152,10 @@ export function buildSky(renderer: THREE.WebGLRenderer, sunDir: THREE.Vector3, r
     sun,
     update(camera: THREE.Camera) {
       sun.position.copy(camera.position).addScaledVector(sunDir, 150000);
+    },
+    dispose() {
+      rt.dispose();
+      env.dispose();
     },
   };
 }

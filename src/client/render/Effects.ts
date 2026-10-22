@@ -158,6 +158,8 @@ export class Effects {
   private v = new THREE.Vector3();
   private d = new THREE.Vector3();
   private debrisMat: THREE.MeshStandardMaterial;
+  /** Particle count multiplier (graphics quality). */
+  density = 1;
   private waveMat: THREE.MeshBasicMaterial;
 
   constructor() {
@@ -217,7 +219,7 @@ export class Effects {
     const hot = new THREE.Color(2.2, 1.5, 0.8);
     const orange = new THREE.Color(1.3, 0.42, 0.08);
     const red = new THREE.Color(0.35, 0.05, 0.01);
-    for (let i = 0; i < 45 * scale; i++) {
+    for (let i = 0; i < 45 * scale * this.density; i++) {
       randDir(this.d);
       this.v.copy(this.d).multiplyScalar((20 + Math.random() * 90) * scale).add(vel.clone().multiplyScalar(0.5));
       this.glow.emit(pos, this.v, i % 3 ? orange : hot, red, (4 + Math.random() * 5) * scale, (14 + Math.random() * 16) * scale, 0.7 + Math.random() * 0.9, 1.5);
@@ -226,13 +228,13 @@ export class Effects {
     this.glow.emit(pos, vel.clone().multiplyScalar(0.5), new THREE.Color(4, 3.2, 2.4), new THREE.Color(0.8, 0.25, 0.08), 12 * scale, 40 * scale, 0.3, 0);
     // sparks
     const spark = new THREE.Color(5, 3, 1.2);
-    for (let i = 0; i < 70 * scale; i++) {
+    for (let i = 0; i < 70 * scale * this.density; i++) {
       randDir(this.d);
       this.v.copy(this.d).multiplyScalar(120 + Math.random() * 260).add(vel);
       this.glow.emit(pos, this.v, spark, new THREE.Color(1.5, 0.3, 0), 1.2, 0.6, 0.6 + Math.random() * 1.2, 0.6);
     }
     // smoke
-    for (let i = 0; i < 26 * scale; i++) {
+    for (let i = 0; i < 26 * scale * this.density; i++) {
       randDir(this.d);
       this.v.copy(this.d).multiplyScalar((6 + Math.random() * 24) * scale).add(vel.clone().multiplyScalar(0.3));
       this.smoke.emit(pos, this.v, new THREE.Color(0.12, 0.1, 0.09), new THREE.Color(0.05, 0.05, 0.06), 8 * scale, 34 * scale, 2.5 + Math.random() * 2.5, 0.6, 0.5);
@@ -246,7 +248,7 @@ export class Effects {
       this.waves.push({ mesh, age: 0, life: 0.8 + k * 0.3, size: (55 + k * 30) * scale });
     }
     // debris chunks
-    for (let i = 0; i < 10 * scale; i++) {
+    for (let i = 0; i < 10 * scale * this.density; i++) {
       const s = 0.4 + Math.random() * 1.6;
       const mesh = new THREE.Mesh(new THREE.BoxGeometry(s, s * 0.4, s * 1.4), this.debrisMat);
       mesh.position.copy(pos);

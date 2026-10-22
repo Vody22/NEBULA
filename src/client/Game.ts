@@ -19,13 +19,14 @@ import { Lasers } from './render/Lasers';
 import { Planets } from './render/Planets';
 import { PostFX } from './render/PostFX';
 import { ShipView } from './render/ShipView';
+import { QUALITY, type QualityLevel, type QualityProfile } from './render/quality';
 import { buildSky, type SkyResult } from './render/Sky';
 import { SpaceDust } from './render/SpaceDust';
 import { Station } from './render/Station';
 import type { Settings } from './settings';
 
 export interface GameOptions {
-  quality: 'low' | 'high';
+  quality: QualityLevel;
   /** 'direct' skips post-processing entirely (?render=direct). */
   render?: 'auto' | 'direct';
 }
@@ -34,6 +35,8 @@ const UNION_BOLT = new THREE.Color(1.5, 4, 9);
 const RAIDER_BOLT = new THREE.Color(9, 2.2, 0.8);
 const _p = new THREE.Vector3();
 const _shotOffset = new THREE.Vector3();
+/** Image-based light from the baked nebula: reflections and a hint of colour, not a fill light. */
+const ENVIRONMENT_INTENSITY = 0.55;
 export const DEFAULT_SECTOR_SEED = 1337;
 
 export { isHostile };
@@ -59,6 +62,7 @@ export class Game {
   readonly hud = new Hud();
   readonly audio = new GameAudio();
   private post: PostFX | null;
+  private quality: QualityProfile;
   /** Render path: MSAA composer, composer without MSAA, or plain render (no post-processing). */
   renderPath: 'msaa' | 'composer' | 'direct';
   private framesRunning = 0;
@@ -120,7 +124,8 @@ export class Game {
 
   constructor(canvas: HTMLCanvasElement, private opts: GameOptions, settings: Settings) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
-    this.maxPixelRatio = Math.min(window.devicePixelRatio, opts.quality === 'high' ? 1.5 : 1);
+    this.quality = QUALITY[opts.quality];
+    this.maxPixelRatio = Math.min(window.devicePixelRatio, this.quality.maxPixelRatio);
     this.pixelRatio = this.maxPixelRatio;
     this.renderer.setPixelRatio(this.pixelRatio);
     this.renderer.setSize(window.innerWidth, window.innerHeight, false);
@@ -134,14 +139,10 @@ export class Game {
 
     this.cam = new ChaseCamera(window.innerWidth / window.innerHeight);
     this.scene.add(this.cam.camera);
-    const msaa = opts.quality === 'high' ? 4 : 0;
-    if (opts.render === 'direct') {
-      this.post = null;
-      this.renderPath = 'direct';
-    } else {
-      this.post = new PostFX(this.renderer, this.scene, this.cam.camera, msaa);
-      this.renderPath = msaa ? 'msaa' : 'composer';
-    }
+    this.post = null;
+    this.renderPath = 'direct';
+    this.buildPost();
+    this.effects.density = this.quality.particles;
     this.input = new InputManager(canvas, settings.bindings);
     this.applySettings(settings);
     this.timer.connect(document);
@@ -241,6 +242,50 @@ export class Game {
     this.effects.setPixelScale(h * this.renderer.getPixelRatio(), this.cam.camera.fov);
   }
 
+  /** Post-processing chain for the current quality level (none on Bas or with ?render=direct). */
+  private buildPost() {
+    this.post?.dispose();
+    this.post = null;
+    if (this.opts.render === 'direct' || !this.quality.post) {
+      this.renderPath = 'direct';
+      return;
+    }
+    this.post = new PostFX(this.renderer, this.scene, this.cam.camera, this.quality.msaa);
+    this.renderPath = this.quality.msaa ? 'msaa' : 'composer';
+  }
+
+  private skySize = 0;
+  private buildSkyFor(zone: ZoneDef) {
+    if (this.sky) {
+      this.worldRoot.remove(this.sky.sun);
+      this.sky.dispose();
+    }
+    this.skySize = this.quality.skySize;
+    this.sky = buildSky(this.renderer, zone.sunDirection, this.skySize);
+    this.scene.background = this.sky.background;
+    this.scene.environment = this.sky.environment;
+    this.scene.environmentIntensity = ENVIRONMENT_INTENSITY;
+    this.worldRoot.add(this.sky.sun);
+  }
+
+  /** Switches the graphics quality while running (Options menu). */
+  setQuality(level: QualityLevel) {
+    if (level === this.quality.level) return;
+    this.quality = QUALITY[level];
+    this.maxPixelRatio = Math.min(window.devicePixelRatio, this.quality.maxPixelRatio);
+    this.pixelRatio = this.maxPixelRatio;
+    this.effects.density = this.quality.particles;
+    this.buildPost();
+    this.outputChecks = 0;
+    this.blackSamples = 0;
+    if (this.zone && this.skySize !== this.quality.skySize) this.buildSkyFor(this.zone);
+    this.resize();
+  }
+
+  get qualityLevel() {
+    return this.quality.level;
+  }
+
   /** Builds the static zone (identical to the server's, from the same seed). */
   private buildWorld(seed: number) {
     if (this.zone?.seed === seed) return;
@@ -250,20 +295,18 @@ export class Game {
     const zone = (this.zone = buildZone(seed));
     this.grid = new StaticGrid(zone.colliders);
     this.predictor = new Predictor(this.grid);
-    const sun = new THREE.DirectionalLight(0xfff1e0, 3.4);
+    // Cinematic Realism: one dominant star. Shadows stay nearly black; a faint
+    // cool rim from the nebula side and the baked sky reflections keep the
+    // silhouettes readable without lifting them (no flat violet fill).
+    const sun = new THREE.DirectionalLight(0xfff0dc, 4.2);
     sun.position.copy(zone.sunDirection).multiplyScalar(1000);
     this.worldRoot.add(sun, sun.target);
-    // Cool fill from the nebula side so hulls in shadow still read.
-    const fill = new THREE.DirectionalLight(0x8a7cff, 0.9);
-    fill.position.copy(zone.sunDirection).multiplyScalar(-1000).add(new THREE.Vector3(0, 400, 0));
-    this.worldRoot.add(fill, fill.target);
-    this.worldRoot.add(new THREE.HemisphereLight(0x5a7ab0, 0x3a2040, 0.6));
+    const rim = new THREE.DirectionalLight(0x7d9cff, 0.32);
+    rim.position.copy(zone.sunDirection).multiplyScalar(-1000).add(new THREE.Vector3(0, 400, 0));
+    this.worldRoot.add(rim, rim.target);
+    this.worldRoot.add(new THREE.HemisphereLight(0x6f86b0, 0x0c0a12, 0.07));
 
-    this.sky = buildSky(this.renderer, zone.sunDirection, this.opts.quality === 'high' ? 1024 : 512);
-    this.scene.background = this.sky.background;
-    this.scene.environment = this.sky.environment;
-    this.scene.environmentIntensity = 1.1;
-    this.worldRoot.add(this.sky.sun);
+    this.buildSkyFor(zone);
 
     this.planets = new Planets(zone.planets, zone.sunDirection);
     this.station = new Station(zone.station);

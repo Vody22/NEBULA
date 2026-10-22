@@ -92,9 +92,9 @@ export class Asteroids {
       const sp = new THREE.Sprite(
         new THREE.SpriteMaterial({
           map: dustTex,
-          color: new THREE.Color().setHSL(0.55 + rand() * 0.35, 0.6, 0.5),
+          color: new THREE.Color().setHSL(0.56 + rand() * 0.14, 0.32, 0.42),
           transparent: true,
-          opacity: 0.08 + rand() * 0.08,
+          opacity: 0.05 + rand() * 0.06,
           blending: THREE.AdditiveBlending,
           depthWrite: false,
           rotation: rand() * Math.PI * 2,

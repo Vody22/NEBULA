@@ -46,14 +46,15 @@ export class Station {
       map: dark.map,
       roughnessMap: dark.roughnessMap,
       emissiveMap: dark.emissiveMap,
-      emissive: new THREE.Color(1.5, 2.4, 3.2),
+      emissive: new THREE.Color(0.55, 0.85, 1.15),
       metalness: 0.75,
       roughness: 0.5,
     });
     for (const t of [dark.map, dark.roughnessMap, dark.emissiveMap!]) t.repeat.set(3, 3);
     const solarMat = new THREE.MeshStandardMaterial({ map: makeSolarTexture(), metalness: 0.9, roughness: 0.25, envMapIntensity: 1.4 });
-    const glowBlue = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.6, 1.6, 3.5), toneMapped: false });
-    const glowOrange = new THREE.MeshBasicMaterial({ color: new THREE.Color(3.5, 1.6, 0.5), toneMapped: false });
+    // Light bands are signals, not decoration: bright enough to bloom a little, never to wash the hull out.
+    const glowBlue = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.35, 0.95, 2.0), toneMapped: false });
+    const glowOrange = new THREE.MeshBasicMaterial({ color: new THREE.Color(2.0, 0.9, 0.28), toneMapped: false });
 
     // --- Core: lathe profile for a sculpted hub
     const prof: THREE.Vector2[] = [];

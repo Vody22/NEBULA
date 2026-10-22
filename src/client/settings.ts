@@ -1,3 +1,4 @@
+import { isQualityLevel, type QualitySetting } from './render/quality';
 /**
  * Player preferences (bindings, sound, mouse) persisted in localStorage.
  * Storage can be unavailable (private mode, blocked site data): every access
@@ -42,6 +43,8 @@ export interface Settings {
   /** Pilot name shown to other players. */
   name: string;
   chatVisible: boolean;
+  /** Graphics quality ('auto': Bas on touch screens, Élevé elsewhere). */
+  quality: QualitySetting;
 }
 
 /** Bindings are physical key positions (KeyboardEvent.code): ZQSD on AZERTY = WASD on QWERTY. */
@@ -107,6 +110,7 @@ export const DEFAULT_SETTINGS: Settings = {
   sensitivity: 1,
   name: '',
   chatVisible: true,
+  quality: 'auto',
 };
 
 const KEY = 'nebula-frontier.settings';
@@ -134,6 +138,7 @@ export function loadSettings(storage: Pick<Storage, 'getItem'> | null = safeStor
       sensitivity: typeof s.sensitivity === 'number' ? Math.min(3, Math.max(0.25, s.sensitivity)) : 1,
       name: typeof s.name === 'string' ? s.name.slice(0, 16) : '',
       chatVisible: s.chatVisible !== false,
+      quality: isQualityLevel(s.quality) ? s.quality : 'auto',
     };
   } catch {
     return base;

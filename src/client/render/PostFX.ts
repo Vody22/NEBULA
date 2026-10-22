@@ -9,7 +9,7 @@ const FinalShader = {
   uniforms: {
     tDiffuse: { value: null as THREE.Texture | null },
     uTime: { value: 0 },
-    uAberration: { value: 0.0015 },
+    uAberration: { value: 0 },
     uVignette: { value: 0.9 },
     uDamage: { value: 0 },
   },
@@ -30,9 +30,9 @@ const FinalShader = {
       col.r = texture2D(tDiffuse, vUv + off).r;
       col.g = texture2D(tDiffuse, vUv).g;
       col.b = texture2D(tDiffuse, vUv - off).b;
-      float vig = 1.0 - smoothstep(0.25, 0.85, d * uVignette);
-      col *= mix(0.55, 1.0, vig);
-      col += (rand(gl_FragCoord.xy + fract(uTime) * 61.0) - 0.5) * 0.025;
+      float vig = 1.0 - smoothstep(0.3, 0.9, d * uVignette);
+      col *= mix(0.68, 1.0, vig);
+      col += (rand(gl_FragCoord.xy + fract(uTime) * 61.0) - 0.5) * 0.012;
       gl_FragColor = vec4(col, 1.0);
     }`,
 };
@@ -72,7 +72,8 @@ export class PostFX {
     this.composer = new EffectComposer(renderer, target);
     this.composer.addPass(new RenderPass(scene, camera));
     this.composer.addPass(new ShaderPass(SanitizeShader));
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x / 2, size.y / 2), 0.5, 0.45, 0.95);
+    // HDR threshold: sunlit hulls stay below 1.0, only emissives, engines, bolts and fire bloom.
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x / 2, size.y / 2), 0.38, 0.42, 1.05);
     this.composer.addPass(this.bloom);
     this.composer.addPass(new OutputPass());
     this.final = new ShaderPass(FinalShader);

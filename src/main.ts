@@ -1,5 +1,6 @@
 import { Game } from './client/Game';
 import { isTouchDevice, TouchControls } from './client/input/Touch';
+import { resolveQuality } from './client/render/quality';
 import { probeServer, resolveServerUrl } from './client/net/config';
 import { LocalTransport } from './client/net/LocalTransport';
 import type { Transport } from './client/net/Transport';
@@ -10,9 +11,9 @@ import { Menu, type PlayMode } from './client/ui/Menu';
 import { PROTOCOL_VERSION } from './shared/net/protocol';
 
 const params = new URLSearchParams(location.search);
-// Phones and tablets: touch controls, and the lighter quality level by default (?q=high to override).
+// Phones and tablets: touch controls, and the lighter quality level by default (?q=… to override).
 const touch = isTouchDevice(params);
-const quality = (params.get('q') ?? (touch ? 'low' : 'high')) === 'low' ? 'low' : 'high';
+const quality = () => resolveQuality(settings.quality, touch, params.get('q'));
 const render = params.get('render') === 'direct' ? 'direct' : 'auto';
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const loading = document.getElementById('loading')!;
@@ -41,7 +42,7 @@ window.addEventListener('unhandledrejection', (e) => {
 
 let game: Game;
 try {
-  game = new Game(canvas, { quality, render }, settings);
+  game = new Game(canvas, { quality: quality(), render }, settings);
 } catch (err) {
   showFatal(err);
   throw err;
@@ -108,6 +109,7 @@ const menu = new Menu(document.getElementById('menu')!, settings, {
   onLeave: () => leave(),
   onSettingsChanged: (s: Settings) => {
     game.applySettings(s);
+    game.setQuality(quality());
     chatKeys(s);
     saveSettings(s);
   },
