@@ -253,7 +253,14 @@ try {
   await B.page.waitForFunction(() => window.__menu?.isOpen && document.querySelector('#serverStatus.ok'), null, { timeout: 300000 });
   check((await B.page.textContent('.pilot.signed .who b'))?.trim() === 'Bravo' && !(await B.page.$('#pilotPass')), 'still signed in after reload: no password asked');
   await B.page.click('[data-act="online"]');
-  await B.page.waitForFunction(() => window.__game.running && window.__game.inspect().myShipId !== null, null, { timeout: 120000 });
+  await B.page.waitForFunction(() => window.__game.running && window.__game.inspect().myShipId !== null, null, { timeout: 240000 }).catch(async (e) => {
+    const st = await B.page.evaluate(() => {
+      const g = window.__game.inspect();
+      return { running: window.__game.running, menu: window.__menu?.isOpen, myShipId: g.myShipId, pilot: g.pilot, respawnIn: g.respawnIn, net: g.net ?? null };
+    });
+    console.log('     Bravo after reload:', JSON.stringify(st), 'errors:', B.errors.join(' | '));
+    throw e;
+  });
   const ib2 = await B.inspect();
   console.log(`     (reload to rejoin took ${((Date.now() - reloadStart) / 1000).toFixed(0)} s in this headless environment)`);
   check(
