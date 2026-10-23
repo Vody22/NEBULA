@@ -1,4 +1,5 @@
 import { Vector3 } from 'three';
+import type { StationId } from '../economy/market';
 import { mulberry32 } from '../rng';
 import type { StaticCollider } from './types';
 
@@ -30,20 +31,39 @@ export interface AsteroidDef {
 }
 
 export interface StationDef {
+  id: StationId;
   name: string;
   position: Vector3;
   ringRadius: number;
   ringTube: number;
   coreRadius: number;
   spineLength: number;
+  /** Docking: a ship slower than DOCK_MAX_SPEED within `radius` of the hangar mouth may dock. */
+  dock: DockDef;
 }
+
+export interface DockDef {
+  /** Hangar mouth, world coordinates. */
+  mouth: Vector3;
+  radius: number;
+  /** Unit vector pointing out of the hangar (undocking ships leave along it). */
+  out: Vector3;
+}
+
+export const DOCK_MAX_SPEED = 50;
+/** Undocking ships appear this far out of the mouth, moving outward at UNDOCK_SPEED. */
+export const UNDOCK_DISTANCE = 70;
+export const UNDOCK_SPEED = 30;
 
 export interface ZoneDef {
   id: string;
   name: string;
   seed: number;
   sunDirection: Vector3; // direction *towards* the sun
+  /** The main station (Aurora-7). */
   station: StationDef;
+  /** Every station a ship can dock at, the main one first. */
+  stations: StationDef[];
   planets: PlanetDef[];
   asteroids: AsteroidDef[];
   beltCenter: Vector3;
@@ -53,13 +73,17 @@ export interface ZoneDef {
 
 export function buildZone(seed = 1337): ZoneDef {
   const rand = mulberry32(seed);
+  // The hangar of the station model (Station.ts) opens on +Z, its mouth at
+  // coreRadius × 1.08 + depth 160 − wall 14 + 4 ≈ 334 m from the centre.
   const station: StationDef = {
+    id: 'aurora',
     name: 'Station Aurora-7',
     position: new Vector3(0, 0, 0),
     ringRadius: 560,
     ringTube: 46,
     coreRadius: 170,
     spineLength: 1100,
+    dock: { mouth: new Vector3(0, 0, 334), radius: 220, out: new Vector3(0, 0, 1) },
   };
 
   const planets: PlanetDef[] = [
@@ -122,10 +146,10 @@ export function buildZone(seed = 1337): ZoneDef {
   const clear = asteroids.filter((a) => a.position.distanceTo(station.position) > station.ringRadius + 600 + a.radius);
 
   const colliders: StaticCollider[] = [];
-  for (const a of clear) {
+  clear.forEach((a, index) => {
     // Rocks are displaced meshes; use ~85% of the nominal radius so contacts feel fair.
-    colliders.push({ kind: 'asteroid', center: a.position, radius: a.radius * 0.85 });
-  }
+    colliders.push({ kind: 'asteroid', center: a.position, radius: a.radius * 0.85, index });
+  });
   colliders.push({ kind: 'station', center: station.position.clone(), radius: station.coreRadius });
   for (let i = -4; i <= 4; i++) {
     if (i === 0) continue;
@@ -152,6 +176,7 @@ export function buildZone(seed = 1337): ZoneDef {
     seed,
     sunDirection: new Vector3(-0.8, 0.35, 0.12).normalize(),
     station,
+    stations: [station],
     planets,
     asteroids: clear,
     beltCenter,

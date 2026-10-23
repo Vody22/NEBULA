@@ -446,6 +446,8 @@ export class Station {
     const hangarZ = R * 1.08 + HD / 2 - wall + 4;
     hangar.position.set(0, 0, hangarZ);
     this.mouthZ = hangarZ + HD / 2;
+    // Docking is decided by the server from the shared zone: keep them together.
+    if (Math.abs(def.position.z + this.mouthZ - def.dock.mouth.z) > 2) console.warn('NEBULA: entrée du hangar et zone d’amarrage décalées', this.mouthZ, def.dock.mouth.z);
     this.group.add(hangar);
 
     // ── Cargo yards beside the hangar: platforms, gantry cranes, containers

@@ -21,7 +21,7 @@ describe('server & protocol', () => {
     const inbox: ServerMessage[] = [];
     const id = server.connect({ send: (m) => inbox.push(JSON.parse(JSON.stringify(m))) }, 'William');
     expect(inbox[0].t).toBe('welcome');
-    server.receive(id, { t: 'input', seq: 1, input: { throttle: 1, strafeX: 0, strafeY: 0, pitch: 0, yaw: 0, roll: 0, boost: false, fire: false, flightAssist: true } });
+    server.receive(id, { t: 'input', seq: 1, input: { throttle: 1, strafeX: 0, strafeY: 0, pitch: 0, yaw: 0, roll: 0, boost: false, fire: false, flightAssist: true, mine: false } });
     for (let i = 0; i < 60; i++) server.update(1 / 60);
     const snaps = inbox.filter((m) => m.t === 'snapshot');
     expect(snaps.length).toBeGreaterThanOrEqual(58);

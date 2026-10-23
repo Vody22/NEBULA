@@ -46,7 +46,7 @@ Objectif : donner au joueur une boucle économique simple et lisible, en plus du
 
 ## Amarrage
 
-- Zone d'amarrage : sphère de 220 m devant l'entrée du hangar (Aurora-7 : entrée à z ≈ 342 m). Condition : vitesse inférieure à 50 m/s et aucun combat PvP depuis 15 s.
+- Zone d'amarrage : sphère de 220 m devant l'entrée du hangar (Aurora-7 : entrée à z ≈ 334 m). Condition : vitesse inférieure à 50 m/s et aucun combat PvP depuis 15 s.
 - À quai, le vaisseau est retiré de l'espace et son état est conservé (coque, bouclier, énergie). Au décollage, il réapparaît devant le hangar, nez vers l'extérieur, à 30 m/s.
 - Une déconnexion à quai garde le joueur à quai.
 

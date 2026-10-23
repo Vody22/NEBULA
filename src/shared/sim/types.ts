@@ -23,6 +23,8 @@ export interface ShipInput {
   fire: boolean;
   /** Flight assist: kills drift and holds the throttle speed. Off = pure Newtonian. */
   flightAssist: boolean;
+  /** Mining beam held on (straight ahead, see mining.ts). */
+  mine: boolean;
 }
 
 export const neutralInput = (): ShipInput => ({
@@ -35,6 +37,7 @@ export const neutralInput = (): ShipInput => ({
   boost: false,
   fire: false,
   flightAssist: true,
+  mine: false,
 });
 
 export interface Ship {
@@ -70,6 +73,10 @@ export interface Ship {
   pvp: boolean;
   /** Sim time of the last PvP damage dealt or taken (PvP cannot be switched off mid-fight). */
   lastPvpCombat: number;
+  /** Index of the asteroid under the mining beam (zone.asteroids), null when not mining. */
+  mining: number | null;
+  /** Ore mined but not yet a whole unit. */
+  mineProgress: number;
 }
 
 export interface Projectile {
@@ -95,6 +102,8 @@ export interface StaticCollider {
   kind: 'asteroid' | 'station' | 'planet';
   center: Vector3;
   radius: number;
+  /** Asteroids: index in zone.asteroids. */
+  index?: number;
 }
 
 export type SimEvent =

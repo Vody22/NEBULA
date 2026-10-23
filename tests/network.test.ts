@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { Quaternion, Vector3 } from 'three';
 import WebSocket from 'ws';
 import { startServer, type RunningServer } from '../src/server/node/server';
+import { STARTING_CREDITS } from '../src/server/GameServer';
 import { PROTOCOL_VERSION, type ClientMessage, type ServerMessage } from '../src/shared/net/protocol';
 import { SHIP_CLASSES } from '../src/shared/sim/shipClasses';
 import { neutralInput, type ShipInput } from '../src/shared/sim/types';
@@ -167,8 +168,8 @@ describe('multiplayer server (WebSocket)', () => {
     expect(destroyed && destroyed.type === 'destroyed' && destroyed.by).toBe(a.shipId);
     expect(b.messages('events').some((m) => m.events.some((e) => e.type === 'shot' && e.shooter === a.shipId))).toBe(true);
     await until(() => a.lastSnap!.stats.kills === 1);
-    expect(a.lastSnap!.stats.credits).toBe(SHIP_CLASSES.raider.bounty);
-    expect(b.lastSnap!.stats).toEqual({ kills: 0, deaths: 0, credits: 0 });
+    expect(a.lastSnap!.stats.credits).toBe(STARTING_CREDITS + SHIP_CLASSES.raider.bounty);
+    expect(b.lastSnap!.stats).toEqual({ kills: 0, deaths: 0, credits: STARTING_CREDITS });
   });
 
   it('PvP only between players who both opted in, and PvP kills pay no credits', async () => {
@@ -193,7 +194,7 @@ describe('multiplayer server (WebSocket)', () => {
     await hold(a, { fire: true }, 1200);
     await until(() => b.lastSnap!.stats.deaths === 1, 3000, 'B destroyed');
     await until(() => a.lastSnap!.stats.kills === 1);
-    expect(a.lastSnap!.stats.credits).toBe(0);
+    expect(a.lastSnap!.stats.credits).toBe(STARTING_CREDITS);
     expect(b.messages('events').some((m) => m.events.some((e) => e.type === 'destroyed' && e.ship === bId && e.by === a.shipId))).toBe(true);
     // B cannot switch PvP off right after the fight.
     b.send({ t: 'pvp', on: false });
@@ -212,7 +213,7 @@ describe('multiplayer server (WebSocket)', () => {
     a.send({ t: 'input', seq: 999999, input: { throttle: 50, fire: true, damage: 9999, credits: 1e9 } });
     a.send([{ t: 'chat', text: 'salut' }, { t: 'credits', amount: 1e9 }]);
     await sleep(400);
-    expect(a.lastSnap!.stats).toEqual({ kills: 0, deaths: 0, credits: 0 });
+    expect(a.lastSnap!.stats).toEqual({ kills: 0, deaths: 0, credits: STARTING_CREDITS });
     expect(b.ship(b.shipId)!.hull).toBe(hullBefore);
     // The forged 50 throttle was clamped to the legal maximum.
     expect(server!.game.world.ships.get(a.shipId!)!.input.throttle).toBeLessThanOrEqual(1);

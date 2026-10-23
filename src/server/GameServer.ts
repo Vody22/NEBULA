@@ -1,11 +1,14 @@
 import { Quaternion, Vector3 } from 'three';
+import { addCargo, cargoTotal, ITEMS, ITEM_IDS, type Cargo, type ItemId } from '../shared/economy/items';
+import { createMarket, quote, stepMarket, trade, TRADE_REFUSALS, type MarketState, type StationId } from '../shared/economy/market';
 import { AIPilot } from '../shared/sim/ai';
+import { oreOf, PLATINUM_CHANCE } from '../shared/sim/mining';
 import { mulberry32 } from '../shared/rng';
 import { SHIP_CLASSES } from '../shared/sim/shipClasses';
 import type { EntityId, ShipClassId, SimEvent } from '../shared/sim/types';
 import { TICK_DT, TICK_RATE, World } from '../shared/sim/world';
-import { buildZone } from '../shared/sim/zone';
-import type { ChatLine, ClientMessage, PlayerInfo, PlayerStats, ServerMessage } from '../shared/net/protocol';
+import { buildZone, DOCK_MAX_SPEED, UNDOCK_DISTANCE, UNDOCK_SPEED, type StationDef } from '../shared/sim/zone';
+import type { ChatLine, ClientMessage, MarketView, PilotState, PlayerInfo, PlayerStats, ServerMessage } from '../shared/net/protocol';
 import { PROTOCOL_VERSION, sanitizeChat, sanitizeInput, sanitizeName, snapshotShip } from '../shared/net/protocol';
 import type { ShipInput } from '../shared/sim/types';
 import { neutralInput } from '../shared/sim/types';
@@ -41,6 +44,13 @@ interface Session {
   chatTimes: number[];
   lastChat: string;
   lastChatAt: number;
+  cargo: Cargo;
+  /** Docked at this station: the ship has left space and waits in `stored`. */
+  docked: StationId | null;
+  stored: { hull: number; shield: number; energy: number } | null;
+  /** Credits, cargo or docking changed: send a `pilot` message at the end of the tick. */
+  pilotDirty: boolean;
+  holdFullNotified: boolean;
 }
 
 export interface GameServerOptions {
@@ -67,6 +77,12 @@ const PVP_SWITCH_COOLDOWN = 5;
 const INPUT_TIMEOUT = 1;
 const PVP_COMBAT_LOCK = 15;
 const PVP_KILL_BOUNTY = 0;
+/** Credits of a new pilot. */
+export const STARTING_CREDITS = 500;
+/** Credits per hull point repaired at a station. */
+export const REPAIR_COST = 2;
+/** Players fly the Falcon: its hold is theirs. */
+const PLAYER_CLASS: ShipClassId = 'falcon';
 
 function randomToken() {
   const b = new Uint8Array(18);
@@ -102,11 +118,16 @@ export class GameServer {
   private chatLog: ChatLine[] = [];
   private nextChatId = 1;
   private playersDirty = true;
+  readonly markets: Record<StationId, MarketState> = { aurora: createMarket('aurora'), ferro: createMarket('ferro') };
+  private marketClock = 0;
+  /** Platinum finds (kept apart from the wave director's random stream). */
+  private lootRng;
 
   constructor(opts: GameServerOptions = {}) {
     const seed = opts.seed ?? 1337;
     this.world = new World(buildZone(seed));
     this.rng = mulberry32(seed ^ 0x9e3779b9);
+    this.lootRng = mulberry32(seed ^ 0x51ed270b);
     this.snapshotEvery = opts.snapshotEvery ?? 1;
     this.npcs = opts.npcs ?? true;
     this.maxPlayers = opts.maxPlayers ?? 30;
@@ -148,7 +169,7 @@ export class GameServer {
         s.lastSeq = 0;
         s.ackSeq = 0;
         this.welcome(s, true);
-        if (s.shipId === null && s.respawnAt <= 0) this.spawnPlayer(s);
+        if (s.shipId === null && s.respawnAt <= 0 && !s.docked) this.spawnPlayer(s);
         this.system(`${s.name} est de retour dans le secteur`);
         this.playersDirty = true;
         return s.id;
@@ -171,7 +192,7 @@ export class GameServer {
       ackSeq: 0,
       inputs: [],
       lastInputAt: 0,
-      stats: { kills: 0, deaths: 0, credits: 0 },
+      stats: { kills: 0, deaths: 0, credits: STARTING_CREDITS },
       pvp: false,
       pvpChangedAt: -999,
       ping: 0,
@@ -179,6 +200,11 @@ export class GameServer {
       chatTimes: [],
       lastChat: '',
       lastChatAt: -999,
+      cargo: {},
+      docked: null,
+      stored: null,
+      pilotDirty: true,
+      holdFullNotified: false,
     };
     this.sessions.set(id, session);
     this.welcome(session, false);
@@ -200,6 +226,8 @@ export class GameServer {
       resumed,
     });
     if (this.chatLog.length) s.link?.send({ t: 'chatHistory', lines: this.chatLog.slice() });
+    s.pilotDirty = true;
+    this.sendMarket(s);
   }
 
   private uniqueName(base: string) {
@@ -281,6 +309,137 @@ export class GameServer {
         if (msg.rtt !== undefined) s.ping = Math.round(msg.rtt);
         s.link.send({ t: 'pong', c: msg.c });
         break;
+      case 'dock':
+        this.dock(s);
+        break;
+      case 'undock':
+        this.undock(s);
+        break;
+      case 'trade':
+        this.trade(s, msg.item, msg.qty);
+        break;
+      case 'repair':
+        this.repair(s);
+        break;
+    }
+  }
+
+  private notice(s: Session, text: string, tone: 'info' | 'warn' | 'good' = 'info') {
+    s.link?.send({ t: 'notice', text, tone });
+  }
+
+  private station(id: StationId): StationDef {
+    return this.world.zone.stations.find((st) => st.id === id) ?? this.world.zone.station;
+  }
+
+  /** A ship slow enough at a hangar mouth leaves space and waits at the station. */
+  private dock(s: Session) {
+    const w = this.world;
+    const ship = s.shipId !== null ? w.ships.get(s.shipId) : undefined;
+    if (s.docked || !ship || !ship.alive) return;
+    const st = w.zone.stations.find((x) => ship.position.distanceTo(x.dock.mouth) <= x.dock.radius);
+    if (!st) return this.notice(s, "Amarrage : approchez-vous de l'entrée d'un hangar.", 'warn');
+    if (ship.velocity.length() > DOCK_MAX_SPEED) return this.notice(s, `Amarrage : ralentissez sous ${DOCK_MAX_SPEED} m/s.`, 'warn');
+    if (w.time - ship.lastPvpCombat < PVP_COMBAT_LOCK) return this.notice(s, 'Amarrage refusé : combat PvP en cours.', 'warn');
+    // The station recharges shield and capacitor; the hull needs a paid repair.
+    const cls = SHIP_CLASSES[ship.classId];
+    s.stored = { hull: ship.hull, shield: cls.shield, energy: cls.energy };
+    w.removeShip(ship.id);
+    this.shipOwner.delete(ship.id);
+    s.shipId = null;
+    s.inputs.length = 0;
+    s.docked = st.id;
+    s.pilotDirty = true;
+    this.playersDirty = true;
+    this.notice(s, `Amarré à ${st.name}`, 'good');
+    this.sendMarket(s);
+  }
+
+  private undock(s: Session) {
+    if (!s.docked) return;
+    const st = this.station(s.docked);
+    const look = new Quaternion().setFromUnitVectors(new Vector3(0, 0, -1), st.dock.out);
+    const ship = this.spawnPlayer(s, st.dock.mouth.clone().addScaledVector(st.dock.out, UNDOCK_DISTANCE), look, st.dock.out.clone().multiplyScalar(UNDOCK_SPEED));
+    if (s.stored) {
+      ship.hull = s.stored.hull;
+      ship.shield = s.stored.shield;
+      ship.energy = s.stored.energy;
+    }
+    s.docked = null;
+    s.stored = null;
+    s.pilotDirty = true;
+  }
+
+  private repair(s: Session) {
+    if (!s.docked || !s.stored) return;
+    const max = SHIP_CLASSES[PLAYER_CLASS].hull;
+    const missing = max - s.stored.hull;
+    if (missing < 0.5) return this.notice(s, 'La coque est intacte.');
+    const fix = Math.min(missing, s.stats.credits / REPAIR_COST);
+    if (fix < 0.5) return this.notice(s, TRADE_REFUSALS.funds, 'warn');
+    const cost = Math.ceil(fix * REPAIR_COST - 1e-9);
+    s.stats.credits -= cost;
+    s.stored.hull = fix >= missing ? max : s.stored.hull + fix;
+    s.pilotDirty = true;
+    this.notice(s, `Coque réparée${fix < missing ? ' en partie' : ''}  −${cost} cr`, 'good');
+  }
+
+  private trade(s: Session, item: ItemId, qty: number) {
+    if (!s.docked) return;
+    const r = trade(this.markets[s.docked], item, qty, s.stats, s.cargo, SHIP_CLASSES[PLAYER_CLASS].cargo);
+    if (!r.ok) return this.notice(s, TRADE_REFUSALS[r.reason], 'warn');
+    if (r.qty < 0) s.holdFullNotified = false;
+    const label = ITEMS[item].label;
+    this.notice(s, r.qty > 0 ? `Achat : ${r.qty} × ${label}  −${-r.credits} cr` : `Vente : ${-r.qty} × ${label}  +${r.credits} cr`, 'good');
+    s.pilotDirty = true;
+    this.playersDirty = true;
+    // Everyone docked there sees the new prices.
+    for (const o of this.sessions.values()) if (o.docked === s.docked) this.sendMarket(o);
+  }
+
+  private sendMarket(s: Session) {
+    if (!s.docked || !s.link) return;
+    const m = this.markets[s.docked];
+    const market: MarketView = {
+      station: s.docked,
+      items: ITEM_IDS.map((id) => ({ id, ...quote(id, m[id]), stock: Math.floor(m[id].stock) })),
+    };
+    s.link.send({ t: 'market', market });
+  }
+
+  pilotState(s: Session): PilotState {
+    return {
+      credits: s.stats.credits,
+      cargo: { ...s.cargo },
+      capacity: SHIP_CLASSES[PLAYER_CLASS].cargo,
+      docked: s.docked,
+      hull: s.stored ? Math.round(s.stored.hull * 10) / 10 : null,
+      hullMax: SHIP_CLASSES[PLAYER_CLASS].hull,
+    };
+  }
+
+  /** Whole units of ore under the beams go into the miners' holds. */
+  private collectOre() {
+    const w = this.world;
+    for (const s of this.sessions.values()) {
+      const ship = s.shipId !== null ? w.ships.get(s.shipId) : undefined;
+      if (!ship || ship.mining === null || ship.mineProgress < 1) continue;
+      const ore = oreOf(w.zone.asteroids[ship.mining].variant);
+      const units = Math.floor(ship.mineProgress);
+      const cap = SHIP_CLASSES[PLAYER_CLASS].cargo;
+      let added = 0;
+      for (; added < units; added++) {
+        const item: ItemId = ore === 'ironNickel' && this.lootRng() < PLATINUM_CHANCE ? 'platinum' : ore;
+        if (!addCargo(s.cargo, item, 1, cap)) break;
+        if (item === 'platinum') this.notice(s, 'Pépite de platine !', 'good');
+      }
+      ship.mineProgress -= added;
+      if (added) s.pilotDirty = true;
+      if (added < units) {
+        ship.mineProgress = Math.min(ship.mineProgress, 1);
+        if (!s.holdFullNotified) this.notice(s, 'Soute pleine : allez vendre votre minerai à une station.', 'warn');
+        s.holdFullNotified = true;
+      }
     }
   }
 
@@ -383,6 +542,13 @@ export class GameServer {
     w.step(TICK_DT);
     const events = w.drainEvents();
     this.handleEvents(events);
+    this.collectOre();
+    this.marketClock += TICK_DT;
+    if (this.marketClock >= 1) {
+      this.marketClock -= 1;
+      for (const m of Object.values(this.markets)) stepMarket(m, 1);
+      for (const s of this.sessions.values()) this.sendMarket(s);
+    }
     if (this.npcs && this.sessions.size > 0) this.directWaves(TICK_DT);
 
     for (const s of [...this.sessions.values()]) {
@@ -391,6 +557,10 @@ export class GameServer {
         continue;
       }
       if (s.shipId === null && s.respawnAt > 0 && w.time >= s.respawnAt) this.spawnPlayer(s);
+      if (s.pilotDirty) {
+        s.pilotDirty = false;
+        s.link.send({ t: 'pilot', pilot: this.pilotState(s) });
+      }
     }
 
     if (events.length) this.broadcast({ t: 'events', tick: w.tick, events });
@@ -441,6 +611,12 @@ export class GameServer {
           s.stats.deaths++;
           s.respawnAt = this.world.time + 5;
           this.playersDirty = true;
+          if (cargoTotal(s.cargo) > 0) {
+            s.cargo = {};
+            s.holdFullNotified = false;
+            s.pilotDirty = true;
+            this.notice(s, 'Cargaison perdue avec le vaisseau.', 'warn');
+          }
         }
       }
       if (e.faction === 'union' && !ownerSession) {
@@ -462,21 +638,25 @@ export class GameServer {
     }
   }
 
-  private spawnPlayer(s: Session) {
+  /** Puts the player's ship in space: near the spawn point, or where given (undocking). */
+  private spawnPlayer(s: Session, position?: Vector3, rotation?: Quaternion, velocity?: Vector3) {
     const z = this.world.zone;
     const offset = _v.set((this.rng() - 0.5) * 120, (this.rng() - 0.5) * 40, (this.rng() - 0.5) * 60);
     const ship = this.world.spawnShip({
-      classId: 'falcon',
+      classId: PLAYER_CLASS,
       faction: 'union',
       name: s.name,
       ownerId: s.id,
-      position: z.playerSpawn.clone().add(offset),
+      position: position ?? z.playerSpawn.clone().add(offset),
+      rotation,
+      velocity,
     });
     ship.pvp = s.pvp;
     s.shipId = ship.id;
     this.playersDirty = true;
     s.respawnAt = 0;
     this.shipOwner.set(ship.id, s.id);
+    return ship;
   }
 
   private spawnNpc(classId: ShipClassId, faction: 'union' | 'raiders', name: string, pos: Vector3, skill: number, home: Vector3, anchor = home) {

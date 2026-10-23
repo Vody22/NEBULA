@@ -1,3 +1,5 @@
+import { isItemId, type Cargo, type ItemId } from '../economy/items';
+import type { StationId } from '../economy/market';
 import type { EntityId, FactionId, Ship, ShipClassId, ShipInput, SimEvent } from '../sim/types';
 
 /**
@@ -5,7 +7,7 @@ import type { EntityId, FactionId, Ship, ShipClassId, ShipInput, SimEvent } from
  * plain JSON-serialisable data so it can travel over WebSocket unchanged
  * (a binary encoding can replace JSON later without touching game code).
  */
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 export interface ShipSnapshot {
   id: EntityId;
@@ -26,12 +28,33 @@ export interface ShipSnapshot {
   firing: boolean;
   weaponsLocked: boolean;
   pvp: boolean;
+  /** Index of the asteroid this ship is mining (zone.asteroids), absent when not mining. */
+  m?: number;
 }
 
 export interface PlayerStats {
   kills: number;
   deaths: number;
   credits: number;
+}
+
+/** The player's own economy: sent on every change. */
+export interface PilotState {
+  credits: number;
+  cargo: Cargo;
+  capacity: number;
+  /** Station the player is docked at, or null in space. */
+  docked: StationId | null;
+  /** The docked ship's hull, for the repair counter (null in space). */
+  hull: number | null;
+  hullMax: number;
+}
+
+/** A station's market as the docked player sees it. */
+export interface MarketView {
+  station: StationId;
+  /** buy: the station's asking price; sell: what it pays. */
+  items: { id: ItemId; buy: number; sell: number; stock: number }[];
 }
 
 export interface WorldSnapshot {
@@ -68,7 +91,12 @@ export type ClientMessage =
   | { t: 'input'; seq: number; input: ShipInput }
   | { t: 'chat'; text: string }
   | { t: 'pvp'; on: boolean }
-  | { t: 'ping'; c: number; rtt?: number };
+  | { t: 'ping'; c: number; rtt?: number }
+  | { t: 'dock' }
+  | { t: 'undock' }
+  /** qty > 0 buys, qty < 0 sells, at the station the player is docked at. */
+  | { t: 'trade'; item: ItemId; qty: number }
+  | { t: 'repair' };
 
 export type ServerMessage =
   | { t: 'welcome'; playerId: string; token: string; name: string; zoneSeed: number; tickRate: number; snapshotRate: number; resumed: boolean }
@@ -79,6 +107,8 @@ export type ServerMessage =
   | { t: 'chatHistory'; lines: ChatLine[] }
   | { t: 'players'; list: PlayerInfo[]; max: number }
   | { t: 'pong'; c: number }
+  | { t: 'pilot'; pilot: PilotState }
+  | { t: 'market'; market: MarketView }
   | { t: 'error'; code: ErrorCode; text: string };
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
@@ -104,6 +134,7 @@ export function snapshotShip(s: Ship): ShipSnapshot {
     firing: s.input.fire,
     weaponsLocked: s.weaponsLocked,
     pvp: s.pvp,
+    ...(s.mining !== null ? { m: s.mining } : {}),
   };
 }
 
@@ -125,6 +156,7 @@ export function sanitizeInput(raw: unknown): ShipInput | null {
     boost: o.boost === true,
     fire: o.fire === true,
     flightAssist: o.flightAssist !== false,
+    mine: o.mine === true,
   };
 }
 
@@ -200,6 +232,13 @@ export function validateClientMessage(raw: unknown): ClientMessage | null {
     case 'ping':
       if (typeof o.c !== 'number' || !Number.isFinite(o.c)) return null;
       return { t: 'ping', c: o.c, rtt: typeof o.rtt === 'number' && Number.isFinite(o.rtt) ? Math.max(0, Math.min(10000, o.rtt)) : undefined };
+    case 'dock':
+    case 'undock':
+    case 'repair':
+      return { t: o.t };
+    case 'trade':
+      if (!isItemId(o.item) || typeof o.qty !== 'number' || !Number.isInteger(o.qty) || o.qty === 0 || Math.abs(o.qty) > 1000) return null;
+      return { t: 'trade', item: o.item, qty: o.qty };
     default:
       return null;
   }

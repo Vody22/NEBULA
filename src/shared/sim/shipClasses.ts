@@ -33,6 +33,8 @@ export interface ShipClass {
     hardpoints: [number, number, number][];
   };
   bounty: number;
+  /** Cargo hold, in units. */
+  cargo: number;
 }
 
 export const SHIP_CLASSES: Record<ShipClassId, ShipClass> = {
@@ -69,6 +71,7 @@ export const SHIP_CLASSES: Record<ShipClassId, ShipClass> = {
       ],
     },
     bounty: 0,
+    cargo: 40,
   },
   warden: {
     id: 'warden',
@@ -103,6 +106,7 @@ export const SHIP_CLASSES: Record<ShipClassId, ShipClass> = {
       ],
     },
     bounty: 0,
+    cargo: 60,
   },
   raider: {
     id: 'raider',
@@ -137,6 +141,7 @@ export const SHIP_CLASSES: Record<ShipClassId, ShipClass> = {
       ],
     },
     bounty: 150,
+    cargo: 20,
   },
   marauder: {
     id: 'marauder',
@@ -172,5 +177,6 @@ export const SHIP_CLASSES: Record<ShipClassId, ShipClass> = {
       ],
     },
     bounty: 450,
+    cargo: 80,
   },
 };

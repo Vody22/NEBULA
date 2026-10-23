@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Vector3 } from 'three';
-import { GameServer } from '../src/server/GameServer';
+import { GameServer, STARTING_CREDITS } from '../src/server/GameServer';
 import type { ServerMessage } from '../src/shared/net/protocol';
 import { SHIP_CLASSES } from '../src/shared/sim/shipClasses';
 import type { Ship } from '../src/shared/sim/types';
@@ -44,7 +44,7 @@ describe('gameplay rules', () => {
     expect(server.world.ships.has(pirate.id)).toBe(false);
     const snap = lastSnap();
     expect(snap.stats.kills).toBe(1);
-    expect(snap.stats.credits).toBe(SHIP_CLASSES.raider.bounty);
+    expect(snap.stats.credits).toBe(STARTING_CREDITS + SHIP_CLASSES.raider.bounty);
   });
 
   it('the player respawns at the station 5 s after being destroyed', () => {

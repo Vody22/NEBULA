@@ -1,5 +1,6 @@
 import { Quaternion, Vector3 } from 'three';
 import { segmentSphere } from '../math';
+import { stepMining } from './mining';
 import { SHIP_CLASSES } from './shipClasses';
 import { stepShipPhysics } from './shipPhysics';
 import { stepShipSystems } from './shipSystems';
@@ -74,6 +75,8 @@ export class World {
       lastAttacker: null,
       pvp: false,
       lastPvpCombat: -999,
+      mining: null,
+      mineProgress: 0,
     };
     this.ships.set(ship.id, ship);
     this.events.push({ type: 'spawned', ship: ship.id });
@@ -105,6 +108,7 @@ export class World {
       stepShipPhysics(ship, dt);
       this.updateSystems(ship, dt);
       this.fireWeapons(ship, dt);
+      stepMining(ship, dt, this.grid, this.zone.asteroids);
     }
     this.collideShips();
     this.stepProjectiles(dt);

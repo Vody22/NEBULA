@@ -87,6 +87,8 @@ export class Predictor {
       lastAttacker: null,
       pvp: s.pvp,
       lastPvpCombat: -999,
+      mining: null,
+      mineProgress: 0,
     };
     this.posError.set(0, 0, 0);
     this.rotError.identity();
