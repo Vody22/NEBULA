@@ -62,4 +62,49 @@ describe('client-side prediction', () => {
     const shipOnServer = [...server.world.ships.values()][0];
     expect(predictor.ship!.position.distanceTo(shipOnServer.position)).toBeLessThan(shipOnServer.velocity.length() * 0.3 + 1);
   });
+
+  it('on a 144 Hz screen the rendered ship moves and turns smoothly between 60 Hz ticks', () => {
+    // Open space, no colliders: only the rendering is under test here.
+    const predictor = new Predictor(new StaticGrid([]));
+    predictor.reconcile(
+      { id: 1, name: 'Pilote', classId: 'falcon', faction: 'union', owner: 'me', p: [0, 0, 0], q: [0, 0, 0, 1], v: [0, 0, -150], w: [0, 0, 0], hull: 100, shield: 100, energy: 100, throttle: 1, boosting: false, firing: false, weaponsLocked: false, pvp: false },
+      0,
+    );
+    // Mimic Game: a fixed 60 Hz input accumulator driven by 144 Hz frames.
+    const TICK = 1 / 60;
+    const frame = 1 / 144;
+    let acc = 0;
+    let seq = 0;
+    const moves: number[] = [];
+    const turns: number[] = [];
+    predictor.update(frame, 0);
+    let lastPos = predictor.renderPosition.clone();
+    let lastRot = predictor.renderRotation.clone();
+    for (let f = 0; f < 432; f++) {
+      acc += frame;
+      while (acc >= TICK) {
+        acc -= TICK;
+        predictor.step(++seq, { ...neutralInput(), throttle: 1, yaw: 0.5 });
+      }
+      predictor.update(frame, acc / TICK);
+      moves.push(predictor.renderPosition.distanceTo(lastPos));
+      turns.push(predictor.renderRotation.angleTo(lastRot));
+      lastPos = predictor.renderPosition.clone();
+      lastRot = predictor.renderRotation.clone();
+    }
+    // Speed and turn rate still change, so compare each frame with its
+    // neighbours: judder is a frame that barely moves next to one that jumps.
+    const roughness = (steps: number[]) => {
+      let worst = 0;
+      for (let i = 144 + 3; i < steps.length - 3; i++) {
+        const local = (steps[i - 3] + steps[i - 2] + steps[i - 1] + steps[i + 1] + steps[i + 2] + steps[i + 3]) / 6;
+        worst = Math.max(worst, Math.abs(steps[i] / local - 1));
+      }
+      return worst;
+    };
+    // Without interpolation one frame in ~2.4 does not move at all (roughness ≈ 1+).
+    expect(Math.min(...moves.slice(144))).toBeGreaterThan(0);
+    expect(roughness(moves)).toBeLessThan(0.05);
+    expect(roughness(turns)).toBeLessThan(0.05);
+  });
 });

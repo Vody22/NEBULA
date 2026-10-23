@@ -16,6 +16,8 @@ const _q = new Quaternion();
 const _before = new Vector3();
 const _simBefore = new Vector3();
 const _beforeRot = new Quaternion();
+const _oldPos = new Vector3();
+const _oldRot = new Quaternion();
 
 /**
  * Client-side prediction for the local player's ship. Every input tick the
@@ -32,6 +34,13 @@ export class Predictor {
   readonly rotError = new Quaternion();
   readonly renderPosition = new Vector3();
   readonly renderRotation = new Quaternion();
+  /**
+   * Simulated pose one tick earlier. The simulation runs at 60 Hz; on a
+   * 120–240 Hz screen the rendered ship is interpolated between the last two
+   * ticks, otherwise it moves only on some frames and visibly judders.
+   */
+  private prevPosition = new Vector3();
+  private prevRotation = new Quaternion();
   /** Size of the last correction, for diagnostics (m). */
   lastCorrection = 0;
   corrections = 0;
@@ -79,6 +88,11 @@ export class Predictor {
     this.rotError.identity();
   }
 
+  private keepPrevious() {
+    this.prevPosition.copy(this.ship!.position);
+    this.prevRotation.copy(this.ship!.rotation);
+  }
+
   private load(s: ShipSnapshot) {
     const ship = this.ship!;
     ship.position.set(s.p[0], s.p[1], s.p[2]);
@@ -100,7 +114,10 @@ export class Predictor {
     const copy = { ...input };
     this.history.push({ seq, input: copy });
     if (this.history.length > MAX_HISTORY) this.history.shift();
-    if (this.ship) this.simulate(copy);
+    if (this.ship) {
+      this.keepPrevious();
+      this.simulate(copy);
+    }
   }
 
   private simulate(input: ShipInput) {
@@ -118,18 +135,25 @@ export class Predictor {
       this.load(s);
       this.history = this.history.filter((h) => h.seq > ackSeq);
       for (const h of this.history) this.simulate(h.input);
+      this.keepPrevious();
       return;
     }
     const ship = this.ship;
     _simBefore.copy(ship.position);
     _before.copy(ship.position).add(this.posError);
     _beforeRot.copy(this.rotError).multiply(ship.rotation);
+    _oldPos.copy(ship.position);
+    _oldRot.copy(ship.rotation);
 
     this.load(s);
     let i = 0;
     while (i < this.history.length && this.history[i].seq <= ackSeq) i++;
     if (i) this.history.splice(0, i);
     for (const h of this.history) this.simulate(h.input);
+
+    // The previous tick moves with the correction, so interpolation stays continuous.
+    this.prevPosition.add(_oldPos.subVectors(ship.position, _oldPos));
+    this.prevRotation.premultiply(_q.copy(ship.rotation).multiply(_oldRot.invert())).normalize();
 
     // Keep the rendered pose where it was and let the offset fade out.
     this.lastCorrection = _simBefore.distanceTo(ship.position);
@@ -143,14 +167,19 @@ export class Predictor {
     }
   }
 
-  /** Smoothed pose to render this frame. */
-  update(dt: number) {
+  /**
+   * Smoothed pose to render this frame. `alpha` (0..1) is how far the render
+   * clock is between the last tick and the next one.
+   */
+  update(dt: number, alpha = 1) {
     const ship = this.ship;
     if (!ship) return;
     const k = Math.exp(-SMOOTHING * dt);
     this.posError.multiplyScalar(k);
     this.rotError.slerp(_q.identity(), 1 - k);
-    this.renderPosition.copy(ship.position).add(this.posError);
-    this.renderRotation.copy(this.rotError).multiply(ship.rotation).normalize();
+    const t = Math.min(1, Math.max(0, alpha));
+    this.renderPosition.lerpVectors(this.prevPosition, ship.position, t).add(this.posError);
+    _q.slerpQuaternions(this.prevRotation, ship.rotation, t);
+    this.renderRotation.copy(this.rotError).multiply(_q).normalize();
   }
 }

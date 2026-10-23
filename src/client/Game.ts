@@ -464,7 +464,7 @@ export class Game {
     this.hasMyPose = false;
     const predicted = this.myShipId !== null ? ships.get(this.myShipId) : undefined;
     if (predicted && this.predictor?.ship?.id === this.myShipId) {
-      this.predictor.update(dt);
+      this.predictor.update(dt, this.inputAcc / TICK_DT);
       this.myServerPos.copy(predicted.position);
       predicted.position.copy(this.predictor.renderPosition);
       predicted.rotation.copy(this.predictor.renderRotation);
