@@ -19,7 +19,8 @@ import {
 import type { ShipModel } from './ShipModels';
 
 /**
- * Aurora Fleetworks Falcon Mk.II (and its Warden sibling), built in code:
+ * Aurora Fleetworks Falcon Mk.II, built in code (the Warden, Raider and
+ * Marauder, in FactionShips.ts, reuse its kit):
  * armour sections with real gaps over a dark core, chined fuselage, three-layer
  * nozzles, radiators, RCS clusters, glazed cockpit with seat and console,
  * stowed landing gear doors, decals and a painted, chipped, weathered finish.
@@ -41,32 +42,19 @@ interface Palette {
   ink: string;
 }
 
-const PALETTES: Record<'falcon' | 'warden', Palette> = {
-  falcon: {
-    hull: [1.0, 0.95, 0.86],
-    back: [0.3, 0.31, 0.33],
-    band: [0.03, 0.1, 0.42],
-    belly: [0.8, 0.78, 0.74],
-    engine: new THREE.Color(0.5, 1.4, 4),
-    boost: new THREE.Color(2.5, 3.2, 6),
-    serial: 'FMK2-0147',
-    model: 'FALCON MK.II',
-    ink: '#1b2a4a',
-  },
-  warden: {
-    hull: [0.6, 0.66, 0.58],
-    back: [0.1, 0.13, 0.11],
-    band: [0.03, 0.15, 0.08],
-    belly: [0.5, 0.54, 0.48],
-    engine: new THREE.Color(0.4, 3, 2),
-    boost: new THREE.Color(2, 5, 3.4),
-    serial: 'WDN-2210',
-    model: 'WARDEN',
-    ink: '#18301f',
-  },
+const FALCON: Palette = {
+  hull: [1.0, 0.95, 0.86],
+  back: [0.3, 0.31, 0.33],
+  band: [0.03, 0.1, 0.42],
+  belly: [0.8, 0.78, 0.74],
+  engine: new THREE.Color(0.5, 1.4, 4),
+  boost: new THREE.Color(2.5, 3.2, 6),
+  serial: 'FMK2-0147',
+  model: 'FALCON MK.II',
+  ink: '#1b2a4a',
 };
 
-interface Kit {
+export interface Kit {
   paint: THREE.MeshStandardMaterial;
   dark: THREE.MeshStandardMaterial;
   metal: THREE.MeshStandardMaterial;
@@ -76,20 +64,30 @@ interface Kit {
   atlas: DecalAtlas;
 }
 
+export interface KitOptions {
+  sheetSeed: number;
+  darkSeed?: number;
+  darkBase?: string;
+  /** Strength of the panel relief. */
+  normal?: number;
+  atlas: Parameters<typeof makeDecalAtlas>[0];
+}
+
 const kits = new Map<string, Kit>();
 
-function kit(variant: 'falcon' | 'warden'): Kit {
-  const cached = kits.get(variant);
+/** The shared material set of a ship design: vertex-coloured paint, dark core, bare metal, glass, glow, decals. */
+export function makeKit(key: string, o: KitOptions): Kit {
+  const cached = kits.get(key);
   if (cached) return cached;
-  const pal = PALETTES[variant];
-  const sheet = makeShipSheet({ seed: variant === 'falcon' ? 147 : 2210 });
-  const darkSheet = makeShipSheet({ seed: 33, base: '#5d6168', dark: true, size: 512 });
-  const atlas = makeDecalAtlas({ serial: pal.serial, maker: 'AURORA FLEETWORKS', model: pal.model, color: pal.ink, warn: '#b5241c' });
+  const sheet = makeShipSheet({ seed: o.sheetSeed });
+  const darkSheet = makeShipSheet({ seed: o.darkSeed ?? 33, base: o.darkBase ?? '#5d6168', dark: true, size: 512 });
+  const atlas = makeDecalAtlas(o.atlas);
+  const n = o.normal ?? 0.4;
   const k: Kit = {
     paint: new THREE.MeshStandardMaterial({
       map: sheet.map,
       normalMap: sheet.normalMap,
-      normalScale: new THREE.Vector2(0.4, 0.4),
+      normalScale: new THREE.Vector2(n, n),
       roughnessMap: sheet.orm,
       metalnessMap: sheet.orm,
       aoMap: sheet.orm,
@@ -140,8 +138,16 @@ function kit(variant: 'falcon' | 'warden'): Kit {
     }),
     atlas,
   };
-  kits.set(variant, k);
+  kits.set(key, k);
   return k;
+}
+
+function kit(): Kit {
+  const pal = FALCON;
+  return makeKit('falcon', {
+    sheetSeed: 147,
+    atlas: { serial: pal.serial, maker: 'AURORA FLEETWORKS', model: pal.model, color: pal.ink, warn: '#b5241c' },
+  });
 }
 
 const lerp3 = (a: RGB, b: RGB, t: number): RGB => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
@@ -174,9 +180,9 @@ const NAC: Section[] = [
   { z: 8.0, w: 1.18, ht: 1.04, hb: 1.02 },
 ];
 
-export function buildFalconMk2(variant: 'falcon' | 'warden'): ShipModel {
-  const pal = PALETTES[variant];
-  const k = kit(variant);
+export function buildFalconMk2(): ShipModel {
+  const pal = FALCON;
+  const k = kit();
   const root = new THREE.Group();
   const add = (geo: THREE.BufferGeometry, mat: THREE.Material) => root.add(new THREE.Mesh(geo, mat));
   const both = (geo: THREE.BufferGeometry, mat: THREE.Material) => {
@@ -349,7 +355,6 @@ export function buildFalconMk2(variant: 'falcon' | 'warden'): ShipModel {
     [tint(new THREE.CircleGeometry(0.9, 24).translate(0, 0, 8.3), [0.25, 0.63, 1.8]), k.glow],
     [tint(cylZ(0.46, 0.04, 8.25, 9.45, 14), (_x, _y, z) => lerp3([0.9, 0.9, 0.9], [0.7, 0.6, 0.65], clamp01((z - 8.25) / 1.2))), k.metal],
   ];
-  if (variant === 'warden') nz[3][0] = tint(new THREE.CircleGeometry(0.9, 24).translate(0, 0, 8.3), [0.2, 1.35, 0.9]);
   for (let i = 0; i < 4; i++) {
     const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
     nz.push([place(box(0.06, 0.07, 1.0), [Math.cos(a) * 1.08, Math.sin(a) * 1.08, 8.5], [0, 0, a]), k.metal]);

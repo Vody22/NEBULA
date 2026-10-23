@@ -229,7 +229,7 @@ export interface DecalAtlas {
  * Markings drawn once into an atlas: serial number, fictional manufacturer,
  * faction emblem and maintenance warnings. Black or coloured on transparent.
  */
-export function makeDecalAtlas(opts: { serial: string; maker: string; model: string; color: string; warn: string }): DecalAtlas {
+export function makeDecalAtlas(opts: { serial: string; maker: string; model: string; color: string; warn: string; emblem?: 'union' | 'pirate' }): DecalAtlas {
   const W = 1024;
   const H = 512;
   const c = document.createElement('canvas');
@@ -262,8 +262,32 @@ export function makeDecalAtlas(opts: { serial: string; maker: string; model: str
   g.fillText(opts.model, 12, 160 + 32, 488);
   put('model', 0, 160, 512, 64);
 
-  // Faction emblem (Union of Aurora): ring, arc and star, 192×192.
-  {
+  // Faction emblem, 192×192. Union of Aurora: ring, arc and star.
+  // Free raiders: three claw slashes through a broken ring.
+  if (opts.emblem === 'pirate') {
+    const cx = 512 + 96;
+    const cy = 96;
+    g.strokeStyle = opts.color;
+    g.lineWidth = 11;
+    g.beginPath();
+    g.arc(cx, cy, 80, Math.PI * 0.15, Math.PI * 0.85);
+    g.stroke();
+    g.beginPath();
+    g.arc(cx, cy, 80, Math.PI * 1.1, Math.PI * 1.9);
+    g.stroke();
+    g.fillStyle = opts.color;
+    for (let i = -1; i <= 1; i++) {
+      const x = cx + i * 34;
+      g.beginPath();
+      g.moveTo(x + 22, cy - 74);
+      g.lineTo(x + 6, cy - 74);
+      g.lineTo(x - 24, cy + 70);
+      g.lineTo(x - 12, cy + 70);
+      g.closePath();
+      g.fill();
+    }
+    put('emblem', 512, 0, 192, 192);
+  } else {
     const cx = 512 + 96;
     const cy = 96;
     g.strokeStyle = opts.color;

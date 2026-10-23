@@ -107,8 +107,8 @@ await shot('05-combat', () => {
   g.effects.update(0.18);
   const t = g.time;
   for (let i = 0; i < 6; i++) g.lasers.add(9000 + i, i % 2 ? 'raiders' : 'union', [base.x - 40 + i * 6, base.y + (i % 3) * 3, base.z + 20], [i % 2 ? -600 : 600, 0, -900], t - 0.05, 2);
-  g.lasers.update(t);
   window.__place({ pos: [base.x + 30, base.y + 22, base.z + 70], target: [base.x, base.y, base.z - 10], fov: 50 });
+  g.lasers.update(t, s.cam.position);
 });
 // Station, planets, sky, asteroids.
 await shot('06-station-wide', () => window.__place({ pos: [2300, 700, 2600], target: [0, 0, 0], fov: 55 }));

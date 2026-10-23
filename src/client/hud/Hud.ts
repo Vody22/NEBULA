@@ -571,7 +571,7 @@ export class Hud {
       const player = s.snap.owner !== null;
       plot(
         s.position,
-        hostile ? '#ff5a3c' : player ? '#d4b8ff' : '#5cffb0',
+        hostile ? '#ff6a4d' : player ? '#d4b8ff' : '#5cffb0',
         s.snap.classId === 'marauder' ? 6 : player ? 5 : 4,
         s.snap.id === f.targetId,
         hostile ? 'diamond' : player ? 'triangle' : 'circle',

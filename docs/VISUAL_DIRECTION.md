@@ -59,9 +59,10 @@ Les couleurs ont un sens. Une couleur hors de son rôle est une erreur.
 
 | Faction | Formes | Matières | Lumières |
 | --- | --- | --- | --- |
-| **Union d'Aurora** (Falcon, Warden, station) | Lignes tendues, volumes symétriques, chanfreins à 45°, panneaux réguliers | Peinture ivoire et titane, liserés bleu marine, verre teinté | Cyan et blanc ; réacteurs bleu-blanc |
-| **Pillards** (Raider) | Asymétrie, lames vers l'avant, pièces récupérées et rapportées | Métal canon de fusil brut, rouille, peinture rouge écaillée | Rouge et orange instables |
-| **Marauders** | Masses lourdes, blindage en écailles, tourelles | Acier sombre, bandes de danger orange, brûlures | Orange industriel, ambre |
+| **Union d'Aurora** (Falcon, Warden, station) | Lignes tendues, volumes symétriques, chanfreins à 45°, panneaux réguliers | Deux couleurs : ivoire et bleu (Falcon ivoire à bande marine, Warden bleu ardoise à bande ivoire), verre teinté | Feux réglementaires (rouge bâbord, vert tribord, blanc arrière, feux anticollision) ; réacteurs bleus (Falcon) et bleu-vert (Warden) |
+| **Pillards** (Raider, Marauder) | Asymétrie, lames et éperons vers l'avant, pièces récupérées et rapportées, armement boulonné | Coques sombres en plaques dépareillées : rouge sang (Raider) ou acier (Marauder), apprêt, métal nu, rouille ; éperon et marques rouge sang | Ils volent tous feux éteints : petits feux rouges seulement, visières et hublots rouges ; réacteurs orange-rouge |
+
+La simulation n'a que deux camps (`union` et `raiders`) : le Marauder appartient aux pillards et suit donc leur langage, au lieu de la troisième faction envisagée au départ.
 
 ---
 
@@ -93,7 +94,8 @@ Ils servent de base aux marquages et donnent une cohérence industrielle.
 
 - **Aurora Fleetworks** (Union) : Falcon Mk.II, Warden.
 - **Kessler Salvage Consortium** (Pillards) : Raider, construit à partir de coques civiles.
-- **Ardent Heavy Industries** (Marauders) : Marauder.
+- **Ardent Heavy Industries** : Marauder, un cargo lourd militarisé ; ceux des pillards sont des coques volées, réarmées et repeintes.
+- Les pillards effacent les immatriculations : leurs décalques disent `NO REGISTRY` et portent l'emblème de la griffe (trois entailles à travers un anneau brisé).
 
 ### Falcon Mk.II — le vaisseau emblème
 
@@ -395,7 +397,7 @@ Chaque étape fait l'objet d'un commit séparé sur `v0.2.5-graphics`, avec des 
   - Trappes de trains repliés, décalques (`FMK2-0147`, `AURORA FLEETWORKS`, `FALCON MK.II`, emblème de l'Union, `NO STEP`, `RESCUE`, chevrons).
   - Textures générées : peinture à 256 px/m environ, carte normale (joints, rivets, trappes), carte ORM (occlusion, rugosité, métal), éclats de peinture sur les bords, traînées de saleté vers l'arrière.
   - Mesures : environ 13 700 triangles et 6 appels de dessin pour la coque (peinture, métal sombre, métal nu, verre, émissifs, décalques), plus les feux. C'est au-dessus de l'objectif de 3 matériaux : les trois derniers sont petits, et les regrouper dans un atlas est prévu à l'étape 7.
-  - Le Warden reprend provisoirement cette coque avec sa propre peinture ; sa silhouette distincte arrive à l'étape 6.
+  - Le Warden reprenait provisoirement cette coque ; il a sa propre silhouette depuis l'étape 6.
   - Visionneuse `hangar.html` (`?ship=`, `?view=`), captures `scripts/ship-capture.mjs`, export GLB par le bouton « Exporter GLB ».
   - Limite honnête : c'est un modèle procédural détaillé, pas un asset de production modélisé et texturé à la main.
 - **Étape 3 (univers, validée par William) :**
@@ -413,7 +415,7 @@ Chaque étape fait l'objet d'un commit séparé sur `v0.2.5-graphics`, avec des 
   - Détails fins masqués au-delà de 5 km. Les collisions de la station (zone partagée avec le serveur) ne changent pas.
   - Captures : `screenshots/visual/step4/` (vues 06, 07, 12 et 13).
   - Limite honnête : c'est une station procédurale plus crédible, pas un modèle de production. Les mesures de triangles et d'appels de dessin sont prévues à l'étape 7.
-- **Étape 5 (effets de combat, en revue) :** `Effects.ts`, `Lasers.ts`, `ShipView.ts`.
+- **Étape 5 (effets de combat, validée par William) :** `Effects.ts`, `Lasers.ts`, `ShipView.ts`.
   - Lasers : rubans tournés vers la caméra, cœur blanc et halo couleur de faction, tête brillante et queue qui s'efface ; les tirs lointains gardent quelques pixels d'épaisseur. Éclair de bouche en deux couches, et une petite lumière sur la coque pour les tirs du joueur.
   - Bouclier : presque invisible au repos ; un impact n'excite que la zone touchée (point blanc bref, cellules et onde qui s'éloigne), au lieu d'allumer toute la bulle.
   - Coque : chaque impact laisse une marque de métal en fusion posée sur la surface réelle (lancer de rayon sur le maillage), qui passe du blanc à l'orange puis au rouge et s'éteint en 2,6 s. Sous 50 % de coque, jusqu'à quatre feux vacillent sur le vaisseau, en plus de la traînée de fumée.
@@ -421,6 +423,16 @@ Chaque étape fait l'objet d'un commit séparé sur `v0.2.5-graphics`, avec des 
   - Les shaders des effets sont compilés au chargement du secteur, pour éviter un à-coup au premier tir ou à la première destruction.
   - Coût : nombre de particules multiplié par le réglage Qualité (0,35 en Bas). Aucun changement serveur ni protocole.
   - Outil : `scripts/vfx-capture.mjs` (moments figés, identiques à chaque capture). Captures : `screenshots/vfx/before/` et `screenshots/vfx/step5/`.
+- **Étape 6 (identité des factions, en revue) :** `src/client/render/FactionShips.ts`, qui réutilise le kit du Falcon (`makeKit` : matériaux partagés, feuilles de texture, atlas de décalques).
+  - **Warden** (escorte lourde de l'Union) : fuselage blindé plus épais que le Falcon, en quatre sections ; bloc moteur large à trois tuyères ; ailes courtes avec nacelles de canons et ailettes tombantes ; grande dérive dorsale et deux dérives ventrales inclinées ; petit cockpit blindé, dôme capteur, jupes de blindage. Peinture bleu ardoise à bandes ivoire, les deux couleurs du Falcon inversées.
+  - **Raider** (chasseur léger pillard) : fuselage en losange à arête vive, avec des plaques manquantes au-dessus du moteur qui laissent voir les couples ; capot blindé décalé à gauche avec une visière rouge ; lames dentelées en flèche inversée ; un gros moteur et deux propulseurs d'appoint sanglés ; réservoir supplémentaire sous une seule lame, plaque boulonnée sur le nez, dents dorsales, antenne tordue.
+  - **Marauder** (canonnière lourde pillarde) : coque massive couverte de plaques soudées, éperon en tête de marteau peint en rouge avec des dents, nacelles de canons sur pylônes, tourelle dorsale à deux tubes, tour de pont avec bandeau de hublots rouges, conteneurs sanglés à l'arrière, tuyaux, pointes, quatre tuyères.
+  - Les pillards partagent une peinture de récupération : chaque panneau tire sa couleur (peinture de base, apprêt, métal nu, peinture passée, rouille), avec le rouge sang comme marque commune.
+  - Interface : les couleurs du HUD restent fondées sur l'hostilité (un pilote de l'Union peut devenir hostile en PvP) et correspondent déjà aux signaux des factions : hostile orange-rouge comme les pillards, allié vert comme les réacteurs de l'Union, station cyan. Le radar utilise maintenant exactement le même orange que les marqueurs.
+  - Les canons finissent exactement sur les points de tir de la simulation. La visionneuse le vérifie maintenant pour chaque classe (`muzzle` dans les statistiques) et `ship-capture.mjs` échoue si un canon s'en écarte de plus de 5 cm.
+  - Mesures (coque, hors feux) : Warden 11 900 triangles et 6 appels de dessin ; Raider 8 100 triangles et 5 appels ; Marauder 11 800 triangles et 5 appels. Avant : 13 700, 1 400 et 2 000 triangles.
+  - Outil : `scripts/faction-capture.mjs` (les quatre classes en ciel dégagé, un engagement vu de la caméra de poursuite, le même à 400 m, des impacts). Captures : `screenshots/ships/step6/` et `screenshots/factions/step6/`.
+  - Limite honnête : ce sont des modèles procéduraux plus aboutis et cohérents entre eux, pas des assets de production modélisés à la main.
 
 ### Budgets par image (niveau Élevé)
 
@@ -442,7 +454,8 @@ Chaque évolution est jugée sur cinq critères : qualité visuelle, lisibilité
 - `npx tsc --noEmit`, `npx vitest run` et `npm run build` ;
 - `scripts/ui-check.mjs`, `scripts/smoke.mjs`, `scripts/mobile-check.mjs` et `scripts/mp-check.mjs` ;
 - aucune erreur WebGL ni erreur de shader : le compteur `shaders en erreur` du menu pause reste à 0 ;
-- captures avant/après avec `scripts/visual-capture.mjs`, mêmes caméras et même instant.
+- captures avant/après avec `scripts/visual-capture.mjs`, mêmes caméras et même instant ;
+- pour les vaisseaux : `scripts/ship-capture.mjs` (dont le contrôle canons / points de tir) et `scripts/faction-capture.mjs`.
 
 **Mesures de performances :** elles ne sont valables que sur du vrai matériel. Le rendu logiciel de l'environnement de développement (SwiftShader, 2 à 30 IPS) ne mesure rien. Chaque mesure indique la carte graphique, le processeur, le navigateur, la résolution, le niveau de qualité et la scène, et le résultat est ajouté à ce document.
 

@@ -8,6 +8,7 @@ import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { ShipView } from './client/render/ShipView';
 import { buildSky } from './client/render/Sky';
 import { PostFX } from './client/render/PostFX';
+import { SHIP_CLASSES } from './shared/sim/shipClasses';
 import type { ShipClassId } from './shared/sim/types';
 
 const params = new URLSearchParams(location.search);
@@ -64,10 +65,12 @@ const VIEWS: Record<string, { pos: [number, number, number]; target: [number, nu
 };
 function setView(name: string) {
   const v = VIEWS[name] ?? VIEWS.hero;
+  // The views frame an 11 m shield (Falcon); scale them to the ship.
+  const s = name === 'cockpit' || !view ? 1 : view.model.shieldScale.z / 11;
   camera.fov = v.fov;
   camera.updateProjectionMatrix();
-  camera.position.set(...v.pos);
-  controls.target.set(...v.target);
+  camera.position.set(...v.pos).multiplyScalar(s);
+  controls.target.set(...v.target).multiplyScalar(s);
   controls.update();
 }
 
@@ -84,10 +87,52 @@ function stats() {
       tris += (g.index ? g.index.count : g.getAttribute('position').count) / 3;
     }
   });
-  const info = { classId, triangles: Math.round(tris), drawCalls: meshes, materials: mats.size };
+  const info = { classId, triangles: Math.round(tris), drawCalls: meshes, materials: mats.size, muzzle: muzzleError() };
   (document.getElementById('stats') as HTMLElement).textContent =
-    `${classId} · ${info.triangles} triangles · ${info.drawCalls} appels de dessin (coque) · ${info.materials} matériaux`;
+    `${classId} · ${info.triangles} triangles · ${info.drawCalls} appels de dessin (coque) · ${info.materials} matériaux · canons à ${info.muzzle.offset} m des points de tir`;
   return info;
+}
+
+/**
+ * Bolts leave from the simulation's hardpoints, so each one must sit on the
+ * axis of a gun, at its muzzle: the vertices within 25 cm of the hardpoint's
+ * z plane and 60 cm of it are averaged. Returns the worst sideways offset and
+ * the worst distance from the hardpoint to the front of the barrel, in metres
+ * (Infinity when a hardpoint has no gun).
+ */
+function muzzleError() {
+  if (!view) return { offset: Infinity, depth: Infinity };
+  const root = view.model.root;
+  root.updateMatrixWorld(true);
+  const toRoot = new THREE.Matrix4().copy(root.matrixWorld).invert();
+  const m = new THREE.Matrix4();
+  const v = new THREE.Vector3();
+  let offset = 0;
+  let depth = 0;
+  for (const [hx, hy, hz] of SHIP_CLASSES[classId].weapon.hardpoints) {
+    let sx = 0;
+    let sy = 0;
+    let n = 0;
+    let front = Infinity;
+    root.traverse((o) => {
+      if (!(o instanceof THREE.Mesh)) return;
+      m.multiplyMatrices(toRoot, o.matrixWorld);
+      const pos = (o.geometry as THREE.BufferGeometry).getAttribute('position');
+      for (let i = 0; i < pos.count; i++) {
+        v.fromBufferAttribute(pos, i).applyMatrix4(m);
+        if (Math.abs(v.z - hz) < 0.25 && Math.hypot(v.x - hx, v.y - hy) < 0.6) {
+          sx += v.x;
+          sy += v.y;
+          n++;
+          front = Math.min(front, v.z);
+        }
+      }
+    });
+    offset = Math.max(offset, n ? Math.hypot(sx / n - hx, sy / n - hy) : Infinity);
+    depth = Math.max(depth, Math.abs(front - hz));
+  }
+  const mm = (x: number) => Math.round(x * 1000) / 1000;
+  return { offset: mm(offset), depth: mm(depth) };
 }
 
 async function exportGlb(): Promise<ArrayBuffer> {

@@ -25,6 +25,8 @@ await page.waitForFunction(() => window.__hangar && window.__hangar.frames > 5, 
 const info = await page.evaluate(() => window.__hangar.stats());
 console.log(JSON.stringify(info));
 fs.writeFileSync(`${out}/${ship}-stats.json`, JSON.stringify(info, null, 2));
+// Bolts are fired from the simulation's hardpoints: the gun muzzles must be there.
+if (!(info.muzzle.offset <= 0.05 && info.muzzle.depth <= 0.25)) errors.push(`gun muzzles off the hardpoints: ${JSON.stringify(info.muzzle)}`);
 
 const views = (process.env.VIEWS ?? 'hero,side,rear,top,front,cockpit,belly').split(',');
 for (const v of views) {
@@ -42,6 +44,9 @@ if (process.env.GLB) {
   fs.writeFileSync(`${out}/${ship}.glb`, Buffer.from(b64, 'base64'));
   console.log('glb', Math.round((b64.length * 0.75) / 1024), 'KB');
 }
-console.log(errors.length ? `errors: ${errors.join(' | ')}` : 'no page errors');
+if (errors.length) {
+  console.log(`errors: ${errors.join(' | ')}`);
+  process.exitCode = 1;
+} else console.log('no page errors');
 await browser.close();
 console.log(`SHIP CAPTURE DONE → ${out}`);
