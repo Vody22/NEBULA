@@ -446,7 +446,20 @@ Chaque étape fait l'objet d'un commit séparé sur `v0.2.5-graphics`, avec des 
     | Vue d'ensemble | 538 | 265 | 1,19 M |
 
   - La vue d'ensemble repasse sous le budget de 300 appels. Ce qui reste, par ordre de poids : coques des vaisseaux (environ 5 appels par vaisseau visible), traînées (une par vaisseau), station et ceinture, puis le post-traitement.
-  - **Mesures sur matériel réel : en attente** (PC et téléphone de William). Les prochaines optimisations seront choisies d'après elles : instanciation des coques par classe, niveaux de détail des vaisseaux et des astéroïdes, effets selon le niveau de qualité.
+  - **Première mesure sur matériel réel (23 octobre 2026, PC de William)** : NVIDIA GeForce RTX 4060 (Direct3D 11 via ANGLE), Edge 155, écran 2560 × 1440 à 165 Hz, fenêtre 2552 × 1308, densité 1.
+
+    | Niveau | IPS moyen | 1 % bas | GPU par image | CPU par image | Appels (vue d'ensemble) | Saccades |
+    | --- | --- | --- | --- | --- | --- | --- |
+    | Bas | 159 | 35 | 3,2 ms | 1,4 ms | 230 | 3 |
+    | Moyen | 161 | 50 | 3,8 ms | 1,5 ms | 259 | 3 |
+    | Élevé | 164 | 99 | 5,4 ms | 1,4 ms | 269 | 0 |
+    | Ultra | 160 | 39 | 5,6 ms | 1,6 ms | 268 | 3 |
+
+    Le jeu suit les 165 Hz de l'écran à tous les niveaux, avec de la marge (6,1 ms par image disponibles). Les « 1 % bas » faibles venaient d'une seule image bloquée de 0,15 à 0,45 s par scène, sauf en Élevé.
+  - **Cause des saccades** : la compilation des shaders au premier affichage. Un changement de qualité change la taille du ciel (donc tous les matériaux qui le reflètent) ou le chemin de rendu (le rendu direct fait le tone mapping dans chaque shader) ; chaque objet compilait alors au moment où il entrait dans le champ, et sous Windows (ANGLE) une compilation bloque la page plusieurs dizaines de millisecondes. Élevé n'en avait pas parce que ses shaders étaient ceux de Moyen. Deuxième défaut trouvé au passage : la précompilation du chargement visait le mauvais format de rendu (l'écran au lieu de la cible HDR du post-traitement), donc ne servait à rien en Moyen, Élevé et Ultra.
+  - **Correctif** : `Game.precompile()` compile, au chargement et à chaque changement de qualité ou de chemin de rendu, tous les objets de la scène, y compris cachés (réserves d'effets, détails lointains, vaisseaux en attente), un vaisseau de chaque classe gardé caché, l'éclairage avec et sans le feu de réacteur du joueur (le nombre de lumières fait partie des shaders), le reflet d'objectif du soleil (qui dessine avec ses propres matériaux), pour la cible où la scène est vraiment dessinée. Il envoie aussi toutes les textures au GPU. Vérifié dans le test : **0 shader compilé pendant la mesure, aux quatre niveaux** (le rapport l'affiche désormais pour chaque niveau).
+  - **Vérification d'écran noir sans blocage** (`OutputProbe.ts`) : elle lisait 49 pixels de l'écran toutes les 90 images avec `readPixels`, qui attend que le GPU ait fini l'image ; à 165 Hz, cela coûtait une image sautée toutes les demi-secondes. Les pixels sont maintenant copiés dans un tampon GPU et relus quelques images plus tard, quand une barrière indique que la copie est faite. Même détection (vérifiée : passage au rendu de secours après trois images noires).
+  - Mesure sur téléphone : en attente. Les optimisations suivantes (instanciation des coques par classe, niveaux de détail, effets selon la qualité) attendent ce chiffre : le PC n'en a pas besoin.
 
 ### Budgets par image (niveau Élevé)
 

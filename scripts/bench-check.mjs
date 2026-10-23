@@ -26,7 +26,8 @@ await page.goto(`${url}/?bench${level === 'all' ? '' : `=${level}`}`, { waitUnti
 // One screenshot per scene and level, while it runs.
 const seen = new Set();
 const t0 = Date.now();
-while (Date.now() - t0 < 1_500_000) {
+const limit = Number(process.env.BENCH_TIMEOUT_MS ?? 3_600_000);
+while (Date.now() - t0 < limit) {
   const state = await page.evaluate(() => ({ done: !!window.__bench, text: document.querySelector('#bench span')?.textContent ?? '' }));
   if (state.done) break;
   const m = state.text.match(/^Niveau (\S+) \(\d+\/\d+\) · ([^·]+) ·/);

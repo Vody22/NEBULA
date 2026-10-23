@@ -125,6 +125,10 @@ export class Benchmark {
   private rng = mulberry32(2026);
   private timer: { TIME_ELAPSED_EXT: number; GPU_DISJOINT_EXT: number } | null = null;
   private pending: { q: WebGLQuery; level: number; seg: number }[] = [];
+  /** Shader programs linked so far, and during each level's measured scenes. */
+  private links = 0;
+  private compiles: number[] = [];
+  private unhook: (() => void) | null = null;
 
   constructor(
     private host: BenchHost,
@@ -135,6 +139,15 @@ export class Benchmark {
     if (typeof WebGL2RenderingContext !== 'undefined' && gl instanceof WebGL2RenderingContext) this.timer = gl.getExtension('EXT_disjoint_timer_query_webgl2');
     // Count every pass of a frame, not only the last one.
     host.renderer.info.autoReset = false;
+    // A shader compiled during the measure is a stall a player would feel.
+    const link = gl.linkProgram;
+    gl.linkProgram = (p: WebGLProgram) => {
+      this.links++;
+      link.call(gl, p);
+    };
+    this.unhook = () => {
+      gl.linkProgram = link;
+    };
     this.spawn();
   }
 
@@ -363,6 +376,7 @@ export class Benchmark {
     const level = this.levels[this.levelIndex];
     this.host.setQuality(level);
     this.samples[this.levelIndex] = SEGMENTS.map(() => []);
+    this.compiles[this.levelIndex] = 0;
     this.gpu[this.levelIndex] = SEGMENTS.map(() => []);
     // Every level replays the same scene from the start.
     this.t = 0;
@@ -437,7 +451,9 @@ export class Benchmark {
       if (q) gl.beginQuery(this.timer!.TIME_ELAPSED_EXT, q);
     }
     this.host.renderer.info.reset();
+    const links = this.links;
     this.host.render();
+    if (seg >= 0) this.compiles[this.levelIndex] += this.links - links;
     if (q) {
       gl.endQuery(this.timer!.TIME_ELAPSED_EXT);
       this.pending.push({ q, level: this.levelIndex, seg });
@@ -475,8 +491,9 @@ export class Benchmark {
     const levels: LevelResult[] = this.results.map((r, li) => {
       const segments = SEGMENTS.map((s, si) => summarize(s.id, s.label, this.samples[li][si], this.gpu[li][si]));
       const total = summarize('total', 'Ensemble', this.samples[li].flat(), this.gpu[li].flat());
-      return { ...r, label: QUALITY[r.level].label, segments, total };
+      return { ...r, label: QUALITY[r.level].label, compiles: this.compiles[li] ?? 0, segments, total };
     });
+    this.unhook?.();
     this.cb.onDone({
       gpu: this.host.gpuName(),
       userAgent: navigator.userAgent,

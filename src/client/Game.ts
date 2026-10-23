@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { ChatLine, ErrorCode, PlayerInfo, PlayerStats, ServerMessage } from '../shared/net/protocol';
 import { SHIP_CLASSES } from '../shared/sim/shipClasses';
 import { StaticGrid } from '../shared/sim/spatialGrid';
-import { neutralInput, type SimEvent } from '../shared/sim/types';
+import { neutralInput, type ShipClassId, type SimEvent } from '../shared/sim/types';
 import { TICK_DT, TICK_RATE } from '../shared/sim/world';
 import { buildZone, type ZoneDef } from '../shared/sim/zone';
 import { GameAudio } from './audio/Audio';
@@ -20,6 +20,7 @@ import { Lasers } from './render/Lasers';
 import { Planets } from './render/Planets';
 import { PostFX } from './render/PostFX';
 import { updateBatches } from './render/batches';
+import { OutputProbe } from './render/OutputProbe';
 import { ShipView } from './render/ShipView';
 import { QUALITY, type QualityLevel, type QualityProfile } from './render/quality';
 import { buildSky, type SkyResult } from './render/Sky';
@@ -70,6 +71,10 @@ export class Game {
   private framesRunning = 0;
   private outputChecks = 0;
   private blackSamples = 0;
+  private probe: OutputProbe;
+  /** One hidden ship of each class, so their shaders are compiled with the rest (see precompile). */
+  private showroom: ShipView[] = [];
+  private compileTarget: THREE.WebGLRenderTarget | null = null;
   /** Graphics diagnostics (pause menu, ?diag). */
   readonly gfx = { lastSample: -1, blackSamples: 0, fallbacks: 0, shaderErrors: 0 };
   private zone: ZoneDef | null = null;
@@ -140,6 +145,8 @@ export class Game {
       this.gfx.shaderErrors++;
       console.error('NEBULA: shader en erreur', gl.getProgramInfoLog(program), gl.getShaderInfoLog(vs), gl.getShaderInfoLog(fs));
     };
+
+    this.probe = new OutputProbe(this.renderer.getContext() as WebGL2RenderingContext);
 
     this.cam = new ChaseCamera(window.innerWidth / window.innerHeight);
     this.scene.add(this.cam.camera);
@@ -282,9 +289,93 @@ export class Game {
     this.buildPost();
     this.outputChecks = 0;
     this.blackSamples = 0;
+    this.probe.cancel();
     if (this.zone && this.skySize !== this.quality.skySize) this.buildSkyFor(this.zone);
     this.asteroids?.setDetail(level !== 'low');
     this.resize();
+    // A new sky size or render path changes most shaders: compile them now,
+    // rather than one stall per object as each comes into view.
+    if (this.zone) this.precompile();
+  }
+
+  /**
+   * Compiles every shader the scene can need, so that none compiles in the
+   * middle of play: on Windows (ANGLE) each one blocks the page for tens of
+   * milliseconds, several at once make a visible stall. Covers every object
+   * of the scene including hidden ones (effect pools, distant station detail,
+   * ships waiting to respawn), one ship of each class, the pilot's engine light
+   * present and absent (the number of lights is part of every lit shader),
+   * for the render target the scene is really drawn into (tone mapping
+   * happens in the shader only when drawing straight to the screen).
+   * Also uploads every texture. Called when the world is built and whenever
+   * the quality or the render path changes.
+   */
+  precompile() {
+    if (!this.showroom.length) {
+      for (const id of Object.keys(SHIP_CLASSES) as ShipClassId[]) {
+        const v = new ShipView(id, this.scene, false);
+        v.setVisible(false);
+        this.showroom.push(v);
+      }
+    }
+    updateBatches();
+    this.effects.warmUp(true);
+    const hidden: THREE.Object3D[] = [];
+    const textures = new Set<THREE.Texture>();
+    const collect = (v: unknown) => {
+      const t = v as THREE.Texture | null;
+      if (t && t.isTexture && !t.isRenderTargetTexture) textures.add(t);
+    };
+    this.scene.traverse((o) => {
+      // Lights stay as they are: their number is part of the shaders.
+      if (!o.visible && !(o as THREE.Light).isLight) {
+        hidden.push(o);
+        o.visible = true;
+      }
+      const m = (o as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
+      for (const mat of m ? (Array.isArray(m) ? m : [m]) : []) {
+        for (const v of Object.values(mat)) collect(v);
+        const uniforms = (mat as THREE.ShaderMaterial).uniforms;
+        if (uniforms) for (const u of Object.values(uniforms)) collect(u?.value);
+      }
+    });
+    for (const t of textures) this.renderer.initTexture(t);
+    const previous = this.renderer.getRenderTarget();
+    this.compileTarget ??= new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType });
+    this.renderer.setRenderTarget(this.post ? this.compileTarget : null);
+    this.renderer.compile(this.scene, this.cam.camera);
+    const own = [...this.views.values()].find((v) => v.light)?.light;
+    const stand = own ? null : new THREE.PointLight(0xffffff, 0, 60, 2);
+    if (own) own.visible = false;
+    if (stand) this.scene.add(stand);
+    this.renderer.compile(this.scene, this.cam.camera);
+    if (own) own.visible = true;
+    if (stand) this.scene.remove(stand);
+    // The sun's lens flare draws with materials of its own from onBeforeRender,
+    // out of compile()'s reach, and only when the sun is on screen: draw it
+    // once now, looking straight at it, into a small target of the right type.
+    const flares: THREE.Object3D[] = [];
+    this.scene.traverse((o) => {
+      if ((o as THREE.Object3D & { isLensflare?: boolean }).isLensflare) flares.push(o);
+    });
+    if (flares.length) {
+      const target = new THREE.WebGLRenderTarget(64, 64, { type: this.post ? THREE.HalfFloatType : THREE.UnsignedByteType });
+      const eye = new THREE.PerspectiveCamera(30, 1, 0.1, 1e7);
+      const at = new THREE.Vector3();
+      this.renderer.setRenderTarget(target);
+      for (const f of flares) {
+        f.updateWorldMatrix(true, false);
+        f.getWorldPosition(at);
+        eye.position.copy(this.cam.camera.position).sub(at).setLength(100).add(at);
+        eye.lookAt(at);
+        eye.updateMatrixWorld();
+        this.renderer.render(f, eye);
+      }
+      target.dispose();
+    }
+    this.renderer.setRenderTarget(previous);
+    for (const o of hidden) o.visible = false;
+    this.effects.warmUp(false);
   }
 
   get qualityLevel() {
@@ -319,12 +410,9 @@ export class Game {
     this.asteroids.setDetail(this.quality.level !== 'low');
     this.worldRoot.add(this.planets.group, this.station.group, this.asteroids.group);
     this.hud.setZoneName(zone.name);
-    // Compile every shader now (lasers, fire, debris) rather than hitching on
-    // the first shot or the first kill.
-    this.effects.warmUp(true);
-    updateBatches();
-    this.renderer.compile(this.scene, this.cam.camera);
-    this.effects.warmUp(false);
+    // Compile every shader now rather than stalling on the first shot, the
+    // first kill or the first ship of a class.
+    this.precompile();
   }
 
   private onMessage(m: ServerMessage) {
@@ -614,18 +702,18 @@ export class Game {
    */
   private checkOutput() {
     this.framesRunning++;
+    if (this.paused) return;
+    // The sample arrives a few frames after it was taken (no GPU stall).
+    const max = this.probe.poll();
+    if (max !== null) this.judgeOutput(max);
     const every = this.outputChecks < 10 ? 20 : 90;
-    if (this.paused || this.framesRunning < 20 || this.framesRunning % every !== 0) return;
+    if (this.probe.busy || this.framesRunning < 20 || this.framesRunning % every !== 0) return;
     this.outputChecks++;
     this.renderer.setRenderTarget(null);
-    const gl = this.renderer.getContext();
-    const px = new Uint8Array(4);
-    let max = 0;
-    for (let i = 1; i < 8; i++)
-      for (let j = 1; j < 8; j++) {
-        gl.readPixels(Math.floor((gl.drawingBufferWidth * i) / 8), Math.floor((gl.drawingBufferHeight * j) / 8), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
-        max = Math.max(max, px[0], px[1], px[2]);
-      }
+    this.probe.start();
+  }
+
+  private judgeOutput(max: number) {
     this.gfx.lastSample = max;
     if (max > 12) {
       this.blackSamples = 0;
@@ -643,6 +731,7 @@ export class Game {
     } else {
       this.post = null;
       this.renderPath = 'direct';
+      this.precompile();
     }
     this.gfx.fallbacks++;
     console.warn(`NEBULA: image noire détectée, passage au rendu de secours « ${this.renderPath} ».`);

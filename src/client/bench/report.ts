@@ -37,6 +37,8 @@ export interface LevelResult {
   pixelRatio: number;
   width: number;
   height: number;
+  /** Shader programs compiled during the measured scenes (each one is a stall). */
+  compiles: number;
   segments: SegmentStats[];
   total: SegmentStats;
 }
@@ -112,7 +114,10 @@ export function formatReport(r: BenchReport): string {
   ];
   for (const l of r.levels) {
     lines.push('');
-    lines.push(`Niveau ${l.label} (rendu ${l.renderPath}, ${Math.round(l.pixelRatio * 100)} %, ${l.width}×${l.height} px)`);
+    lines.push(
+      `Niveau ${l.label} (rendu ${l.renderPath}, ${Math.round(l.pixelRatio * 100)} %, ${l.width}×${l.height} px, ` +
+        `shaders compilés pendant la mesure : ${l.compiles})`,
+    );
     for (const s of l.segments) lines.push(`  ${formatSegment(s)}`);
     lines.push(`  ${formatSegment(l.total)}`);
   }

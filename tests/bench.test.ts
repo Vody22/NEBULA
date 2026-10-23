@@ -47,11 +47,11 @@ describe('performance test report', () => {
       userAgent: 'UA',
       screen: '1920×1080',
       refreshHz: 60,
-      levels: [{ level: 'high', label: 'Élevé', renderPath: 'msaa', pixelRatio: 1.5, width: 2880, height: 1620, segments: [seg], total }],
+      levels: [{ level: 'high', label: 'Élevé', renderPath: 'msaa', pixelRatio: 1.5, width: 2880, height: 1620, compiles: 0, segments: [seg], total }],
     });
     expect(text).toContain('Carte graphique : Test GPU');
     expect(text).toContain('rafraîchissement estimé 60 Hz');
-    expect(text).toContain('Niveau Élevé (rendu msaa, 150 %, 2880×1620 px)');
+    expect(text).toContain('Niveau Élevé (rendu msaa, 150 %, 2880×1620 px, shaders compilés pendant la mesure : 0)');
     expect(text).toContain('Station : 60 IPS moy.');
     expect(text).toContain('GPU 4,2 ms');
     expect(text).toContain('500 k triangles');
