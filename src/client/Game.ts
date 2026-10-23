@@ -1,15 +1,19 @@
 import * as THREE from 'three';
-import type { ChatLine, ErrorCode, PlayerInfo, PlayerStats, ServerMessage } from '../shared/net/protocol';
+import { cargoTotal, ITEMS, type ItemId } from '../shared/economy/items';
+import type { StationId } from '../shared/economy/market';
+import { segmentSphere } from '../shared/math';
+import type { ChatLine, ErrorCode, MarketView, PilotState, PlayerInfo, PlayerStats, ServerMessage } from '../shared/net/protocol';
+import { MINING_MAX_SPEED, MINING_RANGE, MINING_RATE, miningTarget, oreOf, richness, richnessLabel } from '../shared/sim/mining';
 import { SHIP_CLASSES } from '../shared/sim/shipClasses';
 import { StaticGrid } from '../shared/sim/spatialGrid';
-import { neutralInput, type ShipClassId, type SimEvent } from '../shared/sim/types';
+import { neutralInput, type Ship, type ShipClassId, type ShipInput, type SimEvent } from '../shared/sim/types';
 import { TICK_DT, TICK_RATE } from '../shared/sim/world';
-import { buildZone, type ZoneDef } from '../shared/sim/zone';
+import { buildZone, DOCK_MAX_SPEED, type ZoneDef } from '../shared/sim/zone';
 import { GameAudio } from './audio/Audio';
 import { Benchmark, type BenchCallbacks } from './bench/Benchmark';
 import { ChaseCamera } from './camera/ChaseCamera';
 import { isHostile } from './hostility';
-import { Hud } from './hud/Hud';
+import { Hud, type DockGuide, type MiningInfo } from './hud/Hud';
 import { InputManager } from './input/Input';
 import { Predictor } from './net/Predictor';
 import { SnapshotBuffer, type InterpolatedShip } from './net/SnapshotBuffer';
@@ -17,6 +21,7 @@ import type { Transport } from './net/Transport';
 import { Asteroids } from './render/Asteroids';
 import { Effects } from './render/Effects';
 import { Lasers } from './render/Lasers';
+import { MiningBeams, type BeamSegment } from './render/MiningBeams';
 import { Planets } from './render/Planets';
 import { PostFX } from './render/PostFX';
 import { updateBatches } from './render/batches';
@@ -26,7 +31,8 @@ import { QUALITY, type QualityLevel, type QualityProfile } from './render/qualit
 import { buildSky, type SkyResult } from './render/Sky';
 import { SpaceDust } from './render/SpaceDust';
 import { Station } from './render/Station';
-import type { Settings } from './settings';
+import { keyLabel, type Settings } from './settings';
+import { StationPanel, type KnownPrice } from './ui/StationPanel';
 
 export interface GameOptions {
   quality: QualityLevel;
@@ -38,6 +44,12 @@ const UNION_BOLT = new THREE.Color(1.5, 4, 9);
 const RAIDER_BOLT = new THREE.Color(9, 2.2, 0.8);
 const _p = new THREE.Vector3();
 const _shotOffset = new THREE.Vector3();
+const _q = new THREE.Quaternion();
+const _fwd = new THREE.Vector3();
+const _end = new THREE.Vector3();
+const _normal = new THREE.Vector3();
+const _camTarget = new THREE.Vector3();
+const _parkedTurn = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
 /** Image-based light from the baked nebula: reflections and a hint of colour, not a fill light. */
 const ENVIRONMENT_INTENSITY = 0.55;
 export const DEFAULT_SECTOR_SEED = 1337;
@@ -50,6 +62,8 @@ export interface GameCallbacks {
   onFatal?(code: ErrorCode, text: string): void;
   onOpenChat?(): void;
   onToggleChat?(): void;
+  /** Touch screens at the station: open the pause menu. */
+  onMenu?(): void;
 }
 
 /**
@@ -83,6 +97,9 @@ export class Game {
   private planets: Planets | null = null;
   private asteroids: Asteroids | null = null;
   private lasers = new Lasers();
+  private beams = new MiningBeams();
+  private beamList: BeamSegment[] = [];
+  private sparkClock = 0;
   private effects = new Effects();
   private dust = new SpaceDust();
   private views = new Map<number, ShipView>();
@@ -109,6 +126,22 @@ export class Game {
   private myShipId: number | null = null;
   private lastMyShipId: number | null = null;
   private stats: PlayerStats = { kills: 0, deaths: 0, credits: 0 };
+  /** Credits, hold and docking state, from the server. */
+  private pilot: PilotState | null = null;
+  /** Markets seen at each station, newest first: the station screen compares prices. */
+  private seenMarkets = new Map<StationId, { market: MarketView; at: number }>();
+  /** The pilot's ship shown on its pad while docked. */
+  private parked: ShipView | null = null;
+  /** Estimated progress toward the next unit of ore (the server sends whole units). */
+  private mineProgress = 0;
+  /** In a docking zone (touch screens show the dock button). */
+  dockable = false;
+  readonly stationPanel = new StationPanel(document.body, {
+    trade: (item, qty) => this._transport?.send({ t: 'trade', item, qty }),
+    repair: () => this._transport?.send({ t: 'repair' }),
+    undock: () => this.undock(),
+    menu: () => this.callbacks.onMenu?.(),
+  });
   private wave = 0;
   private respawnIn = 0;
   private seq = 0;
@@ -157,7 +190,7 @@ export class Game {
     this.input = new InputManager(canvas, settings.bindings);
     this.applySettings(settings);
     this.timer.connect(document);
-    this.scene.add(this.lasers.group, this.effects.group, this.dust.lines, this.worldRoot);
+    this.scene.add(this.lasers.group, this.beams.mesh, this.effects.group, this.dust.lines, this.worldRoot);
 
     window.addEventListener('resize', () => this.resize());
     this.resize();
@@ -205,6 +238,65 @@ export class Game {
     this.stats = { kills: 0, deaths: 0, credits: 0 };
     this.wave = 0;
     this.myPvp = false;
+    this.pilot = null;
+    this.seenMarkets.clear();
+    this.stationPanel.hide();
+    this.disposeParked();
+    this.dockable = false;
+  }
+
+  /** At a station: the server keeps the ship, the client shows the station screen. */
+  get docked() {
+    return !!this.pilot?.docked;
+  }
+
+  private toggleDock() {
+    if (this.docked) this.undock();
+    else this._transport?.send({ t: 'dock' });
+  }
+
+  private undock() {
+    this._transport?.send({ t: 'undock' });
+    // Within the click or key press: the browser only captures the mouse during a user gesture.
+    if (!this.input.touchMode) this.input.requestLock();
+  }
+
+  private dockChanged(station: StationId | null) {
+    if (station) {
+      const def = this.zone?.stations.find((s) => s.id === station);
+      this.stationPanel.show(def?.name ?? station);
+      this.stationPanel.setKnownPrices(this.pricesElsewhere(station));
+      // The station screen needs the mouse pointer.
+      if (document.pointerLockElement) document.exitPointerLock();
+      this.input.releaseKeys();
+      this.input.input.throttle = 0;
+      this.audio.ui();
+    } else {
+      this.stationPanel.hide();
+      this.disposeParked();
+      this.input.centerCursor();
+      // Leave the hangar at a crawl rather than braking to a stop at the mouth.
+      this.input.input.throttle = 0.15;
+    }
+  }
+
+  /** The most recent sell price of every item at the other stations. */
+  private pricesElsewhere(here: StationId): Map<ItemId, KnownPrice> {
+    const out = new Map<ItemId, KnownPrice>();
+    for (const [id, seen] of this.seenMarkets) {
+      if (id === here) continue;
+      const name = this.zone?.stations.find((s) => s.id === id)?.name.replace(/^Station\s+/, '') ?? id;
+      for (const line of seen.market.items) {
+        const prev = out.get(line.id);
+        if (!prev || prev.at < seen.at) out.set(line.id, { station: name, buy: line.buy, sell: line.sell, at: seen.at });
+      }
+    }
+    return out;
+  }
+
+  private disposeParked() {
+    this.parked?.dispose(this.scene);
+    this.parked = null;
   }
 
   /** Network state for automated tests and debugging (window.__game.inspect()). */
@@ -225,6 +317,10 @@ export class Game {
       corrections: this.predictor?.corrections ?? 0,
       lastCorrection: this.predictor?.lastCorrection ?? 0,
       predicted: this.predictor?.ship ? this.predictor.ship.position.toArray() : null,
+      pilot: this.pilot ? { ...this.pilot, cargo: { ...this.pilot.cargo } } : null,
+      dockable: this.dockable,
+      stationScreen: this.stationPanel.isOpen,
+      beams: this.beams.mesh.count,
       debug: { ...this.debug },
     };
   }
@@ -463,7 +559,20 @@ export class Game {
         break;
       case 'notice':
         this.hud.notice(m.text, m.tone);
-        if (m.tone === 'warn') this.audio.alarm();
+        // A refused trade at the station is no alarm.
+        if (m.tone === 'warn' && !this.docked) this.audio.alarm();
+        break;
+      case 'pilot': {
+        const was = this.pilot?.docked ?? null;
+        if (cargoTotal(m.pilot.cargo) > (this.pilot ? cargoTotal(this.pilot.cargo) : 0)) this.mineProgress = 0;
+        this.pilot = m.pilot;
+        this.stationPanel.setPilot(m.pilot);
+        if (m.pilot.docked !== was) this.dockChanged(m.pilot.docked);
+        break;
+      }
+      case 'market':
+        this.seenMarkets.set(m.market.station, { market: m.market, at: performance.now() });
+        this.stationPanel.setMarket(m.market);
         break;
     }
   }
@@ -480,6 +589,9 @@ export class Game {
     this.input.sensitivity = s.sensitivity;
     this.audio.setVolume(s.volume, s.muted);
     this.hud.setBindings(s.bindings);
+    const dock = keyLabel(s.bindings.dock, s.layout);
+    this.hud.setKeyLabels({ dock, mine: keyLabel(s.bindings.mine, s.layout) });
+    this.stationPanel.setUndockKey(dock);
   }
 
   setPaused(p: boolean) {
@@ -528,6 +640,7 @@ export class Game {
     if (this.input.consume('chat')) this.callbacks.onOpenChat?.();
     if (this.input.consume('chatToggle')) this.callbacks.onToggleChat?.();
     if (this.input.consume('pvp')) this.togglePvp();
+    if (this.input.consume('dock') && this.running) this.toggleDock();
     this.input.endFrame();
 
     // 2) Advance the (local) server and receive messages. In solo the pause
@@ -539,7 +652,7 @@ export class Game {
     }
     if (transport && this.running) {
       // One input per simulation tick, predicted locally at once.
-      const send = this.paused ? { ...neutralInput(), flightAssist: input.flightAssist } : input;
+      const send = this.paused || this.docked ? { ...neutralInput(), flightAssist: input.flightAssist } : input;
       this.inputAcc += dt;
       let steps = 0;
       while (this.inputAcc >= TICK_DT && steps < 8) {
@@ -582,6 +695,8 @@ export class Game {
     for (const [id, s] of ships) {
       let view = this.views.get(id);
       if (!view) {
+        // One engine light for the pilot at a time (the light count is part of every compiled shader).
+        if (id === this.myShipId) this.disposeParked();
         view = new ShipView(s.snap.classId, this.scene, id === this.myShipId);
         this.views.set(id, view);
         view.group.position.copy(s.position);
@@ -606,6 +721,7 @@ export class Game {
         this.views.delete(id);
       }
     }
+    this.updateBeams(ships, dt);
 
     // 5) Events whose time has come
     this.eventQueue.sort((a, b) => a.time - b.time);
@@ -632,6 +748,9 @@ export class Game {
         this.alarmIn = 1.4;
       }
       this.autoTarget(me, ships);
+    } else if (this.docked) {
+      this.audio.engineUpdate(0, false);
+      this.dockedCamera(dt);
     } else {
       this.audio.engineUpdate(0, false);
       const c = this.cam.camera;
@@ -644,6 +763,10 @@ export class Game {
       }
     }
     if (this.targetId !== null && !ships.has(this.targetId)) this.targetId = null;
+    const mining = me ? this.miningInfo(me, input, dt) : null;
+    this.audio.miningUpdate(mining?.state === 'active' ? 1 : 0);
+    const dock = me ? this.dockGuide(me) : null;
+    this.dockable = !!dock?.inZone;
 
     // 7) World animation
     const camPos = this.cam.camera.position;
@@ -677,6 +800,9 @@ export class Game {
         playerCount: this.players.filter((p) => p.online).length,
         maxPlayers: this.maxPlayers,
         myName: this.myName,
+        pilot: this.pilot,
+        dock,
+        mining,
       },
       dt,
     );
@@ -913,6 +1039,101 @@ export class Game {
       case 'spawned':
         break;
     }
+  }
+
+  /**
+   * Mining beams of every ship whose snapshot says it mines, from the nose of
+   * the drawn ship to the rock's surface, with sparks where they bite.
+   */
+  private updateBeams(ships: Map<number, InterpolatedShip>, dt: number) {
+    const zone = this.zone!;
+    const camPos = this.cam.camera.position;
+    this.sparkClock += dt;
+    const spark = this.sparkClock >= 0.045;
+    if (spark) this.sparkClock = 0;
+    let n = 0;
+    for (const [id, s] of ships) {
+      const m = s.snap.m;
+      const rock = m !== undefined ? zone.asteroids[m] : undefined;
+      const view = this.views.get(id);
+      if (!rock || !view) continue;
+      const seg = (this.beamList[n] ??= { from: new THREE.Vector3(), to: new THREE.Vector3() });
+      _q.copy(view.group.quaternion);
+      seg.from.set(0, 0, -SHIP_CLASSES[s.snap.classId].radius * 0.6).applyQuaternion(_q).add(view.group.position);
+      _fwd.set(0, 0, -1).applyQuaternion(_q);
+      _end.copy(seg.from).addScaledVector(_fwd, MINING_RANGE);
+      const t = segmentSphere(seg.from, _end, rock.position, rock.radius);
+      // Interpolation can drift the nose off the rock by a hair: aim at its nearest surface point then.
+      if (t >= 0) seg.to.copy(seg.from).addScaledVector(_fwd, t * MINING_RANGE);
+      else seg.to.copy(seg.from).sub(rock.position).setLength(rock.radius).add(rock.position);
+      n++;
+      if (spark && seg.to.distanceTo(camPos) < 2500) {
+        _normal.copy(seg.to).sub(rock.position).normalize();
+        this.effects.miningSpark(seg.to, _normal, Math.random() < 0.15);
+      }
+    }
+    this.beams.update(this.time, this.beamList, n, camPos);
+  }
+
+  /** What the beam does, or would do, for the HUD. */
+  private miningInfo(me: InterpolatedShip, input: ShipInput, dt: number): MiningInfo | null {
+    const zone = this.zone!;
+    const active = me.snap.m !== undefined;
+    const probe = { classId: me.snap.classId, position: me.position, rotation: me.rotation } as unknown as Ship;
+    const hit = this.grid ? miningTarget(probe, this.grid, zone.asteroids) : null;
+    if (!input.mine && !active && !hit) return null;
+    const index = active ? me.snap.m! : hit?.index;
+    const rock = index !== undefined ? zone.asteroids[index] : undefined;
+    const speed = me.velocity.length();
+    const full = !!this.pilot && cargoTotal(this.pilot.cargo) >= this.pilot.capacity;
+    let state: MiningInfo['state'];
+    if (!input.mine && !active) {
+      // A hint only when the ship could actually mine it.
+      if (speed > MINING_MAX_SPEED * 2) return null;
+      state = 'aim';
+    } else if (full) state = 'full';
+    else if (active) state = 'active';
+    else if (input.fire) state = 'fire';
+    else if (speed > MINING_MAX_SPEED) state = 'speed';
+    else if (!hit) state = 'none';
+    // Held, in range and slow: the server's answer is on its way.
+    else state = 'active';
+    const rate = index !== undefined ? MINING_RATE * richness(index) : 0;
+    if (state === 'active') this.mineProgress = Math.min(0.98, this.mineProgress + rate * dt);
+    return {
+      state,
+      ore: rock ? ITEMS[oreOf(rock.variant)].label : '',
+      richness: index !== undefined ? richnessLabel(richness(index)) : '',
+      distance: hit && hit.index === index ? hit.distance : rock ? Math.max(0, me.position.distanceTo(rock.position) - rock.radius) : 0,
+      rate,
+      progress: this.mineProgress,
+    };
+  }
+
+  /** The nearest hangar mouth and whether the ship may dock there now. */
+  private dockGuide(me: InterpolatedShip): DockGuide | null {
+    let best: DockGuide | null = null;
+    for (const st of this.zone!.stations) {
+      const d = me.position.distanceTo(st.dock.mouth);
+      if (best && best.distance <= d) continue;
+      best = { name: st.name, mouth: st.dock.mouth, distance: d, inZone: d <= st.dock.radius, speed: me.velocity.length(), maxSpeed: DOCK_MAX_SPEED };
+    }
+    return best;
+  }
+
+  /** Docked: the ship on its pad, seen from inside the hangar. */
+  private dockedCamera(dt: number) {
+    if (!this.station) return;
+    if (!this.parked) {
+      this.parked = new ShipView(this.lastMe?.snap.classId ?? 'falcon', this.scene, true);
+      this.parked.teleported();
+    }
+    const c = this.cam.camera;
+    this.station.dockedView(this.time, this.parked.group.position, c.position, _camTarget);
+    this.parked.group.quaternion.copy(_parkedTurn);
+    this.parked.update(dt, this.time, 0, false, c.position);
+    c.up.set(0, 1, 0);
+    c.lookAt(_camTarget);
   }
 
   /** Before take-off: a slow drift past the station (start menu backdrop). */

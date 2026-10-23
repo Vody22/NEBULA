@@ -97,6 +97,7 @@ game.callbacks = {
   onChatHistory: (lines) => chat.history(lines),
   onOpenChat: () => chat.open(),
   onToggleChat: () => chat.toggle(),
+  onMenu: () => pause(),
   onFatal: (_code, text) => {
     // Server full, wrong version, session taken over: back to the title screen.
     leave();
@@ -122,7 +123,9 @@ function loop(timestamp: number) {
   game.frame(timestamp);
   updateCaptureHint();
   if (touchControls) {
-    touchControls.setVisible(started && !menu.isOpen && !chat.isOpen);
+    // At a station the station screen takes the place of the flight controls.
+    touchControls.setVisible(started && !menu.isOpen && !chat.isOpen && !game.docked);
+    touchControls.setDockable(game.dockable);
     touchControls.update();
   }
   requestAnimationFrame(loop);
@@ -274,18 +277,19 @@ function resume() {
   game.setPaused(false);
   canvas.focus?.();
   // May be refused (e.g. Échap is not a user gesture): the hint then asks for a click.
-  if (!touch) game.input.requestLock();
+  // Docked, the station screen needs the pointer.
+  if (!touch && !game.docked) game.input.requestLock();
 }
 
 function updateCaptureHint() {
-  const show = !touch && started && !menu.isOpen && !chat.isOpen && !game.input.locked && 'requestPointerLock' in canvas && !params.has('autostart');
+  const show = !touch && started && !menu.isOpen && !chat.isOpen && !game.docked && !game.input.locked && 'requestPointerLock' in canvas && !params.has('autostart');
   capture.classList.toggle('hidden', !show);
 }
 
 document.addEventListener('pointerlockchange', () => {
   // Leaving pointer lock (the browser's own Échap) opens the pause menu,
-  // unless that Échap was closing the chat.
-  if (document.pointerLockElement === canvas || !started || menu.isOpen) return;
+  // unless that Échap was closing the chat. Docking releases the mouse on purpose.
+  if (document.pointerLockElement === canvas || !started || menu.isOpen || game.docked) return;
   if (chat.isOpen || chat.justClosed) {
     chat.close();
     return;
@@ -302,5 +306,5 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden) pause();
 });
 canvas.addEventListener('click', () => {
-  if (!touch && started && !menu.isOpen && !game.input.locked) game.input.requestLock();
+  if (!touch && started && !menu.isOpen && !game.docked && !game.input.locked) game.input.requestLock();
 });

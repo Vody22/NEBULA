@@ -7,6 +7,7 @@ export class GameAudio {
   private master!: GainNode;
   private noise!: AudioBuffer;
   private engine?: { osc: OscillatorNode; osc2: OscillatorNode; gain: GainNode; filter: BiquadFilterNode };
+  private beam?: { gain: GainNode; filter: BiquadFilterNode; osc: OscillatorNode };
   private lastLaser = 0;
   muted = false;
   volume = 0.7;
@@ -46,6 +47,28 @@ export class GameAudio {
     osc.start();
     osc2.start();
     this.engine = { osc, osc2, gain, filter };
+
+    // Mining beam: a buzzing hum over grinding noise, silent until used.
+    const hum = ctx.createOscillator();
+    hum.type = 'square';
+    hum.frequency.value = 118;
+    const grind = ctx.createBufferSource();
+    grind.buffer = this.noise;
+    grind.loop = true;
+    const bf = ctx.createBiquadFilter();
+    bf.type = 'bandpass';
+    bf.frequency.value = 900;
+    bf.Q.value = 1.2;
+    const humGain = ctx.createGain();
+    humGain.gain.value = 0.12;
+    const bg = ctx.createGain();
+    bg.gain.value = 0;
+    hum.connect(humGain).connect(bf);
+    grind.connect(bf);
+    bf.connect(bg).connect(this.master);
+    hum.start();
+    grind.start();
+    this.beam = { gain: bg, filter: bf, osc: hum };
   }
 
   private effectiveGain() {
@@ -86,6 +109,14 @@ export class GameAudio {
     e.osc2.frequency.setTargetAtTime(80 + p * 70, t, 0.2);
     e.filter.frequency.setTargetAtTime(180 + p * 900, t, 0.2);
     e.gain.gain.setTargetAtTime(0.05 + p * 0.07, t, 0.3);
+  }
+
+  /** `level`: 0 silent, 1 our own beam biting into a rock. */
+  miningUpdate(level: number) {
+    if (!this.ctx || !this.beam) return;
+    const t = this.ctx.currentTime;
+    this.beam.gain.gain.setTargetAtTime(level * 0.09, t, level > 0 ? 0.06 : 0.15);
+    this.beam.filter.frequency.setTargetAtTime(700 + level * 500 + Math.random() * 150, t, 0.1);
   }
 
   laser(distance: number, hostile: boolean) {

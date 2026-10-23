@@ -1,6 +1,6 @@
 import { Quaternion, Vector3 } from 'three';
 import { addCargo, cargoTotal, ITEMS, ITEM_IDS, type Cargo, type ItemId } from '../shared/economy/items';
-import { createMarket, quote, stepMarket, trade, TRADE_REFUSALS, type MarketState, type StationId } from '../shared/economy/market';
+import { createMarket, quote, REPAIR_COST, repairCost, stepMarket, trade, TRADE_REFUSALS, type MarketState, type StationId } from '../shared/economy/market';
 import { AIPilot } from '../shared/sim/ai';
 import { oreOf, PLATINUM_CHANCE } from '../shared/sim/mining';
 import { mulberry32 } from '../shared/rng';
@@ -79,8 +79,7 @@ const PVP_COMBAT_LOCK = 15;
 const PVP_KILL_BOUNTY = 0;
 /** Credits of a new pilot. */
 export const STARTING_CREDITS = 500;
-/** Credits per hull point repaired at a station. */
-export const REPAIR_COST = 2;
+export { REPAIR_COST };
 /** Players fly the Falcon: its hold is theirs. */
 const PLAYER_CLASS: ShipClassId = 'falcon';
 
@@ -377,7 +376,7 @@ export class GameServer {
     if (missing < 0.5) return this.notice(s, 'La coque est intacte.');
     const fix = Math.min(missing, s.stats.credits / REPAIR_COST);
     if (fix < 0.5) return this.notice(s, TRADE_REFUSALS.funds, 'warn');
-    const cost = Math.ceil(fix * REPAIR_COST - 1e-9);
+    const cost = repairCost(fix);
     s.stats.credits -= cost;
     s.stored.hull = fix >= missing ? max : s.stored.hull + fix;
     s.pilotDirty = true;
@@ -630,6 +629,7 @@ export class GameServer {
           // Player kills (PvP) pay nothing: two friends cannot farm credits off each other.
           const bounty = ownerSession ? PVP_KILL_BOUNTY : SHIP_CLASSES[e.classId].bounty;
           ks.stats.credits += bounty;
+          if (bounty) ks.pilotDirty = true;
           ks.link?.send({ t: 'notice', text: bounty ? `${e.name} détruit  +${bounty} cr` : `${e.name} abattu en PvP`, tone: 'good' });
           if (ownerSession) this.system(`${ks.name} a abattu ${e.name}`);
           this.playersDirty = true;

@@ -48,6 +48,8 @@ export class TouchControls {
       <button class="tb boost" data-hold="boost" aria-label="Boost">BOOST</button>
       <button class="tb target" data-tap="target" aria-label="Cible suivante">CIBLE</button>
       <button class="tb stop" data-tap="stop" aria-label="Arrêt">STOP</button>
+      <button class="tb mine" data-hold="mine" aria-label="Rayon de minage">MINER</button>
+      <button class="tb dock" data-tap="dock" aria-label="S'amarrer à la station">S'AMARRER</button>
       <button class="tb roll-l" data-hold="rollLeft" aria-label="Roulis gauche">⟲</button>
       <button class="tb roll-r" data-hold="rollRight" aria-label="Roulis droite">⟳</button>
       <div class="tbar netbar">
@@ -120,6 +122,11 @@ export class TouchControls {
     this.visible = on;
     this.root.classList.toggle('hidden', !on);
     if (!on) this.releaseAll();
+  }
+
+  /** The dock button shows only in a docking zone. */
+  setDockable(on: boolean) {
+    this.root.classList.toggle('dockable', on);
   }
 
   setOnline(online: boolean) {

@@ -145,6 +145,10 @@ interface Pending {
 }
 
 const _lightColor = new THREE.Color();
+const _miningHot = new THREE.Color(6, 4.2, 2);
+const _miningCool = new THREE.Color(1.5, 0.5, 0.1);
+const _miningSpark = new THREE.Color(7, 4, 1.4);
+const _black = new THREE.Color(0, 0, 0);
 const rnd = () => Math.random() * 2 - 1;
 const randDir = (out: THREE.Vector3) => {
   do out.set(rnd(), rnd(), rnd());
@@ -333,6 +337,20 @@ export class Effects {
       this.glow.emit(pos, this.v, color, new THREE.Color(0, 0, 0), 1.2, 0.3, 0.3, 2);
     }
     this.smoke.emit(pos, this.v.set(rnd(), rnd(), rnd()).multiplyScalar(4), new THREE.Color(0.35, 0.3, 0.27), new THREE.Color(0.2, 0.18, 0.16), 4, 18, 1.5, 0.4, 0.35);
+  }
+
+  /**
+   * The mining beam biting into rock: a hot spot, a few sparks thrown back off
+   * the surface (`normal`) and, now and then, a puff of dust.
+   */
+  miningSpark(pos: THREE.Vector3, normal: THREE.Vector3, dust: boolean) {
+    this.glow.emit(pos, this.v.set(0, 0, 0), _miningHot, _miningCool, 6, 3, 0.1);
+    for (let i = 0; i < 2; i++) {
+      randDir(this.d).addScaledVector(normal, 1.4).normalize();
+      this.v.copy(this.d).multiplyScalar(15 + Math.random() * 45);
+      this.glow.emit(pos, this.v, _miningSpark, _black, 1.1, 0.3, 0.3 + Math.random() * 0.3, 1.5);
+    }
+    if (dust) this.smoke.emit(pos, this.v.copy(normal).multiplyScalar(4 + Math.random() * 4), new THREE.Color(0.32, 0.28, 0.24), new THREE.Color(0.16, 0.15, 0.14), 2.5, 12, 1.8, 0.6, 0.3);
   }
 
   /** `light`: the player's own guns light up the hull around the muzzle. */

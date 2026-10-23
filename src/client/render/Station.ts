@@ -140,6 +140,8 @@ export class Station {
   private orbiters: Orbiter[] = [];
   private approaches: Approach[] = [];
   private mouthZ = 300;
+  /** Landing pad where a docked ship is shown, and the bay floor height (station coordinates). */
+  private pad = new THREE.Vector3();
   private _cam = new THREE.Vector3();
 
   constructor(def: StationDef) {
@@ -446,6 +448,7 @@ export class Station {
     const hangarZ = R * 1.08 + HD / 2 - wall + 4;
     hangar.position.set(0, 0, hangarZ);
     this.mouthZ = hangarZ + HD / 2;
+    this.pad.set(-40, -innerH / 2, hangarZ + 10);
     // Docking is decided by the server from the shared zone: keep them together.
     if (Math.abs(def.position.z + this.mouthZ - def.dock.mouth.z) > 2) console.warn('NEBULA: entrée du hangar et zone d’amarrage décalées', this.mouthZ, def.dock.mouth.z);
     this.group.add(hangar);
@@ -571,6 +574,18 @@ export class Station {
     this.group.position.copy(def.position);
   }
 
+  /**
+   * The docked view, in world coordinates: the pilot's ship on the left pad,
+   * nose to the mouth, and a camera inside the bay near the mouth, drifting
+   * slowly. The station screen covers the right of the picture.
+   */
+  dockedView(time: number, ship: THREE.Vector3, cam: THREE.Vector3, target: THREE.Vector3) {
+    const o = this.group.position;
+    ship.copy(this.pad).add(o).setY(o.y + this.pad.y + 4.2);
+    cam.set(this.pad.x + 22 + Math.sin(time * 0.07) * 2, this.pad.y + 11 + Math.sin(time * 0.05), this.pad.z + 32).add(o);
+    target.copy(ship).add(_look.set(19, 1, -4));
+  }
+
   private addBlinker(pos: THREE.Vector3, color: THREE.Color, size: number, rate: number, phase: number, kind: Blinker['kind'], parent: THREE.Object3D = this.group) {
     this.blinkers.push({ glow: this.lights.add(parent, color, size, pos), phase, rate, kind });
   }
@@ -610,6 +625,7 @@ export class Station {
   }
 }
 
+const _look = new THREE.Vector3();
 let _blink: THREE.Texture | null = null;
 function blinkTex() {
   return (_blink ??= makeRadialTexture([

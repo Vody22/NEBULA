@@ -28,6 +28,8 @@ export class InputManager {
   bindings: Record<Action, string>;
   private keys = new Set<string>();
   private mouseDown = false;
+  /** Right mouse button: the mining beam. */
+  private mouseRight = false;
   private pressed = new Set<string>();
 
   constructor(private element: HTMLElement, bindings: Record<Action, string>) {
@@ -43,9 +45,11 @@ export class InputManager {
     window.addEventListener('blur', () => this.releaseAll());
     element.addEventListener('mousedown', (e) => {
       if (e.button === 0 && this.enabled && !this.touchMode) this.mouseDown = true;
+      if (e.button === 2 && this.enabled && !this.touchMode) this.mouseRight = true;
     });
     window.addEventListener('mouseup', (e) => {
       if (e.button === 0) this.mouseDown = false;
+      if (e.button === 2) this.mouseRight = false;
     });
     element.addEventListener('contextmenu', (e) => e.preventDefault());
     window.addEventListener('mousemove', (e) => {
@@ -93,6 +97,7 @@ export class InputManager {
     this.keys.clear();
     this.pressed.clear();
     this.mouseDown = false;
+    this.mouseRight = false;
   }
 
   /** Releases held keys but keeps the mouse (opening the chat must not stop the guns or the stick). */
@@ -150,6 +155,7 @@ export class InputManager {
     const inp = this.input;
     if (!this.enabled) {
       inp.fire = false;
+      inp.mine = false;
       inp.boost = false;
       inp.pitch = inp.yaw = inp.roll = inp.strafeX = inp.strafeY = 0;
       return inp;
@@ -167,6 +173,7 @@ export class InputManager {
     inp.roll = d('rollRight') - d('rollLeft');
     inp.boost = d('boost') > 0 || this.keys.has('ShiftRight');
     inp.fire = this.mouseDown || d('fire') > 0;
+    inp.mine = this.mouseRight || d('mine') > 0;
 
     // Virtual joystick with a small dead zone and a response curve.
     const dz = 0.06;

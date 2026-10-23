@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { interceptPoint } from '../../shared/math';
-import type { PlayerInfo, PlayerStats } from '../../shared/net/protocol';
+import { cargoTotal } from '../../shared/economy/items';
+import type { PilotState, PlayerInfo, PlayerStats } from '../../shared/net/protocol';
 import { SHIP_CLASSES } from '../../shared/sim/shipClasses';
 import type { ShipInput } from '../../shared/sim/types';
 import { isHostile } from '../hostility';
@@ -30,6 +31,34 @@ export interface HudFrame {
   playerCount: number;
   maxPlayers: number;
   myName: string;
+  /** Credits, hold and docking state from the server (null before the first update). */
+  pilot: PilotState | null;
+  /** The nearest hangar, while approaching it. */
+  dock: DockGuide | null;
+  /** What the mining beam is doing or would do. */
+  mining: MiningInfo | null;
+}
+
+export interface DockGuide {
+  name: string;
+  mouth: THREE.Vector3;
+  distance: number;
+  /** Inside the docking sphere. */
+  inZone: boolean;
+  speed: number;
+  maxSpeed: number;
+}
+
+export interface MiningInfo {
+  /** 'active': the server confirms ore is coming; 'aim': a rock in range, beam off; others: why nothing happens. */
+  state: 'active' | 'aim' | 'fire' | 'speed' | 'none' | 'full';
+  ore: string;
+  richness: string;
+  distance: number;
+  /** Units per second on this rock. */
+  rate: number;
+  /** Estimated progress toward the next unit, 0..1. */
+  progress: number;
 }
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
@@ -85,6 +114,12 @@ export class Hud {
   private hitMarkerTimer = 0;
   private killTimer = 0;
   private killEl: HTMLDivElement;
+  private dockMarker: HTMLDivElement;
+  private prompt: HTMLDivElement;
+  private miningEl: HTMLDivElement;
+  private holdTxt: HTMLSpanElement;
+  private holdBar: HTMLElement;
+  private keys = { dock: 'G', mine: 'R' };
   private damage = 0;
   private shieldFx = 0;
   private cache = new Map<HTMLElement, string>();
@@ -112,6 +147,7 @@ export class Hud {
 
     this.markerLayer = el('div', '', this.root) as HTMLDivElement;
     this.stationMarker = this.makeMarker('station');
+    this.dockMarker = this.makeMarker('dock');
 
     this.crosshair = el('div', 'abs crosshair', this.root, '<div class="ring"></div><i class="t u"></i><i class="t d"></i><i class="t l"></i><i class="t r"></i><i class="dot"></i>') as HTMLDivElement;
     this.hitMarker = el('div', 'abs hitmarker', this.root, '<i></i><i></i><i></i><i></i>') as HTMLDivElement;
@@ -122,6 +158,9 @@ export class Hud {
     this.bracket = el('div', 'abs bracket', this.root, '<i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>') as HTMLDivElement;
     this.bracketInfo = el('div', 'info', this.bracket) as HTMLDivElement;
     this.arrow = el('div', 'abs arrow', this.root) as HTMLDivElement;
+    this.miningEl = el('div', 'abs mining', this.root) as HTMLDivElement;
+    this.prompt = el('div', 'prompt', this.root) as HTMLDivElement;
+    this.prompt.setAttribute('role', 'status');
 
     const zone = el('div', 'abs', this.root, '<div class="label">Secteur</div><div class="name" id="zoneName">AURORA</div><div class="help"><kbd>Échap</kbd> pause et aide</div>') as HTMLDivElement;
     zone.id = 'zone';
@@ -169,6 +208,11 @@ export class Hud {
     el('div', 'head', en, '<span class="label">Énergie</span>');
     const eb = el('div', 'bar e', en);
     this.energyBar = el('i', '', eb);
+    const ho = el('div', 'stat hold', status);
+    const hh = el('div', 'head', ho, '<span class="label">Soute</span>');
+    this.holdTxt = el('span', '', hh) as HTMLSpanElement;
+    const hb = el('div', 'bar o', ho);
+    this.holdBar = el('i', '', hb);
 
     const rw = el('div', 'panel', this.root) as HTMLDivElement;
     rw.id = 'radarWrap';
@@ -207,7 +251,7 @@ export class Hud {
     if (z) z.textContent = name.toUpperCase();
   }
 
-  private makeMarker(kind: 'hostile' | 'friend' | 'station' | 'player') {
+  private makeMarker(kind: 'hostile' | 'friend' | 'station' | 'player' | 'dock') {
     const m = el('div', `abs marker ${kind}`, this.markerLayer, '<div class="shape"></div><div class="lbl"></div>') as HTMLDivElement;
     return m;
   }
@@ -234,7 +278,12 @@ export class Hud {
   }
 
   setBindings(_b: Record<Action, string>) {
-    /* reserved: on-screen key hints */
+    /* key names come with the layout: see setKeyLabels */
+  }
+
+  /** Key names for the on-screen hints (they follow the player's bindings and layout). */
+  setKeyLabels(keys: { dock: string; mine: string }) {
+    this.keys = keys;
   }
 
   setPaused(p: boolean) {
@@ -312,8 +361,10 @@ export class Hud {
       `<div><div class="label">Crédits</div><div class="v">${f.stats.credits.toLocaleString('fr-FR')}</div></div>` +
       `<div><div class="label">Pertes</div><div class="v">${f.stats.deaths}</div></div>`);
 
-    this.death.classList.toggle('show', !me);
-    if (!me) {
+    const docked = !!f.pilot?.docked;
+    this.root.classList.toggle('docked', docked);
+    this.death.classList.toggle('show', !me && !docked);
+    if (!me && !docked) {
       this.deathTimer.textContent = `Réapparition à la station dans ${Math.ceil(f.respawnIn)} s`;
     }
 
@@ -342,7 +393,8 @@ export class Hud {
       this.cursorLine.setAttribute('y1', '0');
       this.cursorLine.setAttribute('y2', '0');
       for (const m of this.markers.values()) m.style.display = 'none';
-      this.stationMarker.style.display = 'none';
+      this.stationMarker.style.display = this.dockMarker.style.display = this.miningEl.style.display = 'none';
+      this.setPrompt('');
       return;
     }
     const cls = SHIP_CLASSES[me.snap.classId];
@@ -392,6 +444,12 @@ export class Hud {
     this.shieldTxt.textContent = `${Math.round(sFrac * 100)}%`;
     this.hullTxt.textContent = `${hFrac < 0.3 ? '⚠ CRITIQUE ' : ''}${Math.round(hFrac * 100)}%`;
     this.energyBar.style.transform = `scaleX(${me.snap.energy / cls.energy})`;
+    if (f.pilot) {
+      const used = cargoTotal(f.pilot.cargo);
+      this.holdTxt.textContent = `${used} / ${f.pilot.capacity}`;
+      this.holdTxt.classList.toggle('full', used >= f.pilot.capacity);
+      this.holdBar.style.transform = `scaleX(${f.pilot.capacity ? used / f.pilot.capacity : 0})`;
+    }
 
     // Ship markers
     const seen = new Set<number>();
@@ -434,9 +492,13 @@ export class Hud {
     // Station marker
     const sd = f.stationPos.distanceTo(me.position);
     this.project(f.stationPos, f.camera, pt);
-    this.stationMarker.style.display = pt.front ? '' : 'none';
+    // Near a hangar the docking marker takes over.
+    this.stationMarker.style.display = pt.front && !(f.dock && f.dock.distance < 3000) ? '' : 'none';
     this.stationMarker.style.transform = `translate(${pt.x}px, ${pt.y}px)`;
     (this.stationMarker.lastChild as HTMLElement).textContent = `${f.stationName} · ${(sd / 1000).toFixed(1)} km`;
+
+    this.dockGuide(f, pt);
+    this.miningReadout(f, pt);
 
     // Target
     const target = f.targetId !== null ? f.ships.get(f.targetId) : undefined;
@@ -485,6 +547,62 @@ export class Hud {
     }
 
     this.drawRadar(f, me);
+  }
+
+  private setPrompt(html: string, tone = '') {
+    this.html(this.prompt, html);
+    this.prompt.className = `prompt${html ? ' show' : ''}${tone ? ' ' + tone : ''}`;
+  }
+
+  /** Hangar mouth marker from 3 km, and what to do once close. */
+  private dockGuide(f: HudFrame, pt: { x: number; y: number; front: boolean }) {
+    const g = f.dock;
+    this.dockMarker.style.display = 'none';
+    if (!g || g.distance > 3000) {
+      this.setPrompt('');
+      return;
+    }
+    this.project(g.mouth, f.camera, pt);
+    if (pt.front) {
+      this.dockMarker.style.display = '';
+      this.dockMarker.style.transform = `translate(${pt.x}px, ${pt.y}px)`;
+      (this.dockMarker.lastChild as HTMLElement).textContent = `${g.name.replace(/^Station\s+/, '')} · amarrage · ${g.distance < 1000 ? g.distance.toFixed(0) + ' m' : (g.distance / 1000).toFixed(1) + ' km'}`;
+    }
+    const k = `<kbd>${esc(this.keys.dock)}</kbd>`;
+    if (g.inZone && g.speed <= g.maxSpeed) this.setPrompt(`<b>Zone d'amarrage</b> ${k} s'amarrer à ${esc(g.name)}`, 'good');
+    else if (g.inZone) this.setPrompt(`<b>Ralentissez</b> ${g.speed.toFixed(0)} m/s, maximum ${g.maxSpeed} pour s'amarrer`, 'warn');
+    else if (g.distance < 900) this.setPrompt(`Entrez lentement dans le hangar pour vous amarrer · ${g.distance.toFixed(0)} m`);
+    else this.setPrompt('');
+  }
+
+  /** Under the reticle: the rock under the beam, its ore and why the beam does nothing. */
+  private miningReadout(f: HudFrame, pt: { x: number; y: number; front: boolean }) {
+    const m = f.mining;
+    if (!m || !f.me) {
+      this.miningEl.style.display = 'none';
+      return;
+    }
+    // Docking advice wins over the mining hint.
+    if (m.state === 'aim' && this.prompt.classList.contains('show')) {
+      this.miningEl.style.display = 'none';
+      return;
+    }
+    _q.copy(f.me.rotation);
+    this.project(_v.set(0, 0, -600).applyQuaternion(_q).add(f.me.position), f.camera, pt);
+    this.miningEl.style.display = '';
+    this.miningEl.style.transform = `translate(${pt.x + 34}px, ${pt.y + 26}px)`;
+    const rock = m.ore ? `<b>${esc(m.ore.toUpperCase())}</b> · ${m.richness} · ${m.distance.toFixed(0)} m` : '';
+    const k = `<kbd>${esc(this.keys.mine)}</kbd>`;
+    const line = {
+      active: `Extraction · ${m.rate.toFixed(1).replace('.', ',')} u/s<div class="bar o"><i style="transform:scaleX(${m.progress.toFixed(2)})"></i></div>`,
+      aim: `${k} ou clic droit : miner`,
+      fire: '<span class="w">Rayon coupé pendant le tir</span>',
+      speed: '<span class="w">Trop rapide pour miner (60 m/s max)</span>',
+      none: '<span class="w">Aucun astéroïde à moins de 300 m</span>',
+      full: '<span class="w">Soute pleine : vendez à une station</span>',
+    }[m.state];
+    this.html(this.miningEl, `${rock}<div>${line}</div>`);
+    this.miningEl.classList.toggle('on', m.state === 'active');
   }
 
   private drawRadar(f: HudFrame, me: InterpolatedShip) {

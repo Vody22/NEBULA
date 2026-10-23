@@ -28,7 +28,9 @@ export type Action =
   | 'chat'
   | 'chatToggle'
   | 'pvp'
-  | 'scoreboard';
+  | 'scoreboard'
+  | 'dock'
+  | 'mine';
 
 export type KeyboardLayout = 'auto' | 'azerty' | 'qwerty';
 
@@ -72,6 +74,8 @@ export const DEFAULT_BINDINGS: Record<Action, string> = {
   chatToggle: 'KeyH',
   pvp: 'KeyP',
   scoreboard: 'Tab',
+  dock: 'KeyG',
+  mine: 'KeyR',
 };
 
 export const ACTION_LABELS: Record<Action, string> = {
@@ -98,7 +102,12 @@ export const ACTION_LABELS: Record<Action, string> = {
   chatToggle: 'Afficher / masquer le chat',
   pvp: 'PvP on/off (en ligne)',
   scoreboard: 'Liste des pilotes (maintenir)',
+  dock: "S'amarrer / décoller",
+  mine: 'Rayon de minage (maintenir, ou clic droit)',
 };
+
+/** Keys offered to an action added in an update whose default key the player already gave to another action. */
+const SPARE_KEYS = ['KeyG', 'KeyR', 'KeyY', 'KeyU', 'KeyI', 'KeyO', 'KeyJ', 'KeyK', 'KeyL', 'KeyB', 'KeyN', 'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5'];
 
 export const DEFAULT_SETTINGS: Settings = {
   version: 1,
@@ -122,11 +131,19 @@ export function loadSettings(storage: Pick<Storage, 'getItem'> | null = safeStor
     if (!raw) return base;
     const s = JSON.parse(raw) as Partial<Settings>;
     const bindings = { ...DEFAULT_BINDINGS };
+    const missing: Action[] = [];
     if (s.bindings && typeof s.bindings === 'object') {
       for (const a of Object.keys(DEFAULT_BINDINGS) as Action[]) {
         const v = (s.bindings as Record<string, unknown>)[a];
         if (typeof v === 'string' && v.length < 32) bindings[a] = v;
+        else missing.push(a);
       }
+    }
+    // Actions added since the settings were saved take their default key,
+    // unless the player already uses it: then the first spare key.
+    for (const a of missing) {
+      const used = (code: string) => (Object.keys(bindings) as Action[]).some((o) => o !== a && bindings[o] === code);
+      if (used(bindings[a])) bindings[a] = SPARE_KEYS.find((k) => !used(k)) ?? bindings[a];
     }
     return {
       version: 1,

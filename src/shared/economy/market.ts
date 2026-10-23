@@ -28,6 +28,13 @@ export const PRICE_MAX = 1.6;
 export const SPREAD = 0.08;
 /** A station stops buying an item past this many times its reference stock. */
 export const STOCK_CAP = 4;
+/** Credits per hull point repaired at a station. */
+export const REPAIR_COST = 2;
+
+/** Price of repairing `points` of hull, in whole credits. */
+export function repairCost(points: number): number {
+  return Math.ceil(points * REPAIR_COST - 1e-9);
+}
 
 /** Price multiplier for a stock level. */
 export function priceFactor(stock: number, ref: number): number {

@@ -38,6 +38,18 @@ describe('settings', () => {
     expect(new Set(Object.values(b)).size).toBe(Object.values(b).length);
   });
 
+  it('gives actions added by an update a key nobody uses', () => {
+    // Saved by v0.2 (no dock / mine), with fire moved to G.
+    const old: Record<string, string> = { ...DEFAULT_BINDINGS, fire: 'KeyG' };
+    delete old.dock;
+    delete old.mine;
+    const b = loadSettings({ getItem: () => JSON.stringify({ bindings: old }) }).bindings;
+    expect(b.fire).toBe('KeyG');
+    expect(b.mine).toBe('KeyR');
+    expect(b.dock).not.toBe('KeyG');
+    expect(new Set(Object.values(b)).size).toBe(Object.values(b).length);
+  });
+
   it('labels physical keys for AZERTY and QWERTY', () => {
     expect(keyLabel('KeyW', 'azerty')).toBe('Z');
     expect(keyLabel('KeyA', 'azerty')).toBe('Q');
