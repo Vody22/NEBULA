@@ -29,7 +29,7 @@ Mise en ligne : voir [docs/DEPLOIEMENT.md](docs/DEPLOIEMENT.md). Le client reste
 - **Synchronisation** : positions, rotations, vitesses, poussée et boost, tirs, boucliers, coque, dégâts, destructions, réapparitions et PNJ. Tout est calculé par le serveur.
   - Le vaisseau du joueur est prédit localement, puis réconcilié avec le serveur.
   - Les autres vaisseaux sont interpolés.
-- **Coopération** : les joueurs combattent ensemble les mêmes pirates. Les vagues grossissent avec le nombre de pilotes.
+- **Coopération** : les joueurs combattent ensemble les mêmes pirates. Les raids pirates grossissent avec le nombre de pilotes.
 - **PvP volontaire** (`P`) : deux pilotes ne peuvent s'affronter que si tous deux l'ont activé. Une élimination PvP ne rapporte pas de crédits.
 - **Chat du secteur** :
   - `Entrée` pour écrire, `H` pour masquer ou afficher.
@@ -44,7 +44,7 @@ Mise en ligne : voir [docs/DEPLOIEMENT.md](docs/DEPLOIEMENT.md). Le client reste
 - **Station Aurora-7** : un kilomètre d'envergure, anneau d'habitation rotatif, épine centrale, hangar d'appontage balisé, panneaux solaires, balises clignotantes, navettes en circulation.
 - **Vaisseaux** : Falcon Mk.II (joueur), Warden (escorte alliée), Raider et Marauder (pirates), entièrement modélisés en procédural avec réacteurs animés, feux de navigation et bulle de bouclier qui réagit aux impacts.
 - **Pilotage** : physique newtonienne avec assistance de vol (dérive et inertie visibles), mode newtonien pur (`Z`), boost qui consomme l'énergie, translations latérales et verticales, roulis, joystick virtuel à la souris.
-- **Combat** : lasers balistiques, boucliers qui se régénèrent après un délai, coque, collisions, indicateur de tir anticipé, verrouillage de cible, vagues de pirates de plus en plus dures, ailiers IA, réapparition à la station, primes en crédits.
+- **Combat** : lasers balistiques, boucliers qui se régénèrent après un délai, coque, collisions, indicateur de tir anticipé, verrouillage de cible, raids pirates espacés par des périodes de calme, ailiers IA, réapparition à la station, primes en crédits.
 - **IA** : poursuite avec visée anticipée imparfaite, manœuvres d'évitement, choix de cible, évitement des obstacles.
 - **Effets** : bloom HDR, explosions (boule de feu, étincelles, onde de choc, débris, fumée), traînées, poussière spatiale qui donne la sensation de vitesse, tremblements de caméra, aberration chromatique.
 - **HUD** : vitesse, poussée, assistance, boucliers, coque, énergie, radar 3D, marqueurs, cible avec barres de vie, flèche hors écran, notifications.
@@ -102,7 +102,7 @@ src/
   shared/          Code commun client + futur serveur (aucun DOM, aucun rendu)
     sim/           World (simulation autoritaire à 60 Hz), physique, combat, IA, zone
     net/protocol   Messages client/serveur, snapshots, validation des entrées
-  server/          GameServer : sessions, IA, vagues, réapparitions, chat, PvP (indépendant du transport)
+  server/          GameServer : sessions, IA, raids pirates, réapparitions, chat, PvP (indépendant du transport)
     node/          Serveur Node.js : HTTP + WebSocket /ws, configuration par variables d'environnement
   client/
     net/           Transport (frontière réseau), LocalTransport (solo), WebSocketTransport (en ligne), prédiction, interpolation
@@ -124,7 +124,7 @@ Principes, détaillés dans [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) :
 
 ```bash
 npm run typecheck   # TypeScript strict
-npm test            # tests : physique, combat, énergie, vagues, réglages, serveur, réseau, prédiction
+npm test            # tests : physique, combat, énergie, raids, réglages, serveur, réseau, prédiction
 npm run build       # build de production
 npm run preview &   # puis :
 npm run smoke       # lance le jeu dans Chromium headless, pilote, tire et fait des captures

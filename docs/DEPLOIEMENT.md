@@ -52,7 +52,7 @@ Voir aussi [`.env.example`](../.env.example).
 
 ## Capacité
 
-Un serveur gère un secteur. Le test de charge (`node scripts/load-test.mjs 30 30`) fait voler et tirer 30 pilotes robots, avec les vagues de pirates.
+Un serveur gère un secteur. Le test de charge (`node scripts/load-test.mjs 30 30`) fait voler et tirer 30 pilotes robots, avec les raids pirates.
 
 Résultats mesurés le 22/10/2026, sur la machine de développement :
 

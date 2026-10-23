@@ -142,10 +142,10 @@ export class Menu {
       const start = this.mode === 'start';
       html = `
         <h1 id="menuTitle">${start ? 'NEBULA <span>FRONTIER</span>' : 'PAUSE'}</h1>
-        <p class="sub">${start ? 'Secteur Aurora · v0.2 multijoueur' : this.online ? 'En ligne : le secteur continue, votre vaisseau coupe les gaz' : 'La simulation est en pause'}</p>
+        <p class="sub">${start ? 'MMO spatial · Secteur Aurora · v0.3' : this.online ? 'En ligne : le secteur continue, votre vaisseau coupe les gaz' : 'La simulation est en pause'}</p>
         ${
           this.touchOnly
-            ? `<p class="touch-note"><strong>Commandes tactiles.</strong> Pouce gauche : glissez pour piloter. Pouce droit : FEU et BOOST. Curseur GAZ pour la poussée. Jouez en mode paysage.</p>`
+            ? `<p class="touch-note"><strong>Commandes tactiles.</strong> Pouce gauche : glissez pour piloter. Pouce droit : FEU, BOOST et MINER. Curseur GAZ pour la poussée. Jouez en mode paysage.</p>`
             : ''
         }
         ${
@@ -174,10 +174,11 @@ export class Menu {
                 <div><span class="k">Souris</span> piloter (le réticule blanc indique la direction du virage)</div>
                 <div><span class="k">Clic gauche</span> ou ${this.kbd(b.fire)} tirer</div>
                 <div>${this.kbd(b.throttleUp)} ${this.kbd(b.throttleDown)} poussée · ${this.kbd(b.boost)} boost · ${this.kbd(b.stop)} arrêt</div>
+                <div>${this.kbd(b.mine)} ou <span class="k">Clic droit</span> miner · ${this.kbd(b.dock)} s'amarrer à une station</div>
                 <div>${this.kbd(b.target)} cible suivante · <kbd>Échap</kbd> pause et aide</div>
                 <div>${this.kbd(b.chat)} chat · ${this.kbd(b.pvp)} PvP · ${this.kbd(b.scoreboard)} pilotes (en ligne)</div>
               </div>
-              <p class="note">Défendez la station Aurora-7 contre les vagues de pirates, seul ou avec d'autres pilotes.</p>`
+              <p class="note">Minez, commercez entre les stations et repoussez les raids pirates, seul ou avec les autres pilotes du secteur.</p>`
             : `<p class="note">Entrée ou clic sur « Reprendre » pour revenir en vol. La souris sera capturée de nouveau.</p>
                <p class="diag"></p>`
         }`;

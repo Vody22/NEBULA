@@ -20,14 +20,14 @@ Conventions : mètres, secondes, axe avant = −Z, haut = +Y, droite = +X.
 
 ## Serveur (`src/server/GameServer.ts`)
 
-Possède le `World`, les sessions joueurs, les pilotes IA, le directeur de vagues et les réapparitions. Il ne connaît que l'interface `ClientLink { send(msg) }`, ce qui le rend indépendant du transport : la même classe tourne dans la page en solo (`LocalTransport`) et dans Node en ligne.
+Possède le `World`, les sessions joueurs, les pilotes IA, le directeur des raids pirates et les réapparitions. Il ne connaît que l'interface `ClientLink { send(msg) }`, ce qui le rend indépendant du transport : la même classe tourne dans la page en solo (`LocalTransport`) et dans Node en ligne.
 
 - **Sessions** : identifiant `p<n>` et jeton secret. Si la connexion tombe, le vaisseau coupe ses moteurs ; la session attend `reconnectGrace` secondes. Avec le même jeton, le joueur retrouve son vaisseau et son score. Sinon, la session et le vaisseau disparaissent, sans vaisseau fantôme.
 - **Entrées** : file par joueur, avec une entrée appliquée par tick. Cette régularité permet au client de rejouer exactement les mêmes pas. Les entrées en retard, dupliquées ou en excès sont ignorées.
 - **Règles** : `canDamage` (types partagés) dit qui peut toucher qui. Les PNJ de factions différentes se combattent. Deux joueurs ne se blessent que si tous deux ont activé le PvP. Le PvP ne se coupe ni pendant 15 s après un échange de tirs, ni moins de 5 s après le dernier changement. Une élimination PvP ne rapporte pas de crédits, pour éviter qu'on « farme » entre amis.
 - **Chat** : historique des 30 derniers messages, 5 messages par 10 s, répétitions ignorées. Les connexions et déconnexions s'affichent comme messages système.
 - **Économie (v0.3)** : chaque session a des crédits (500 au départ) et une soute. Le serveur tient un marché par station (`src/shared/economy`). Amarrage, commerce, réparation et minage sont décidés par lui seul : à quai, le vaisseau quitte le `World` et son état est gardé dans la session. Le minage est une commande tenue (`ShipInput.mine`) ; le `World` accumule la progression sur l'astéroïde visé et le serveur convertit les unités entières en cargaison. Détails : [V03_ECONOMIE.md](V03_ECONOMIE.md).
-- **Vagues** : leur taille augmente avec le nombre de pilotes connectés, dans une limite fixée. Le secteur est remis à zéro quand le dernier pilote part.
+- **Raids pirates** : après un raid repoussé, le secteur reste calme 45 à 90 s. La taille d'un raid dépend surtout du nombre de pilotes connectés, dans une limite fixée. Le secteur est remis à zéro quand le dernier pilote part.
 
 ## Serveur Node (`src/server/node`)
 

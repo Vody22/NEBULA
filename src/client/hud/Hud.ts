@@ -18,7 +18,6 @@ export interface HudFrame {
   cursor: { x: number; y: number };
   targetId: number | null;
   stats: PlayerStats;
-  wave: number;
   respawnIn: number;
   /** Every station of the sector, for markers and the radar. */
   stations: { position: THREE.Vector3; name: string }[];
@@ -64,6 +63,21 @@ export interface MiningInfo {
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
 const SEGMENTS = 20;
+/** Where throttle 0 sits on the arc: reverse goes down to -0.4, forward up to 1. */
+const THROTTLE_ZERO = 0.4 / 1.4;
+
+/** Point on a circle, angle in degrees counter-clockwise from +x (SVG y points down). */
+function polar(cx: number, cy: number, r: number, deg: number) {
+  const a = (deg * Math.PI) / 180;
+  return { x: cx + r * Math.cos(a), y: cy - r * Math.sin(a) };
+}
+
+/** Clockwise SVG arc from angle a0 down to a1 (degrees, a0 > a1). */
+function describeArc(cx: number, cy: number, r: number, a0: number, a1: number) {
+  const p = polar(cx, cy, r, a0);
+  const q = polar(cx, cy, r, a1);
+  return `M${p.x.toFixed(2)} ${p.y.toFixed(2)} A${r} ${r} 0 ${a0 - a1 > 180 ? 1 : 0} 1 ${q.x.toFixed(2)} ${q.y.toFixed(2)}`;
+}
 const _v = new THREE.Vector3();
 const _w = new THREE.Vector3();
 const _q = new THREE.Quaternion();
@@ -89,14 +103,17 @@ export class Hud {
   private stationMarkers: HTMLDivElement[] = [];
   private markerLayer: HTMLDivElement;
   private speedEl: HTMLSpanElement;
-  private throttleFill: HTMLDivElement;
-  private throttleBox: HTMLDivElement;
+  private throttleFill: SVGPathElement;
+  private gauge: HTMLDivElement;
   private chips: HTMLDivElement;
   private shieldSeg: HTMLDivElement;
   private hullSeg: HTMLDivElement;
   private shieldTxt: HTMLSpanElement;
   private hullTxt: HTMLSpanElement;
   private energyBar: HTMLElement;
+  private hullStat: HTMLDivElement;
+  private creditsEl: HTMLSpanElement;
+  private holdBox: HTMLDivElement;
   private radar: HTMLCanvasElement;
   private radarCtx: CanvasRenderingContext2D;
   private topbar: HTMLDivElement;
@@ -161,30 +178,40 @@ export class Hud {
     this.prompt = el('div', 'prompt', this.root) as HTMLDivElement;
     this.prompt.setAttribute('role', 'status');
 
-    const zone = el('div', 'abs', this.root, '<div class="label">Secteur</div><div class="name" id="zoneName">AURORA</div><div class="help"><kbd>Échap</kbd> pause et aide</div>') as HTMLDivElement;
+    const zone = el('div', 'abs', this.root, '<div class="name" id="zoneName">SECTEUR AURORA</div><div class="help"><kbd>Échap</kbd> menu et aide</div>') as HTMLDivElement;
     zone.id = 'zone';
     this.netEl = el('div', 'net', zone) as HTMLDivElement;
     this.netEl.id = 'netStatus';
     this.netEl.setAttribute('role', 'status');
     this.fpsEl = el('div', 'abs', this.root) as HTMLDivElement;
     this.fpsEl.id = 'fps';
-    this.topbar = el('div', 'panel', this.root) as HTMLDivElement;
+    // Wallet: credits and hold, top right.
+    this.topbar = el('div', 'panel', this.root,
+      '<div class="w cr"><span class="v"></span><span class="u">cr</span></div><i class="sep"></i>' +
+      '<div class="w hold"><span class="label">Soute</span><span class="v"></span><div class="bar o"><i></i></div></div>') as HTMLDivElement;
     this.topbar.id = 'topbar';
+    this.topbar.setAttribute('aria-label', 'Crédits et soute');
+    this.creditsEl = this.topbar.querySelector('.cr .v')!;
+    this.holdBox = this.topbar.querySelector('.hold')!;
+    this.holdTxt = this.holdBox.querySelector('.v')!;
+    this.holdBar = this.holdBox.querySelector('.bar i')!;
 
+    // Flight: a throttle arc (reverse below the white tick, boost in violet) around the speed.
     const flight = el('div', 'panel', this.root) as HTMLDivElement;
     flight.id = 'flight';
-    const row = el('div', 'row', flight);
-    this.throttleBox = el('div', '', row) as HTMLDivElement;
-    this.throttleBox.id = 'throttle';
-    this.throttleFill = el('div', 'fill', this.throttleBox) as HTMLDivElement;
-    const zero = el('div', 'zero', this.throttleBox);
-    zero.style.bottom = `${(0.4 / 1.4) * 100}%`;
-    const sp = el('div', '', row);
-    el('div', 'label', sp, 'Vitesse');
-    const big = el('div', 'big', sp);
-    this.speedEl = el('span', '', big) as HTMLSpanElement;
-    el('span', 'unit', big, 'm/s');
-    this.chips = el('div', 'chips', sp) as HTMLDivElement;
+    this.gauge = el('div', 'gauge', flight) as HTMLDivElement;
+    const arc = describeArc(100, 96, 84, 210, -30);
+    const zt = polar(100, 96, 84, 210 - THROTTLE_ZERO * 240);
+    const zi = polar(100, 96, 72, 210 - THROTTLE_ZERO * 240);
+    this.gauge.innerHTML =
+      `<svg viewBox="0 0 200 140" preserveAspectRatio="xMidYMid meet" aria-hidden="true">` +
+      `<defs><linearGradient id="thrGrad" x1="0" x2="1"><stop offset="0" stop-color="#3aa8d8"/><stop offset="1" stop-color="#9ff0ff"/></linearGradient></defs>` +
+      `<path class="track" d="${arc}" pathLength="100"/><path class="fill" d="${arc}" pathLength="100" stroke-dasharray="0 100"/>` +
+      `<line class="zero" x1="${zi.x.toFixed(1)}" y1="${zi.y.toFixed(1)}" x2="${zt.x.toFixed(1)}" y2="${zt.y.toFixed(1)}"/></svg>` +
+      `<div class="read"><div class="big"><span></span><span class="unit">m/s</span></div><span class="label">Vitesse</span></div>`;
+    this.throttleFill = this.gauge.querySelector('.fill')!;
+    this.speedEl = this.gauge.querySelector('.big span')!;
+    this.chips = el('div', 'chips', flight) as HTMLDivElement;
 
     const status = el('div', 'panel', this.root) as HTMLDivElement;
     status.id = 'status';
@@ -203,15 +230,11 @@ export class Hud {
     const hu = mk('Coque', 'h');
     this.hullTxt = hu.txt;
     this.hullSeg = hu.seg;
+    this.hullStat = hu.seg.parentElement as HTMLDivElement;
     const en = el('div', 'stat', status);
     el('div', 'head', en, '<span class="label">Énergie</span>');
     const eb = el('div', 'bar e', en);
     this.energyBar = el('i', '', eb);
-    const ho = el('div', 'stat hold', status);
-    const hh = el('div', 'head', ho, '<span class="label">Soute</span>');
-    this.holdTxt = el('span', '', hh) as HTMLSpanElement;
-    const hb = el('div', 'bar o', ho);
-    this.holdBar = el('i', '', hb);
 
     const rw = el('div', 'panel', this.root) as HTMLDivElement;
     rw.id = 'radarWrap';
@@ -309,11 +332,12 @@ export class Hud {
   }
 
   /** Pilots list (held Tab). */
-  showScoreboard(show: boolean, list: PlayerInfo[], myName: string, online: boolean) {
+  showScoreboard(show: boolean, list: PlayerInfo[], myName: string, online: boolean, stats?: PlayerStats) {
     this.board.classList.toggle('hidden', !show);
     if (!show) return;
+    const mine = stats ? `<p class="mine">Vos combats : ${stats.kills} élimination${stats.kills > 1 ? 's' : ''} · ${stats.deaths} perte${stats.deaths > 1 ? 's' : ''}</p>` : '';
     if (!online) {
-      this.html(this.board, '<h3>Pilotes</h3><p>Mode solo : aucun autre pilote.</p>');
+      this.html(this.board, `<h3>Pilotes</h3><p>Mode solo : aucun autre pilote.</p>${mine}`);
       return;
     }
     const rows = [...list]
@@ -326,7 +350,7 @@ export class Hud {
       .join('');
     this.html(this.board,
       `<h3>Pilotes du secteur · ${list.filter((p) => p.online).length}</h3>` +
-      `<table><thead><tr><th>Pilote</th><th>Élim.</th><th>Pertes</th><th>Ping</th><th>PvP</th><th>État</th></tr></thead><tbody>${rows}</tbody></table>`);
+      `<table><thead><tr><th>Pilote</th><th>Élim.</th><th>Pertes</th><th>Ping</th><th>PvP</th><th>État</th></tr></thead><tbody>${rows}</tbody></table>${mine}`);
   }
 
   private netLine(f: HudFrame) {
@@ -354,11 +378,13 @@ export class Hud {
     this.html(this.fpsEl, `${f.fps.toFixed(0)} IPS · ${f.net}`);
     this.html(this.netEl, this.netLine(f));
     this.netEl.classList.toggle('warn', f.status.state !== 'online' && f.status.state !== 'local');
-    this.html(this.topbar,
-      `<div><div class="label">Vague</div><div class="v">${f.wave}</div></div>` +
-      `<div><div class="label">Éliminations</div><div class="v">${f.stats.kills}</div></div>` +
-      `<div><div class="label">Crédits</div><div class="v">${f.stats.credits.toLocaleString('fr-FR')}</div></div>` +
-      `<div><div class="label">Pertes</div><div class="v">${f.stats.deaths}</div></div>`);
+    this.creditsEl.textContent = (f.pilot?.credits ?? f.stats.credits).toLocaleString('fr-FR');
+    if (f.pilot) {
+      const used = cargoTotal(f.pilot.cargo);
+      this.holdTxt.textContent = `${used} / ${f.pilot.capacity}`;
+      this.holdBox.classList.toggle('full', used >= f.pilot.capacity);
+      this.holdBar.style.transform = `scaleX(${f.pilot.capacity ? used / f.pilot.capacity : 0})`;
+    }
 
     const docked = !!f.pilot?.docked;
     this.root.classList.toggle('docked', docked);
@@ -417,9 +443,14 @@ export class Hud {
     // Flight panel
     const speed = me.velocity.length();
     this.speedEl.textContent = speed.toFixed(0);
-    const thr = (f.input.throttle + 0.4) / 1.4;
-    this.throttleFill.style.height = `${(me.snap.boosting ? 1 : thr) * 100}%`;
-    this.throttleBox.classList.toggle('boost', me.snap.boosting);
+    // Forward throttle fills from the zero tick upward, reverse fills back down from it.
+    const t = me.snap.boosting ? 1 : f.input.throttle;
+    const a = THROTTLE_ZERO * 100;
+    const from = t >= 0 ? a : a + t / 0.4 * a;
+    const len = t >= 0 ? t * (100 - a) : a - from;
+    this.throttleFill.setAttribute('stroke-dasharray', `0 ${from.toFixed(2)} ${len.toFixed(2)} 100`);
+    this.throttleFill.classList.toggle('reverse', t < 0);
+    this.gauge.classList.toggle('boost', me.snap.boosting);
     this.html(this.chips,
       `<span class="chip ${f.input.flightAssist ? 'on' : 'off'}">${f.input.flightAssist ? 'ASSIST. VOL' : 'NEWTONIEN'}</span>` +
       (me.snap.boosting ? '<span class="chip boost">BOOST</span>' : '') +
@@ -441,15 +472,10 @@ export class Hud {
     segs(this.shieldSeg, sFrac);
     segs(this.hullSeg, hFrac);
     this.hullSeg.classList.toggle('crit', hFrac < 0.3);
+    this.hullStat.classList.toggle('crit', hFrac < 0.3);
     this.shieldTxt.textContent = `${Math.round(sFrac * 100)}%`;
     this.hullTxt.textContent = `${hFrac < 0.3 ? '⚠ CRITIQUE ' : ''}${Math.round(hFrac * 100)}%`;
     this.energyBar.style.transform = `scaleX(${me.snap.energy / cls.energy})`;
-    if (f.pilot) {
-      const used = cargoTotal(f.pilot.cargo);
-      this.holdTxt.textContent = `${used} / ${f.pilot.capacity}`;
-      this.holdTxt.classList.toggle('full', used >= f.pilot.capacity);
-      this.holdBar.style.transform = `scaleX(${f.pilot.capacity ? used / f.pilot.capacity : 0})`;
-    }
 
     // Ship markers
     const seen = new Set<number>();
@@ -619,22 +645,41 @@ export class Hud {
     const rx = W * 0.44;
     const ry = H * 0.36;
     const range = 4000;
-    ctx.lineWidth = 2;
+    // A tinted disc that fades to the rim instead of a box, then range rings and rim ticks.
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.scale(1, ry / rx);
+    const bg = ctx.createRadialGradient(0, 0, rx * 0.1, 0, 0, rx * 1.06);
+    bg.addColorStop(0, 'rgba(10,30,48,0.62)');
+    bg.addColorStop(0.85, 'rgba(6,16,28,0.5)');
+    bg.addColorStop(1, 'rgba(6,16,28,0)');
+    ctx.fillStyle = bg;
+    ctx.beginPath();
+    ctx.arc(0, 0, rx * 1.06, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+    ctx.lineWidth = 1.5;
     for (const k of [1, 0.66, 0.33]) {
-      ctx.strokeStyle = `rgba(127,227,255,${k === 1 ? 0.45 : 0.18})`;
+      ctx.strokeStyle = `rgba(143,233,255,${k === 1 ? 0.4 : 0.14})`;
       ctx.beginPath();
       ctx.ellipse(cx, cy, rx * k, ry * k, 0, 0, Math.PI * 2);
       ctx.stroke();
     }
-    ctx.strokeStyle = 'rgba(127,227,255,0.15)';
+    ctx.strokeStyle = 'rgba(143,233,255,0.5)';
+    ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(cx - rx, cy);
-    ctx.lineTo(cx + rx, cy);
-    ctx.moveTo(cx, cy - ry);
-    ctx.lineTo(cx, cy + ry);
+    for (let i = 0; i < 24; i++) {
+      const a = (i / 24) * Math.PI * 2;
+      const l = i % 6 === 0 ? 0.9 : 0.95;
+      ctx.moveTo(cx + Math.cos(a) * rx, cy + Math.sin(a) * ry);
+      ctx.lineTo(cx + Math.cos(a) * rx * l, cy + Math.sin(a) * ry * l);
+    }
     ctx.stroke();
     // view cone
-    ctx.fillStyle = 'rgba(127,227,255,0.06)';
+    const cone = ctx.createLinearGradient(0, cy, 0, cy - ry);
+    cone.addColorStop(0, 'rgba(143,233,255,0.16)');
+    cone.addColorStop(1, 'rgba(143,233,255,0)');
+    ctx.fillStyle = cone;
     ctx.beginPath();
     ctx.moveTo(cx, cy);
     ctx.lineTo(cx - rx * 0.55, cy - ry);

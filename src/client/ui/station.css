@@ -1,42 +1,48 @@
 /* --- Station screen (docked): right side, the hangar view stays visible on the left */
-#station { position: fixed; z-index: 2; right: var(--gap); top: 76px; bottom: var(--gap); width: min(640px, calc(100vw - var(--gap) * 2)); display: flex; flex-direction: column; gap: 12px; padding: 16px 18px; color: #fff; text-shadow: none; background: linear-gradient(135deg, rgba(6, 20, 32, 0.9), rgba(4, 10, 18, 0.84)); border: 1px solid var(--hud-faint); clip-path: polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 18px 100%, 0 calc(100% - 18px)); pointer-events: auto; }
+#station { position: fixed; z-index: 2; right: var(--gap); top: 76px; bottom: var(--gap); width: min(640px, calc(100vw - var(--gap) * 2)); display: flex; flex-direction: column; gap: 12px; padding: 16px 18px; color: #fff; text-shadow: none; background: var(--glass-strong); border: 1px solid var(--glass-edge); border-radius: 16px; box-shadow: var(--glass-shine); pointer-events: auto; }
 #station.hidden { display: none; }
 #station header { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
-#station h2 { font-family: var(--font-display); font-size: 20px; letter-spacing: 4px; margin: 2px 0 0; color: #fff; }
+#station h2 { font-family: var(--font-display); font-size: 21px; font-weight: 700; letter-spacing: 3px; margin: 2px 0 0; color: #fff; }
 #station .acts { display: flex; gap: 8px; }
-#station button { font-family: var(--font-display); font-size: 12px; letter-spacing: 1.5px; color: #fff; background: rgba(20, 60, 90, 0.55); border: 1px solid var(--hud-line); padding: 8px 12px; cursor: pointer; text-transform: uppercase; min-height: 36px; }
+#station button { font-family: var(--font-display); font-size: 12px; font-weight: 600; letter-spacing: 1.2px; color: #fff; background: rgba(20, 60, 90, 0.5); border: 1px solid var(--hud-line); border-radius: 8px; padding: 8px 12px; cursor: pointer; text-transform: uppercase; min-height: 36px; }
 #station button:hover { background: rgba(60, 140, 200, 0.6); }
 #station button:focus-visible { outline: 3px solid #ffd166; outline-offset: 2px; }
 #station button:disabled { opacity: 0.45; cursor: default; }
 #station button:disabled:hover { background: rgba(20, 60, 90, 0.55); }
-#station .undock { font-size: 15px; letter-spacing: 3px; padding: 10px 18px; background: linear-gradient(90deg, rgba(40, 140, 200, 0.6), rgba(140, 60, 220, 0.6)); border-color: var(--hud); }
+#station .undock { font-size: 15px; font-weight: 700; letter-spacing: 3px; padding: 10px 20px; border-radius: 10px; background: linear-gradient(90deg, rgba(40, 150, 210, 0.75), rgba(120, 70, 230, 0.75)); border-color: rgba(190, 240, 255, 0.6); box-shadow: 0 4px 16px rgba(60, 120, 220, 0.3); }
+#station .undock:hover { background: linear-gradient(90deg, rgba(60, 170, 230, 0.85), rgba(140, 90, 240, 0.85)); }
 #station .undock kbd { margin-left: 6px; }
 #station .menu { display: none; }
 body.touch #station .menu { display: block; }
 body.touch #station .undock kbd { display: none; }
 
 #station .summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-#station .cell { padding: 8px 10px; background: rgba(127, 227, 255, 0.06); border: 1px solid var(--hud-faint); display: flex; flex-direction: column; gap: 4px; }
-#station .cell .v { font-family: var(--font-display); font-size: 18px; }
+#station .cell { padding: 9px 12px; background: rgba(143, 233, 255, 0.05); border: 1px solid var(--hud-faint); border-radius: 10px; display: flex; flex-direction: column; gap: 4px; }
+#station .cell .v { font-family: var(--font-display); font-size: 20px; font-weight: 600; }
+#station .cell.cr .v { color: #ffe08a; }
 #station .cell .v.crit { color: var(--hostile); }
 #station .cell .bar { height: 6px; margin-top: 2px; }
 #station .bar.o > i { background: var(--warn); transform: scaleX(0); }
 #station .repair { margin-top: 2px; padding: 6px 8px; font-size: 11px; letter-spacing: 1px; }
 
 #station .mhead { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-#station h3 { font-family: var(--font-display); font-size: 13px; letter-spacing: 3px; color: var(--hud); margin: 0; text-transform: uppercase; }
+#station h3 { font-family: var(--font-display); font-size: 13px; font-weight: 700; letter-spacing: 3px; color: var(--hud); margin: 0; text-transform: uppercase; }
 #station .qty { display: flex; }
 #station .qty button { min-width: 54px; padding: 6px 10px; }
+#station .qty button { border-radius: 0; }
+#station .qty button:first-child { border-radius: 8px 0 0 8px; }
+#station .qty button:last-child { border-radius: 0 8px 8px 0; }
 #station .qty button + button { border-left: none; }
 #station .qty button[aria-pressed='true'] { background: rgba(127, 227, 255, 0.35); border-color: var(--hud); }
 
 #station .scroll { flex: 1; min-height: 0; overflow-y: auto; touch-action: pan-y; overscroll-behavior: contain; }
 #station table { width: 100%; border-collapse: collapse; font-size: 16px; font-variant-numeric: tabular-nums; }
-#station th { position: sticky; top: 0; background: rgba(6, 18, 28, 0.98); text-align: left; font-family: var(--font-display); font-size: 10px; letter-spacing: 1.5px; color: var(--hud-dim); font-weight: 500; padding: 5px 6px; border-bottom: 1px solid var(--hud-line); white-space: nowrap; }
-#station td { padding: 5px 6px; border-bottom: 1px solid rgba(127, 227, 255, 0.08); white-space: nowrap; }
+#station th { position: sticky; top: 0; background: rgb(8, 18, 30); text-align: left; font-family: var(--font-display); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 1.5px; color: var(--hud-dim); font-weight: 500; padding: 5px 6px; border-bottom: 1px solid var(--hud-line); white-space: nowrap; }
+#station td { padding: 6px; border-bottom: 1px solid rgba(143, 233, 255, 0.07); white-space: nowrap; }
+#station tbody tr:hover td { background: rgba(143, 233, 255, 0.04); }
 #station td.name { font-weight: 600; }
 #station td.name small { display: block; font-size: 12px; font-weight: 500; color: var(--hud-dim); padding-left: 16px; }
-#station .dot { display: inline-block; width: 8px; height: 8px; margin-right: 8px; vertical-align: 1px; background: var(--hud); }
+#station .dot { display: inline-block; width: 8px; height: 8px; margin-right: 8px; vertical-align: 1px; background: var(--hud); border-radius: 2px; }
 #station tr.ore .dot { background: var(--warn); border-radius: 50%; }
 #station td.price.cheap { color: var(--friend); }
 #station td.price.dear { color: var(--warn); }
@@ -54,7 +60,7 @@ body.touch #station .undock kbd { display: none; }
 
 /* While docked the flight HUD steps aside; notices move to the left, clear of the station screen. */
 #hud.docked { z-index: 3; }
-#hud.docked #flight, #hud.docked #status, #hud.docked #radarWrap { display: none; }
+#hud.docked #flight, #hud.docked #status, #hud.docked #radarWrap, #hud.docked #topbar, #hud.docked #fps { display: none; }
 #hud.docked #feed { left: var(--gap); transform: none; text-align: left; top: auto; bottom: calc(var(--gap) + 40px); max-width: calc(100vw - 680px - var(--gap) * 3); }
 
 @media (max-width: 1100px) {

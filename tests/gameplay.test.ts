@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Vector3 } from 'three';
-import { GameServer, STARTING_CREDITS } from '../src/server/GameServer';
+import { GameServer, RAID_CALM_MAX, RAID_CALM_MIN, STARTING_CREDITS } from '../src/server/GameServer';
 import type { ServerMessage } from '../src/shared/net/protocol';
 import { SHIP_CLASSES } from '../src/shared/sim/shipClasses';
 import type { Ship } from '../src/shared/sim/types';
@@ -64,7 +64,7 @@ describe('gameplay rules', () => {
     expect(second.position.distanceTo(server.world.zone.playerSpawn)).toBeLessThan(200);
   });
 
-  it('clearing a wave starts the next, harder one', () => {
+  it('a beaten raid is followed by a calm period, then a slightly bigger raid', () => {
     const { server } = soloServer(true);
     let guard = 0;
     while (server.wave < 1 && guard++ < 60 * 20) server.tick();
@@ -72,8 +72,11 @@ describe('gameplay rules', () => {
     const count = () => [...server.world.ships.values()].filter((s) => s.faction === 'raiders').length;
     const wave1 = count();
     for (const s of [...server.world.ships.values()]) if (s.faction === 'raiders') server.world.applyDamage(s, 99999, null);
+    for (let i = 0; i < 60 * (RAID_CALM_MIN - 5); i++) server.tick();
+    expect(server.wave).toBe(1);
+    expect(count()).toBe(0);
     guard = 0;
-    while (server.wave < 2 && guard++ < 60 * 20) server.tick();
+    while (server.wave < 2 && guard++ < 60 * (RAID_CALM_MAX + 5)) server.tick();
     expect(server.wave).toBe(2);
     expect(count()).toBeGreaterThan(wave1);
   });

@@ -76,6 +76,9 @@ const MAX_QUEUED_INPUTS = 6;
 const PVP_SWITCH_COOLDOWN = 5;
 const INPUT_TIMEOUT = 1;
 const PVP_COMBAT_LOCK = 15;
+/** Quiet time after a raid is beaten, in seconds: the sector is not an endless arena. */
+export const RAID_CALM_MIN = 45;
+export const RAID_CALM_MAX = 90;
 const PVP_KILL_BOUNTY = 0;
 /** Credits of a new pilot. */
 export const STARTING_CREDITS = 500;
@@ -108,6 +111,7 @@ export class GameServer {
   private nextSession = 1;
   private snapshotEvery: number;
   private npcs: boolean;
+  /** Raids launched since the sector was last empty (sent to clients as `wave`). */
   wave = 0;
   private waveTimer = 4;
   private wingmenTimers: number[] = [2, 2.5];
@@ -267,7 +271,7 @@ export class GameServer {
     else this.resetSector();
   }
 
-  /** Last pilot left: clear the pirates so the next visitor starts at wave 1. */
+  /** Last pilot left: clear the pirates so the next visitor meets a small raid first. */
   private resetSector() {
     for (const ship of [...this.world.ships.values()]) {
       if (ship.faction !== 'raiders') continue;
@@ -702,25 +706,28 @@ export class GameServer {
     this.waveTimer -= dt;
     if (this.waveTimer > 0) return;
 
+    // Pirate raids, not arcade waves: after one is beaten the sector stays calm for a while, and
+    // raids grow only a little (the number of pilots online matters more than the raid count).
     this.wave++;
-    this.waveTimer = 8;
-    // More pilots online, bigger waves (capped to keep the server and clients light).
+    this.waveTimer = RAID_CALM_MIN + this.rng() * (RAID_CALM_MAX - RAID_CALM_MIN);
     const extra = Math.min(Math.max(0, this.onlineCount - 1), 6);
-    const raiders = Math.min(2 + this.wave + extra, 12);
-    const marauders = Math.min(Math.floor(this.wave / 2) + Math.floor(extra / 3), 4);
+    const threat = Math.min(this.wave, 4);
+    const raiders = Math.min(2 + threat + extra, 12);
+    const marauders = Math.min((this.wave >= 3 ? 1 : 0) + Math.floor(extra / 3), 4);
     // Pirates jump in from open space ~3 km out and converge on the station.
     const station = w.zone.station.position;
     const center = this.findOpenSpawn();
     const home = station.clone().lerp(w.zone.playerSpawn, 0.6);
+    const squad = String(Math.floor(this.rng() * 90 + 10));
     for (let i = 0; i < raiders + marauders; i++) {
       const pos = center.clone().add(new Vector3((this.rng() - 0.5) * 500, (this.rng() - 0.5) * 200, (this.rng() - 0.5) * 500));
       const cls: ShipClassId = i < raiders ? 'raider' : 'marauder';
       const label = cls === 'raider' ? 'Raider' : 'Marauder';
-      this.spawnNpc(cls, 'raiders', `${label}-${String(this.wave).padStart(2, '0')}${String.fromCharCode(65 + i)}`, pos, Math.min(0.45 + this.wave * 0.06, 0.9), home, station);
+      this.spawnNpc(cls, 'raiders', `${label}-${squad}${String.fromCharCode(65 + i)}`, pos, Math.min(0.45 + threat * 0.08, 0.8), home, station);
     }
     this.broadcast({
       t: 'notice',
-      text: `VAGUE ${this.wave} — ${raiders + marauders} pirates en approche`,
+      text: `RAID PIRATE — ${raiders + marauders} contacts en approche de ${w.zone.station.name.replace(/^Station\s+/, '')}`,
       tone: 'warn',
     });
   }

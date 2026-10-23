@@ -60,7 +60,7 @@ export class StationPanel {
         </div>
       </header>
       <div class="summary">
-        <div class="cell"><div class="label">Crédits</div><div class="v credits"></div></div>
+        <div class="cell cr"><div class="label">Crédits</div><div class="v credits"></div></div>
         <div class="cell"><div class="label">Soute</div><div class="v hold"></div><div class="bar o"><i></i></div></div>
         <div class="cell"><div class="label">Coque</div><div class="v hull"></div><button class="repair" data-act="repair"></button></div>
       </div>

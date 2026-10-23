@@ -144,7 +144,6 @@ export class Game {
     undock: () => this.undock(),
     menu: () => this.callbacks.onMenu?.(),
   });
-  private wave = 0;
   private respawnIn = 0;
   private seq = 0;
   private targetId: number | null = null;
@@ -238,7 +237,6 @@ export class Game {
     this.predictor?.reset();
     this.lasers.clear();
     this.stats = { kills: 0, deaths: 0, credits: 0 };
-    this.wave = 0;
     this.myPvp = false;
     this.pilot = null;
     this.seenMarkets.clear();
@@ -534,7 +532,6 @@ export class Game {
         this.buffer.push(m.snap);
         this.myShipId = m.you;
         this.stats = m.stats;
-        this.wave = m.wave;
         this.respawnIn = m.respawnIn;
         const mine = m.you !== null ? m.snap.ships.find((s) => s.id === m.you) : undefined;
         if (mine) {
@@ -796,7 +793,6 @@ export class Game {
         cursor: this.input.cursor,
         targetId: this.targetId,
         stats: this.stats,
-        wave: this.wave,
         respawnIn: this.respawnIn,
         stations: this.zone.stations,
         fps: this.fps,
@@ -813,7 +809,7 @@ export class Game {
       },
       dt,
     );
-    this.hud.showScoreboard(this.running && !this.paused && this.input.held('scoreboard'), this.players, this.myName, transport?.online ?? false);
+    this.hud.showScoreboard(this.running && !this.paused && this.input.held('scoreboard'), this.players, this.myName, transport?.online ?? false, this.stats);
     this.damageFx = Math.max(0, this.damageFx - dt * 2);
     this.adaptResolution(dt);
     this.debug.ships = ships.size;

@@ -57,7 +57,7 @@ describe('server & protocol', () => {
     expect(ship.input.fire).toBe(false);
   });
 
-  it('spawns pirate waves which engage and damage an idle player', () => {
+  it('spawns pirate raids which engage and damage an idle player', () => {
     const server = new GameServer();
     const notices: string[] = [];
     let damaged = false;
@@ -71,7 +71,7 @@ describe('server & protocol', () => {
     });
     for (let i = 0; i < 60 * 60 && !damaged; i++) server.tick();
     expect(server.wave).toBeGreaterThanOrEqual(1);
-    expect(notices.some((n) => n.startsWith('VAGUE 1'))).toBe(true);
+    expect(notices.some((n) => n.startsWith('RAID PIRATE'))).toBe(true);
     expect(damaged).toBe(true);
   });
 
