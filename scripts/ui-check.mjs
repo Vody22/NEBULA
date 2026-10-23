@@ -1,8 +1,8 @@
 // In-browser UI and gameplay check (expects `vite preview` on UI_URL, default
 // http://localhost:4173). Verifies HUD layout at several window sizes, the
 // pause menu (simulation frozen, keyboard navigation, rebinding, persisted
-// settings), that both fire controls shoot, and the v0.3 loop: docking,
-// trading, take-off and mining. Writes screenshots to UI_OUT.
+// settings), that both fire controls shoot, the v0.3 loop (docking, trading,
+// take-off, mining) and the v0.4 solo save. Writes screenshots to UI_OUT.
 import { chromium } from 'playwright-core';
 import fs from 'node:fs';
 
@@ -122,7 +122,8 @@ for (const [w, h] of [[568, 1244], [1280, 720], [1920, 1080]]) {
   await page.keyboard.press('Escape');
   check(await page.evaluate(() => !window.__menu.isOpen && !window.__game.paused), 'Échap on the pause menu resumes');
   const t2 = await page.evaluate(() => window.__game.transport.server.world.tick);
-  await page.waitForTimeout(1500);
+  // Software rendering can go a few seconds without a frame: wait for the next ticks rather than a fixed delay.
+  await page.waitForFunction((t) => window.__game.transport.server.world.tick > t, t2, { timeout: 20000, polling: 250 }).catch(() => {});
   const t3 = await page.evaluate(() => window.__game.transport.server.world.tick);
   check(t3 > t2, `simulation runs again after resume (tick ${t2} → ${t3})`);
 
@@ -258,6 +259,22 @@ for (const [w, h] of [[568, 1244], [1280, 720], [1920, 1080]]) {
   const ore = await page.waitForFunction(() => Object.keys(window.__game.inspect().pilot.cargo).length > 0, null, { timeout: 240000, polling: 500 }).then(() => true, () => false);
   await page.keyboard.up('KeyR');
   check(ore, `ore reaches the hold (${JSON.stringify(await page.evaluate(() => window.__game.inspect().pilot.cargo))})`);
+  // v0.4: solo progress stays in this browser. Reload, solo again: back in the Aurora-7 hangar with the same hold and wallet.
+  const wallet = () => page.evaluate(() => {
+    const p = window.__game.inspect().pilot;
+    return { credits: p.credits, cargo: Object.fromEntries(Object.entries(p.cargo).sort()) };
+  });
+  const before = await wallet();
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => window.__game && window.__game.debug.frames > 1 && window.__menu?.isOpen, null, { timeout: 300000 });
+  await page.click('[data-act="solo"]');
+  const resumed = await page.waitForFunction(() => window.__game.inspect().pilot?.docked === 'aurora' && window.__game.inspect().stationScreen, null, { timeout: 60000 }).then(() => true, () => false);
+  const after = await wallet();
+  check(
+    resumed && JSON.stringify(after) === JSON.stringify(before),
+    `solo progress survives a reload: docked at Aurora-7, ${after.credits} cr, hold ${JSON.stringify(after.cargo)} (before: ${before.credits} cr, ${JSON.stringify(before.cargo)})`,
+  );
+  await page.screenshot({ path: `${out}/solo-resumed.png` });
   check(errors.length === 0, `economy: no console errors/warnings ${errors.join(' | ')}`);
   await ctx.close();
 }

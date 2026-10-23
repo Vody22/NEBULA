@@ -7,7 +7,7 @@ import type { EntityId, FactionId, Ship, ShipClassId, ShipInput, SimEvent } from
  * plain JSON-serialisable data so it can travel over WebSocket unchanged
  * (a binary encoding can replace JSON later without touching game code).
  */
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 
 export interface ShipSnapshot {
   id: EntityId;
@@ -84,10 +84,18 @@ export interface ChatLine {
   time: number;
 }
 
-export type ErrorCode = 'full' | 'version' | 'kicked' | 'protocol';
+export type ErrorCode = 'full' | 'version' | 'kicked' | 'protocol' | 'auth';
+
+/** How a pilot proves who it is when joining online. */
+export type AuthRequest =
+  | { kind: 'login'; name: string; password: string }
+  | { kind: 'register'; name: string; password: string }
+  /** The login token received after a previous login (kept by the browser). */
+  | { kind: 'token'; token: string };
 
 export type ClientMessage =
-  | { t: 'hello'; version: number; name: string; token?: string }
+  /** First message on a connection. Without a valid `auth` the server answers with an `auth` error. */
+  | { t: 'hello'; version: number; auth?: AuthRequest }
   | { t: 'input'; seq: number; input: ShipInput }
   | { t: 'chat'; text: string }
   | { t: 'pvp'; on: boolean }
@@ -109,7 +117,10 @@ export type ServerMessage =
   | { t: 'pong'; c: number }
   | { t: 'pilot'; pilot: PilotState }
   | { t: 'market'; market: MarketView }
-  | { t: 'error'; code: ErrorCode; text: string };
+  /** After a successful login: the token to keep for the next connections, and whether the account was just created. */
+  | { t: 'account'; name: string; token: string; expiresAt: number; isNew: boolean }
+  /** `reason` details an `auth` error ('credentials', 'taken', 'invalid', 'limited', 'expired', 'unavailable'). */
+  | { t: 'error'; code: ErrorCode; text: string; reason?: string };
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
 const r3 = (n: number) => Math.round(n * 1000) / 1000;
@@ -162,14 +173,17 @@ export function sanitizeInput(raw: unknown): ShipInput | null {
 
 /** Player names: printable characters only, collapsed spaces, 2..16 chars. */
 export function sanitizeName(raw: unknown): string {
-  const s = String(raw ?? '')
+  const s = cleanName(raw).slice(0, 16).trim();
+  return s.length >= 2 ? s : '';
+}
+
+/** A name without control, invisible or bidi characters and markup brackets, spaces collapsed; not cut to length. */
+export function cleanName(raw: unknown): string {
+  return String(raw ?? '')
     .normalize('NFC')
     .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2066-\u2069<>]/g, '')
     .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 16)
     .trim();
-  return s.length >= 2 ? s : '';
 }
 
 export const CHAT_MAX_LENGTH = 200;
@@ -208,18 +222,23 @@ export function parseClientFrame(text: string): { messages: ClientMessage[]; rej
   return { messages, rejected };
 }
 
+/** The credentials part of a hello, or undefined when absent or malformed (passwords are checked by the server). */
+export function validateAuth(raw: unknown): AuthRequest | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const a = raw as Record<string, unknown>;
+  if (a.kind === 'token') return typeof a.token === 'string' && /^[A-Za-z0-9_-]{32,64}$/.test(a.token) ? { kind: 'token', token: a.token } : undefined;
+  if (a.kind !== 'login' && a.kind !== 'register') return undefined;
+  if (typeof a.name !== 'string' || typeof a.password !== 'string' || a.name.length > 64 || a.password.length > 256) return undefined;
+  return { kind: a.kind, name: a.name, password: a.password };
+}
+
 export function validateClientMessage(raw: unknown): ClientMessage | null {
   if (!raw || typeof raw !== 'object') return null;
   const o = raw as Record<string, unknown>;
   switch (o.t) {
     case 'hello':
       if (typeof o.version !== 'number') return null;
-      return {
-        t: 'hello',
-        version: o.version,
-        name: typeof o.name === 'string' ? o.name.slice(0, 64) : '',
-        token: typeof o.token === 'string' && /^[A-Za-z0-9_-]{16,64}$/.test(o.token) ? o.token : undefined,
-      };
+      return { t: 'hello', version: o.version, auth: validateAuth(o.auth) };
     case 'input': {
       const input = sanitizeInput(o.input);
       if (!input || typeof o.seq !== 'number' || !Number.isInteger(o.seq) || o.seq < 0) return null;

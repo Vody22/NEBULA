@@ -22,3 +22,7 @@ services:
         value: "3"
       - key: RECONNECT_GRACE
         value: "20"
+      # Pilot accounts (PostgreSQL, e.g. Neon). Secret: set in the dashboard (Environment), never in this file.
+      # Render asks for it when the Blueprint is created and leaves the dashboard value alone afterwards.
+      - key: DATABASE_URL
+        sync: false

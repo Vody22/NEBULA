@@ -1,6 +1,7 @@
 import { Quaternion, Vector3 } from 'three';
 import { addCargo, cargoTotal, ITEMS, ITEM_IDS, type Cargo, type ItemId } from '../shared/economy/items';
 import { createMarket, quote, REPAIR_COST, repairCost, stepMarket, trade, TRADE_REFUSALS, type MarketState, type StationId } from '../shared/economy/market';
+import { restoreSector, SAVE_VERSION, sectorSave, validateSave, type PilotSave, type SectorSave } from '../shared/save';
 import { AIPilot } from '../shared/sim/ai';
 import { oreOf, PLATINUM_CHANCE } from '../shared/sim/mining';
 import { mulberry32 } from '../shared/rng';
@@ -22,9 +23,23 @@ export interface ClientLink {
   close?(): void;
 }
 
+/** Who is connecting: an account (online) or a guest (tests, older tools). */
+export interface PilotProfile {
+  /** Stable account id. A second connection of the same account takes its session over. Null: a guest. */
+  accountId: string | null;
+  name: string;
+  /**
+   * Progress to resume (raw: a database row, localStorage; validated here): the
+   * pilot starts docked at its station. Absent: a new pilot, in space next to the hub.
+   */
+  save?: unknown;
+}
+
 interface Session {
   id: string;
   token: string;
+  /** The account behind this session (null for guests): its progress is reported through `onSave`. */
+  accountId: string | null;
   name: string;
   link: ClientLink | null;
   shipId: EntityId | null;
@@ -51,6 +66,10 @@ interface Session {
   /** Credits, cargo or docking changed: send a `pilot` message at the end of the tick. */
   pilotDirty: boolean;
   holdFullNotified: boolean;
+  /** Last station docked at: where the pilot comes back next session. */
+  home: StationId;
+  /** Something worth saving changed (credits, cargo, docking, score). */
+  saveDirty: boolean;
 }
 
 export interface GameServerOptions {
@@ -65,6 +84,11 @@ export interface GameServerOptions {
   reconnectGrace?: number;
   /** Wall clock for chat timestamps (injectable for tests). */
   now?: () => number;
+  /**
+   * Progress of an account pilot changed (at most once per tick), or its session ended (`final`).
+   * The caller stores it (database online, localStorage in solo).
+   */
+  onSave?: (accountId: string, save: PilotSave, final: boolean) => void;
 }
 
 /** Chat flood control: at most CHAT_BURST messages per CHAT_WINDOW seconds. */
@@ -125,6 +149,7 @@ export class GameServer {
   private marketClock = 0;
   /** Platinum finds (kept apart from the wave director's random stream). */
   private lootRng;
+  private onSave: GameServerOptions['onSave'];
 
   constructor(opts: GameServerOptions = {}) {
     const seed = opts.seed ?? 1337;
@@ -136,6 +161,7 @@ export class GameServer {
     this.maxPlayers = opts.maxPlayers ?? 30;
     this.reconnectGrace = opts.reconnectGrace ?? 20;
     this.now = opts.now ?? Date.now;
+    this.onSave = opts.onSave;
   }
 
   get snapshotRate() {
@@ -154,29 +180,30 @@ export class GameServer {
   }
 
   /**
-   * Opens (or, with a valid token, resumes) a player session. Returns the
-   * session id, or null when the server is full (an error is sent first).
+   * Opens a player session, or resumes one: the same account (online), or the
+   * same session token (a guest reconnecting). Returns the session id, or ''
+   * when the server is full (an error is sent first).
    */
-  connect(link: ClientLink, name = 'Pilote', token?: string): string {
-    if (token) {
-      for (const s of this.sessions.values()) {
-        if (s.token !== token) continue;
-        if (s.link && s.link !== link) {
-          s.link.send({ t: 'error', code: 'kicked', text: 'Session reprise depuis une autre fenêtre.' });
-          s.link.close?.();
-        }
-        s.link = link;
-        s.offlineSince = -1;
-        s.inputs.length = 0;
-        // The client may have restarted (page reload): its input sequence starts over.
-        s.lastSeq = 0;
-        s.ackSeq = 0;
-        this.welcome(s, true);
-        if (s.shipId === null && s.respawnAt <= 0 && !s.docked) this.spawnPlayer(s);
-        this.system(`${s.name} est de retour dans le secteur`);
-        this.playersDirty = true;
-        return s.id;
+  connect(link: ClientLink, who: PilotProfile | string = 'Pilote', token?: string): string {
+    const profile: PilotProfile = typeof who === 'string' ? { accountId: null, name: who } : who;
+    for (const s of this.sessions.values()) {
+      const same = profile.accountId !== null ? s.accountId === profile.accountId : token !== undefined && s.accountId === null && s.token === token;
+      if (!same) continue;
+      if (s.link && s.link !== link) {
+        s.link.send({ t: 'error', code: 'kicked', text: 'Session reprise depuis une autre fenêtre.' });
+        s.link.close?.();
       }
+      s.link = link;
+      s.offlineSince = -1;
+      s.inputs.length = 0;
+      // The client may have restarted (page reload): its input sequence starts over.
+      s.lastSeq = 0;
+      s.ackSeq = 0;
+      this.welcome(s, true);
+      if (s.shipId === null && s.respawnAt <= 0 && !s.docked) this.spawnPlayer(s);
+      this.system(`${s.name} est de retour dans le secteur`);
+      this.playersDirty = true;
+      return s.id;
     }
     if (this.sessions.size >= this.maxPlayers) {
       link.send({ t: 'error', code: 'full', text: `Secteur complet (${this.maxPlayers} pilotes maximum).` });
@@ -184,10 +211,13 @@ export class GameServer {
       return '';
     }
     const id = `p${this.nextSession++}`;
+    const cls = SHIP_CLASSES[PLAYER_CLASS];
+    const save = profile.save != null ? validateSave(profile.save, cls.hull, cls.cargo) : null;
     const session: Session = {
       id,
       token: randomToken(),
-      name: this.uniqueName(sanitizeName(name) || 'Pilote'),
+      accountId: profile.accountId,
+      name: this.uniqueName(sanitizeName(profile.name) || 'Pilote'),
       link,
       shipId: null,
       respawnAt: 0,
@@ -195,7 +225,7 @@ export class GameServer {
       ackSeq: 0,
       inputs: [],
       lastInputAt: 0,
-      stats: { kills: 0, deaths: 0, credits: STARTING_CREDITS },
+      stats: { kills: save?.kills ?? 0, deaths: save?.deaths ?? 0, credits: save ? save.credits : STARTING_CREDITS },
       pvp: false,
       pvpChangedAt: -999,
       ping: 0,
@@ -203,15 +233,19 @@ export class GameServer {
       chatTimes: [],
       lastChat: '',
       lastChatAt: -999,
-      cargo: {},
-      docked: null,
-      stored: null,
+      cargo: save ? { ...save.cargo } : {},
+      // A returning pilot is back at its station, ship in the hangar; a new one starts in space.
+      docked: save ? save.station : null,
+      stored: save ? { hull: Math.min(cls.hull, save.hull), shield: cls.shield, energy: cls.energy } : null,
       pilotDirty: true,
       holdFullNotified: false,
+      home: save?.station ?? 'aurora',
+      saveDirty: profile.accountId !== null && !save,
     };
     this.sessions.set(id, session);
     this.welcome(session, false);
-    this.spawnPlayer(session);
+    if (session.docked) this.notice(session, `Progression chargée : amarré à ${this.station(session.docked).name}`, 'good');
+    else this.spawnPlayer(session);
     if (this.sessions.size > 1) this.system(`${session.name} a rejoint le secteur`);
     this.playersDirty = true;
     return id;
@@ -257,10 +291,11 @@ export class GameServer {
     this.playersDirty = true;
   }
 
-  /** Removes a session and its ship immediately. */
-  disconnect(id: string) {
+  /** Removes a session and its ship immediately (an account pilot's progress is saved first, unless `save` is false). */
+  disconnect(id: string, save = true) {
     const s = this.sessions.get(id);
     if (!s) return;
+    if (save && s.accountId !== null) this.onSave?.(s.accountId, this.pilotSave(s), true);
     if (s.shipId !== null) {
       this.world.removeShip(s.shipId);
       this.shipOwner.delete(s.shipId);
@@ -269,6 +304,16 @@ export class GameServer {
     this.playersDirty = true;
     if (this.sessions.size > 0) this.system(`${s.name} a quitté le secteur`);
     else this.resetSector();
+  }
+
+  /** Ends an account's session without saving it: the account is now played elsewhere. */
+  dropAccount(accountId: string, text: string) {
+    for (const s of this.sessions.values()) {
+      if (s.accountId !== accountId) continue;
+      s.link?.send({ t: 'error', code: 'kicked', text });
+      s.link?.close?.();
+      this.disconnect(s.id, false);
+    }
   }
 
   /** Last pilot left: clear the pirates so the next visitor meets a small raid first. */
@@ -352,6 +397,7 @@ export class GameServer {
     s.shipId = null;
     s.inputs.length = 0;
     s.docked = st.id;
+    s.home = st.id;
     s.pilotDirty = true;
     this.playersDirty = true;
     this.notice(s, `Amarré à ${st.name}`, 'good');
@@ -419,6 +465,48 @@ export class GameServer {
       hull: s.stored ? Math.round(s.stored.hull * 10) / 10 : null,
       hullMax: SHIP_CLASSES[PLAYER_CLASS].hull,
     };
+  }
+
+  /** What an account keeps of this session: wallet, hold, score, station and hull. */
+  private pilotSave(s: Session): PilotSave {
+    const max = SHIP_CLASSES[PLAYER_CLASS].hull;
+    const ship = s.shipId !== null ? this.world.ships.get(s.shipId) : undefined;
+    // Destroyed and waiting to respawn: the next ship comes out of the hangar intact.
+    const hull = s.stored ? s.stored.hull : ship ? ship.hull : max;
+    return {
+      v: SAVE_VERSION,
+      credits: s.stats.credits,
+      cargo: { ...s.cargo },
+      kills: s.stats.kills,
+      deaths: s.stats.deaths,
+      station: s.docked ?? s.home,
+      hull: Math.max(1, Math.min(max, Math.round(hull * 10) / 10)),
+    };
+  }
+
+  /** Reports every account pilot's progress now (server shutdown). */
+  persistAll() {
+    if (!this.onSave) return;
+    for (const s of this.sessions.values()) {
+      if (s.accountId === null) continue;
+      s.saveDirty = false;
+      this.onSave(s.accountId, this.pilotSave(s), true);
+    }
+  }
+
+  /** Station stocks, to survive a restart. */
+  exportSector(): SectorSave {
+    return sectorSave(this.markets, this.now());
+  }
+
+  /** Restores saved stocks, then lets the markets drift for the time the server was down. */
+  importSector(raw: unknown) {
+    const n = restoreSector(this.markets, raw);
+    if (!n) return 0;
+    const savedAt = (raw as SectorSave).savedAt;
+    const down = typeof savedAt === 'number' && Number.isFinite(savedAt) ? (this.now() - savedAt) / 1000 : 0;
+    if (down > 0) for (const m of Object.values(this.markets)) stepMarket(m, Math.min(down, 24 * 3600));
+    return n;
   }
 
   /** Whole units of ore under the beams go into the miners' holds. */
@@ -562,7 +650,12 @@ export class GameServer {
       if (s.shipId === null && s.respawnAt > 0 && w.time >= s.respawnAt) this.spawnPlayer(s);
       if (s.pilotDirty) {
         s.pilotDirty = false;
+        s.saveDirty = true;
         s.link.send({ t: 'pilot', pilot: this.pilotState(s) });
+      }
+      if (s.saveDirty && s.accountId !== null && this.onSave) {
+        s.saveDirty = false;
+        this.onSave(s.accountId, this.pilotSave(s), false);
       }
     }
 
@@ -612,6 +705,7 @@ export class GameServer {
         if (s) {
           s.shipId = null;
           s.stats.deaths++;
+          s.saveDirty = true;
           s.respawnAt = this.world.time + 5;
           this.playersDirty = true;
           if (cargoTotal(s.cargo) > 0) {
@@ -630,6 +724,7 @@ export class GameServer {
         const ks = killer ? this.sessions.get(killer) : undefined;
         if (ks && ks.id !== ownerSession) {
           ks.stats.kills++;
+          ks.saveDirty = true;
           // Player kills (PvP) pay nothing: two friends cannot farm credits off each other.
           const bounty = ownerSession ? PVP_KILL_BOUNTY : SHIP_CLASSES[e.classId].bounty;
           ks.stats.credits += bounty;

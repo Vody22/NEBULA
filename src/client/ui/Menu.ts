@@ -1,3 +1,5 @@
+import { checkAccountName, checkPassword, PASSWORD_MAX } from '../../shared/accounts';
+import type { AuthRequest } from '../../shared/net/protocol';
 import { isTouchDevice } from '../input/Touch';
 import { isQualityLevel, QUALITY, QUALITY_LEVELS } from '../render/quality';
 import {
@@ -13,9 +15,19 @@ import {
 
 export type PlayMode = 'online' | 'solo';
 export type ServerState = 'checking' | 'ok' | 'bad' | 'none' | 'busy';
+type AuthTab = 'login' | 'register';
+
+export interface StartRequest {
+  /** Pilot name (solo; online it comes from the account). */
+  name: string;
+  /** Online with a password (no stored login): sign in or create the account. Absent: use the stored token. */
+  auth?: AuthRequest;
+}
 
 export interface MenuCallbacks {
-  onStart(mode: PlayMode, name: string): void;
+  onStart(mode: PlayMode, start: StartRequest): void;
+  /** "Changer de compte": forget the stored login. */
+  onSignOut?(): void;
   onResume(): void;
   onLeave(): void;
   onSettingsChanged(s: Settings): void;
@@ -49,6 +61,12 @@ export class Menu {
   private lastFocus: string | null = null;
   private online = false;
   private server: { state: ServerState; text: string } = { state: 'checking', text: 'Recherche du serveur en ligne…' };
+  /** Signed in on this browser (a stored login token): no password to type. */
+  private account: { name: string } | null = null;
+  private authTab: AuthTab = 'login';
+  private authMsg: { text: string; tone: '' | 'bad' | 'ok' } = { text: '', tone: '' };
+  /** What is typed in the login form survives re-renders (tab switch, server status). */
+  private draft = { name: '', pass: '', pass2: '' };
 
   constructor(
     root: HTMLElement,
@@ -96,6 +114,32 @@ export class Menu {
   hide() {
     this.capturing = null;
     this.root.classList.add('hidden');
+    this.draft.pass = this.draft.pass2 = '';
+  }
+
+  /** The stored login (null: show the sign-in form). */
+  setAccount(account: { name: string } | null) {
+    this.account = account;
+    if (!account) this.authTab = 'login';
+    // Signed in: the typed password is not needed any more (reconnections use the token).
+    else this.draft = { name: account.name, pass: '', pass2: '' };
+    if (this.isOpen && this.view === 'main' && this.mode === 'start') this.render();
+  }
+
+  /** A line under the login form: why it was refused, or that it worked. */
+  setAuthMessage(text: string, tone: '' | 'bad' | 'ok' = 'bad') {
+    this.authMsg = { text, tone };
+    const el = this.root.querySelector<HTMLElement>('#authStatus');
+    if (el) {
+      el.textContent = text;
+      el.className = `auth ${tone}`;
+    }
+  }
+
+  /** Opens the form on a tab (e.g. "Se connecter" after a "name taken" refusal). */
+  showAuthTab(tab: AuthTab) {
+    this.authTab = tab;
+    if (this.isOpen && this.view === 'main' && this.mode === 'start') this.render();
   }
 
   /** Online server reachability, shown under the pilot name without re-rendering the menu. */
@@ -121,6 +165,69 @@ export class Menu {
     return (this.root.querySelector<HTMLInputElement>('#pilotName')?.value ?? this.settings.name).trim();
   }
 
+  private accountBlock() {
+    const msg = `<p id="authStatus" class="auth ${this.authMsg.tone}" role="alert">${esc(this.authMsg.text)}</p>`;
+    const server = `<p id="serverStatus" class="server ${this.server.state}" role="status">${esc(this.server.text)}</p>`;
+    if (this.account) {
+      return `<div class="pilot signed">
+          <span class="label">Pilote</span>
+          <div class="who"><b>${esc(this.account.name)}</b><button type="button" class="link" data-act="signout">Changer de compte</button></div>
+          ${msg}${server}
+        </div>`;
+    }
+    const reg = this.authTab === 'register';
+    const tab = (t: AuthTab, label: string) =>
+      `<button type="button" role="tab" id="tab-${t}" data-tab="${t}" aria-selected="${this.authTab === t}" aria-controls="authForm"${this.authTab === t ? '' : ' tabindex="-1"'}>${label}</button>`;
+    return `<div class="tabs" role="tablist" aria-label="Compte pilote">${tab('login', 'Se connecter')}${tab('register', 'Créer un compte')}</div>
+      <form class="pilot" id="authForm" role="tabpanel" aria-labelledby="tab-${this.authTab}" autocomplete="on" novalidate>
+        <label for="pilotName">Pseudo de pilote</label>
+        <input id="pilotName" name="username" type="text" maxlength="16" autocomplete="username" spellcheck="false" placeholder="3 à 16 caractères">
+        <label for="pilotPass">Mot de passe</label>
+        <input id="pilotPass" name="password" type="password" maxlength="${PASSWORD_MAX}" autocomplete="${reg ? 'new-password' : 'current-password'}"${reg ? ' placeholder="8 caractères minimum"' : ''}>
+        ${
+          reg
+            ? `<label for="pilotPass2">Confirmez le mot de passe</label>
+               <input id="pilotPass2" name="password2" type="password" maxlength="${PASSWORD_MAX}" autocomplete="new-password">
+               <p class="hint">Aucune adresse e-mail n'est demandée : notez votre mot de passe, il ne pourra pas être récupéré.</p>`
+            : ''
+        }
+        ${msg}${server}
+      </form>`;
+  }
+
+  /** Online: checks the form and hands the credentials over, or says what is wrong. */
+  private startOnline() {
+    if (this.account) {
+      this.cb.onStart('online', { name: this.account.name });
+      return;
+    }
+    const nameEl = this.root.querySelector<HTMLInputElement>('#pilotName');
+    const passEl = this.root.querySelector<HTMLInputElement>('#pilotPass');
+    const name = (nameEl?.value ?? '').trim();
+    const password = passEl?.value ?? '';
+    const bad = (text: string, el?: HTMLElement | null) => {
+      this.setAuthMessage(text, 'bad');
+      el?.focus();
+    };
+    if (this.authTab === 'register') {
+      const n = checkAccountName(name);
+      if (!n.ok) return bad(n.text, nameEl);
+      const weak = checkPassword(password, n.name);
+      if (weak) return bad(weak, passEl);
+      const pass2 = this.root.querySelector<HTMLInputElement>('#pilotPass2');
+      if ((pass2?.value ?? '') !== password) return bad('Les deux mots de passe ne correspondent pas.', pass2);
+    } else {
+      if (name.length < 3) return bad('Entrez votre pseudo de pilote.', nameEl);
+      if (!password) return bad('Entrez votre mot de passe.', passEl);
+    }
+    this.setAuthMessage('', '');
+    if (name !== this.settings.name) {
+      this.settings.name = name;
+      this.changed();
+    }
+    this.cb.onStart('online', { name, auth: { kind: this.authTab, name, password } });
+  }
+
   private effectiveLayout(): KeyboardLayout {
     if (this.settings.layout !== 'auto') return this.settings.layout;
     return this.layoutMap ? 'auto' : guessLayout(navigator.languages ?? [navigator.language]);
@@ -142,30 +249,24 @@ export class Menu {
       const start = this.mode === 'start';
       html = `
         <h1 id="menuTitle">${start ? 'NEBULA <span>FRONTIER</span>' : 'PAUSE'}</h1>
-        <p class="sub">${start ? 'MMO spatial · Secteur Aurora · v0.3' : this.online ? 'En ligne : le secteur continue, votre vaisseau coupe les gaz' : 'La simulation est en pause'}</p>
+        <p class="sub">${start ? 'MMO spatial · Secteur Aurora · v0.4' : this.online ? 'En ligne : le secteur continue, votre vaisseau coupe les gaz' : 'La simulation est en pause'}</p>
         ${
           this.touchOnly
             ? `<p class="touch-note"><strong>Commandes tactiles.</strong> Pouce gauche : glissez pour piloter. Pouce droit : FEU, BOOST et MINER. Curseur GAZ pour la poussée. Jouez en mode paysage.</p>`
             : ''
         }
-        ${
-          start
-            ? `<div class="pilot">
-                <label for="pilotName">Pseudo de pilote</label>
-                <input id="pilotName" type="text" maxlength="16" autocomplete="nickname" spellcheck="false" value="${esc(s.name)}" placeholder="2 à 16 caractères">
-                <p id="serverStatus" class="server ${this.server.state}" role="status">${esc(this.server.text)}</p>
-              </div>`
-            : ''
-        }
+        ${start ? this.accountBlock() : ''}
         <div class="menu-buttons">
           ${
             start
-              ? `<button class="primary" data-act="online">Jouer en ligne</button>
+              ? `<button class="primary" data-act="online">${this.account ? 'Jouer en ligne' : this.authTab === 'register' ? 'Créer le compte et jouer' : 'Se connecter et jouer'}</button>
                  <button data-act="solo">Solo hors ligne</button>`
               : `<button class="primary" data-act="resume">Reprendre</button>`
           }
-          <button data-act="controls">Commandes</button>
-          <button data-act="options">Options et son</button>
+          <div class="pair">
+            <button data-act="controls">Commandes</button>
+            <button data-act="options">Options et son</button>
+          </div>
           ${start ? '' : `<button data-act="leave">Quitter vers le menu</button>`}
         </div>
         ${
@@ -253,6 +354,14 @@ export class Menu {
         </div>`;
     }
     this.root.innerHTML = `<div class="box view-${this.view}">${html}</div>`;
+    // Typed values are put back as properties, never written into the markup.
+    const put = (sel: string, v: string) => {
+      const el = this.root.querySelector<HTMLInputElement>(sel);
+      if (el) el.value = v;
+    };
+    put('#pilotName', this.draft.name || this.settings.name);
+    put('#pilotPass', this.draft.pass);
+    put('#pilotPass2', this.draft.pass2);
     const diag = this.root.querySelector('.diag');
     if (diag) diag.textContent = this.diag; // GPU names are not trusted HTML
     if (this.view === 'main' && this.mode === 'start') this.setServerStatus(this.server.state, this.server.text);
@@ -262,13 +371,23 @@ export class Menu {
   private focusDefault() {
     let want = this.lastFocus ? this.root.querySelector<HTMLElement>(this.lastFocus) : null;
     this.lastFocus = null;
-    if (!want && this.view === 'main' && this.mode === 'start' && !this.settings.name) want = this.root.querySelector<HTMLElement>('#pilotName');
+    if (!want && this.view === 'main' && this.mode === 'start' && !this.account) {
+      const name = this.root.querySelector<HTMLInputElement>('#pilotName');
+      want = name && !name.value ? name : this.root.querySelector<HTMLElement>('#pilotPass');
+    }
     (want ?? this.root.querySelector<HTMLElement>('button.primary:not(:disabled), button:not(:disabled)'))?.focus();
   }
 
   private onClick(e: Event) {
     const t = (e.target as HTMLElement).closest('button');
     if (!t) return;
+    if (t.dataset.tab) {
+      this.authTab = t.dataset.tab as AuthTab;
+      this.setAuthMessage('', '');
+      this.lastFocus = `[data-tab="${this.authTab}"]`;
+      this.render();
+      return;
+    }
     const act = t.dataset.act;
     const bind = t.dataset.bind as Action | undefined;
     if (bind) {
@@ -279,20 +398,23 @@ export class Menu {
     }
     switch (act) {
       case 'online':
+        this.startOnline();
+        break;
       case 'solo': {
-        const name = this.pilotName();
-        if (act === 'online' && name.length < 2) {
-          this.setServerStatus(this.server.state === 'busy' ? 'ok' : this.server.state, 'Choisissez un pseudo de 2 à 16 caractères pour jouer en ligne.');
-          this.root.querySelector<HTMLInputElement>('#pilotName')?.focus();
-          break;
-        }
-        if (name !== this.settings.name) {
+        const name = this.account?.name ?? this.pilotName();
+        if (!this.account && name && name !== this.settings.name) {
           this.settings.name = name;
           this.changed();
         }
-        this.cb.onStart(act, name);
+        this.cb.onStart('solo', { name: name || 'Pilote' });
         break;
       }
+      case 'signout':
+        this.draft = { name: this.account?.name ?? '', pass: '', pass2: '' };
+        this.cb.onSignOut?.();
+        this.setAccount(null);
+        this.setAuthMessage('Vous êtes déconnecté sur ce navigateur.', 'ok');
+        break;
       case 'leave':
         this.cb.onLeave();
         break;
@@ -323,6 +445,9 @@ export class Menu {
 
   private onInput(e: Event) {
     const el = e.target as HTMLInputElement | HTMLSelectElement;
+    if (el.id === 'pilotName') this.draft.name = el.value;
+    else if (el.id === 'pilotPass') this.draft.pass = el.value;
+    else if (el.id === 'pilotPass2') this.draft.pass2 = el.value;
     const key = el.dataset.setting;
     if (!key) return;
     const s = this.settings;
@@ -353,9 +478,10 @@ export class Menu {
 
   private onKey(e: KeyboardEvent) {
     if (!this.isOpen) return;
-    if (e.code === 'Enter' && (e.target as HTMLElement).id === 'pilotName') {
+    if (e.code === 'Enter' && ['pilotName', 'pilotPass', 'pilotPass2'].includes((e.target as HTMLElement).id)) {
+      // Entrée in the login form always means "sign in", even when solo is highlighted (server not found yet).
       e.preventDefault();
-      this.root.querySelector<HTMLButtonElement>('.menu-buttons button.primary:not(:disabled)')?.click();
+      if (!this.root.querySelector<HTMLButtonElement>('[data-act="online"]')?.disabled) this.startOnline();
       return;
     }
     if (this.capturing) {

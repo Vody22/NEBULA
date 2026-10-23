@@ -12,8 +12,18 @@ const SECONDS = Number(process.argv[3] ?? 40);
 fs.mkdirSync('.mp-check', { recursive: true });
 await build({ entryPoints: ['src/server/node/server.ts'], bundle: true, platform: 'node', format: 'esm', packages: 'external', outfile: '.mp-check/server.mjs', logLevel: 'warning' });
 const { startServer } = await import(pathToFileURL('.mp-check/server.mjs').href);
-const server = await startServer({ port: 0, host: '127.0.0.1', maxPlayers: Math.max(30, BOTS), log: () => {}, compression: process.env.NO_DEFLATE ? false : undefined });
+const server = await startServer({
+  port: 0,
+  host: '127.0.0.1',
+  maxPlayers: Math.max(30, BOTS),
+  log: () => {},
+  compression: process.env.NO_DEFLATE ? false : undefined,
+  // Every bot signs up from 127.0.0.1.
+  accountLimits: { perMinute: 10_000, signupsPerHour: 10_000, signupsPerHourTotal: 10_000 },
+});
+await server.ready;
 const game = server.game;
+const { protocol } = await (await fetch(`http://127.0.0.1:${server.port}/status`)).json();
 
 // Measure the cost of each simulation tick.
 const tickTimes = [];
@@ -28,12 +38,19 @@ const url = `ws://127.0.0.1:${server.port}/ws`;
 const bots = [];
 for (let i = 0; i < BOTS; i++) {
   const ws = new WebSocket(url);
-  const bot = { ws, raw: 0, frames: 0, seq: 0, phase: Math.random() * 10, wire0: 0 };
+  const bot = { ws, raw: 0, frames: 0, seq: 0, phase: Math.random() * 10, wire0: 0, welcomed: false, refused: '' };
   bot.wire = () => ws._socket?.bytesRead ?? 0;
-  ws.on('open', () => ws.send(JSON.stringify({ t: 'hello', version: 2, name: `Bot ${i + 1}` })));
+  const name = `Bot ${i + 1}`;
+  ws.on('open', () => ws.send(JSON.stringify({ t: 'hello', version: protocol, auth: { kind: 'register', name, password: `bot-password-${i}` } })));
   ws.on('message', (d) => {
     bot.raw += d.length;
     bot.frames++;
+    if (!bot.welcomed && !bot.refused) {
+      const text = d.toString();
+      if (text.includes('"t":"welcome"')) bot.welcomed = true;
+      const err = /"t":"error","code":"(\w+)"/.exec(text);
+      if (err) bot.refused = err[1];
+    }
   });
   bots.push(bot);
   await new Promise((r) => setTimeout(r, 20));
@@ -60,6 +77,13 @@ const inputTimer = setInterval(() => {
 
 const warmup = 5;
 await new Promise((r) => setTimeout(r, warmup * 1000));
+const joined = bots.filter((b) => b.welcomed).length;
+if (joined < BOTS) {
+  console.log(`only ${joined}/${BOTS} bots joined (${[...new Set(bots.map((b) => b.refused).filter(Boolean))].join(', ') || 'no error'}): the numbers below would be meaningless`);
+  for (const b of bots) b.ws.terminate();
+  await server.close();
+  process.exit(1);
+}
 tickTimes.length = 0;
 for (const b of bots) {
   b.raw = b.frames = 0;
@@ -91,6 +115,7 @@ const result = {
   heapMB: +(process.memoryUsage().heapUsed / 1048576).toFixed(1),
   heapGrowthMB: +((process.memoryUsage().heapUsed - mem0) / 1048576).toFixed(1),
   online: game.onlineCount,
+  joined,
 };
 console.log(JSON.stringify(result, null, 2));
 for (const b of bots) b.ws.terminate();

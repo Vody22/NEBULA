@@ -26,13 +26,26 @@ function withPath(u: string) {
   return url.toString();
 }
 
-/** HTTP status endpoint next to a WebSocket URL (wss://host/ws → https://host/status). */
-export function statusUrl(wsUrl: string) {
+/** HTTP endpoint next to a WebSocket URL (wss://host/ws → https://host/status). */
+export function httpUrl(wsUrl: string, path: string) {
   const u = new URL(wsUrl);
   u.protocol = u.protocol === 'wss:' ? 'https:' : 'http:';
-  u.pathname = '/status';
+  u.pathname = path;
   u.search = '';
   return u.toString();
+}
+
+export function statusUrl(wsUrl: string) {
+  return httpUrl(wsUrl, '/status');
+}
+
+/** Tells the server a login token is no longer wanted (sign out). Fire and forget: never throws. */
+export function revokeLogin(wsUrl: string, token: string) {
+  try {
+    void fetch(httpUrl(wsUrl, '/logout'), { method: 'POST', body: token, headers: { 'Content-Type': 'text/plain' }, keepalive: true }).catch(() => {});
+  } catch {
+    /* offline: the token simply expires */
+  }
 }
 
 export interface ServerStatus {

@@ -2,35 +2,44 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { Quaternion, Vector3 } from 'three';
 import WebSocket from 'ws';
 import { startServer, type RunningServer } from '../src/server/node/server';
+import { AccountService } from '../src/server/accounts/AccountService';
+import { MemoryStore } from '../src/server/accounts/store';
 import { STARTING_CREDITS } from '../src/server/GameServer';
-import { PROTOCOL_VERSION, type ClientMessage, type ServerMessage } from '../src/shared/net/protocol';
+import { createMarket } from '../src/shared/economy/market';
+import { PROTOCOL_VERSION, type AuthRequest, type ClientMessage, type ServerMessage } from '../src/shared/net/protocol';
 import { SHIP_CLASSES } from '../src/shared/sim/shipClasses';
 import { neutralInput, type ShipInput } from '../src/shared/sim/types';
+
+const PASSWORD = 'mot-de-passe-test';
 
 /**
  * End-to-end tests against the real Node server over real WebSockets
  * (localhost). `lag` delays every message in both directions to simulate
- * network latency.
+ * network latency. Clients sign up under their name unless told otherwise.
  */
 class TestClient {
   ws: WebSocket;
   inbox: ServerMessage[] = [];
   welcome: Extract<ServerMessage, { t: 'welcome' }> | null = null;
+  account: Extract<ServerMessage, { t: 'account' }> | null = null;
   lastSnap: Extract<ServerMessage, { t: 'snapshot' }> | null = null;
+  lastPilot: Extract<ServerMessage, { t: 'pilot' }>['pilot'] | null = null;
   closed = false;
   closeCode = 0;
   private seq = 0;
 
-  constructor(url: string, readonly name: string, token?: string, readonly lag = 0, origin?: string) {
+  constructor(url: string, readonly name: string, auth: AuthRequest | null = { kind: 'register', name, password: PASSWORD }, readonly lag = 0, origin?: string) {
     this.ws = new WebSocket(url, origin ? { origin } : undefined);
-    this.ws.on('open', () => this.send({ t: 'hello', version: PROTOCOL_VERSION, name, token }));
+    this.ws.on('open', () => this.send(auth ? { t: 'hello', version: PROTOCOL_VERSION, auth } : { t: 'hello', version: PROTOCOL_VERSION }));
     this.ws.on('message', (data) => {
       const deliver = () => {
         const parsed = JSON.parse(data.toString());
         for (const m of (Array.isArray(parsed) ? parsed : [parsed]) as ServerMessage[]) {
           this.inbox.push(m);
           if (m.t === 'welcome') this.welcome = m;
+          if (m.t === 'account') this.account = m;
           if (m.t === 'snapshot') this.lastSnap = m;
+          if (m.t === 'pilot') this.lastPilot = m.pilot;
         }
       };
       if (this.lag) setTimeout(deliver, this.lag);
@@ -87,14 +96,26 @@ afterEach(async () => {
   server = null;
 });
 
-async function boot(opts: Partial<Parameters<typeof startServer>[0]> = {}) {
-  server = await startServer({ port: 0, host: '127.0.0.1', npcs: false, log: () => {}, staticDir: undefined, ...opts });
+/** Accounts in memory, with the anti-abuse limits out of the way (every test client comes from 127.0.0.1). */
+function accounts(store = new MemoryStore(), opts: ConstructorParameters<typeof AccountService>[1] = {}) {
+  return new AccountService(store, { limits: { perMinute: 1000, signupsPerHour: 1000, signupsPerHourTotal: 1000 }, ...opts });
+}
+async function boot(opts: Partial<Parameters<typeof startServer>[0]> = {}, waitReady = true) {
+  server = await startServer({ port: 0, host: '127.0.0.1', npcs: false, log: () => {}, staticDir: undefined, accounts: accounts(), ...opts });
+  if (waitReady) await server.ready;
   return `ws://127.0.0.1:${server.port}/ws`;
 }
-function join(url: string, name: string, token?: string, lag = 0, origin?: string) {
-  const c = new TestClient(url, name, token, lag, origin);
+function join(url: string, name: string, auth?: AuthRequest | null, lag = 0, origin?: string) {
+  const c = new TestClient(url, name, auth, lag, origin);
   clients.push(c);
   return c;
+}
+/** Parks a ship at the Aurora-7 hangar mouth, stopped (close enough to dock). */
+function park(shipId: number) {
+  const w = server!.game.world;
+  const ship = w.ships.get(shipId)!;
+  ship.position.copy(w.zone.station.dock.mouth).add(new Vector3(0, 0, 60));
+  ship.velocity.set(0, 0, 0);
 }
 /** Holds a client's input every 1/60 s for `ms` (like the real client's fixed input tick). */
 async function hold(c: TestClient, input: Partial<ShipInput>, ms: number) {
@@ -237,10 +258,10 @@ describe('multiplayer server (WebSocket)', () => {
     expect(server!.game.sessionCount).toBe(1);
   });
 
-  it('reconnection with the session token resumes the same pilot, ship and score', async () => {
+  it('reconnection with the login token resumes the same pilot, ship and score', async () => {
     const url = await boot({ reconnectGrace: 10 });
     const a = join(url, 'Fidèle');
-    await until(() => a.shipId !== null);
+    await until(() => a.shipId !== null && !!a.account);
     const w = server!.game.world;
     const pirate = w.spawnShip({ classId: 'raider', faction: 'raiders', name: 'Cible', position: new Vector3() });
     pirate.shield = 0;
@@ -248,22 +269,34 @@ describe('multiplayer server (WebSocket)', () => {
     lineUp(a.shipId!, pirate.id);
     await hold(a, { fire: true }, 900);
     await until(() => a.lastSnap!.stats.kills === 1);
-    const { playerId, token } = a.welcome!;
+    const { playerId } = a.welcome!;
+    const token = a.account!.token;
+    expect(a.account).toMatchObject({ name: 'Fidèle', isNew: true });
+    expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
     const shipId = a.shipId;
     a.ws.terminate(); // connection lost without a clean close
     await sleep(300);
-    const a2 = join(url, 'Fidèle', token);
-    await until(() => !!a2.welcome && !!a2.lastSnap);
+    const a2 = join(url, 'Fidèle', { kind: 'token', token });
+    await until(() => !!a2.welcome && !!a2.lastSnap && !!a2.account);
     expect(a2.welcome!.resumed).toBe(true);
     expect(a2.welcome!.playerId).toBe(playerId);
     expect(a2.shipId).toBe(shipId);
     expect(a2.lastSnap!.stats.kills).toBe(1);
+    expect(a2.account).toMatchObject({ token, isNew: false }); // the browser keeps its token, extended
     expect(server!.game.sessionCount).toBe(1);
-    // A wrong token just creates a new pilot.
-    const other = join(url, 'Fidèle', 'x'.repeat(24));
-    await until(() => !!other.welcome);
-    expect(other.welcome!.resumed).toBe(false);
-    expect(other.welcome!.name).toBe('Fidèle 2');
+    // The same pilot by password from another window takes the session over; the first window is told.
+    const a3 = join(url, 'fidèle', { kind: 'login', name: '  FIDÈLE ', password: PASSWORD });
+    await until(() => !!a3.welcome && a2.closed, 4000, 'takeover');
+    expect(a3.welcome!.playerId).toBe(playerId);
+    expect(a3.welcome!.name).toBe('Fidèle');
+    expect(a3.account!.token).not.toBe(token); // a password login gets a new token
+    expect(a2.messages('error')[0]?.code).toBe('kicked');
+    expect(server!.game.sessionCount).toBe(1);
+    // A wrong token no longer makes a guest pilot: it is refused.
+    const other = join(url, 'Fidèle', { kind: 'token', token: 'x'.repeat(43) });
+    await until(() => other.closed, 3000, 'bad token refused');
+    expect(other.welcome).toBeNull();
+    expect(other.messages('error')[0]).toMatchObject({ code: 'auth', reason: 'expired' });
   });
 
   it('stays consistent under 150 ms of simulated latency each way', async () => {
@@ -310,7 +343,7 @@ describe('multiplayer server (WebSocket)', () => {
   it('refuses players beyond capacity and foreign origins', async () => {
     const url = await boot({ maxPlayers: 2, allowedOrigins: ['https://nebula-iota-rust.vercel.app'] });
     const ok = 'https://nebula-iota-rust.vercel.app';
-    const a = join(url, 'Un', undefined, 0, ok);
+    const a = join(url, 'Uno', undefined, 0, ok);
     const b = join(url, 'Deux', undefined, 0, ok);
     await until(() => !!a.welcome && !!b.welcome);
     const c = join(url, 'Trois', undefined, 0, ok);
@@ -326,6 +359,118 @@ describe('multiplayer server (WebSocket)', () => {
     const base = `http://127.0.0.1:${server!.port}`;
     expect(await (await fetch(`${base}/health`)).text()).toBe('ok');
     const st = await (await fetch(`${base}/status`)).json();
-    expect(st).toMatchObject({ protocol: PROTOCOL_VERSION, online: 0, max: 30 });
+    expect(st).toMatchObject({ protocol: PROTOCOL_VERSION, online: 0, max: 30, accounts: 'memory' });
+  });
+});
+
+describe('pilot accounts (WebSocket)', () => {
+  it('refuses a hello without login, a wrong password, a taken name and a weak password, with reasons', async () => {
+    const url = await boot();
+    const anon = join(url, 'Anonyme', null);
+    await until(() => anon.closed, 3000, 'anonymous refused');
+    expect(anon.messages('error')[0]).toMatchObject({ code: 'auth', reason: 'invalid' });
+    const a = join(url, 'Kerys');
+    await until(() => !!a.account);
+    const wrong = join(url, 'Kerys', { kind: 'login', name: 'Kerys', password: 'pas-le-bon' });
+    const taken = join(url, 'KERYS'); // names are unique whatever the case
+    const unknown = join(url, 'Personne', { kind: 'login', name: 'Personne', password: PASSWORD });
+    const weak = join(url, 'Faible', { kind: 'register', name: 'Faible', password: 'court' });
+    const long = join(url, 'Long', { kind: 'register', name: 'Un pseudo bien trop long', password: PASSWORD });
+    await until(() => [wrong, taken, unknown, weak, long].every((c) => c.closed), 4000, 'refusals');
+    expect(wrong.messages('error')[0]).toMatchObject({ code: 'auth', reason: 'credentials' });
+    expect(unknown.messages('error')[0]).toMatchObject({ code: 'auth', reason: 'credentials', text: wrong.messages('error')[0].text });
+    expect(taken.messages('error')[0]).toMatchObject({ code: 'auth', reason: 'taken' });
+    expect(weak.messages('error')[0]).toMatchObject({ code: 'auth', reason: 'invalid' });
+    expect(weak.messages('error')[0].text).toMatch(/8 caractères/);
+    expect(long.messages('error')[0].text).toMatch(/3 à 16/);
+    expect([wrong, taken, unknown, weak, long].every((c) => c.welcome === null)).toBe(true);
+    expect(server!.game.sessionCount).toBe(1);
+  });
+
+  it('a new pilot is told its progress is saved; a login while the database is down is refused, not stuck', async () => {
+    const store = new MemoryStore();
+    store.failing = true;
+    const url = await boot({ accounts: accounts(store) }, false);
+    const st = await (await fetch(`http://127.0.0.1:${server!.port}/status`)).json();
+    expect(st.accounts).toBe('unavailable');
+    const a = join(url, 'Patient');
+    await until(() => a.closed, 3000, 'refused while down');
+    expect(a.messages('error')[0]).toMatchObject({ code: 'auth', reason: 'unavailable' });
+    store.failing = false;
+    await server!.ready; // the service retries in the background
+    const b = join(url, 'Patient');
+    await until(() => !!b.account && !!b.welcome, 4000, 'login once back');
+    expect(b.messages('notice').some((n) => /Compte créé/.test(n.text))).toBe(true);
+  });
+
+  it('progress survives a server restart: the pilot comes back docked, with credits, hold, score and station stocks', async () => {
+    const store = new MemoryStore();
+    let url = await boot({ accounts: accounts(store) });
+    const a = join(url, 'Marchand');
+    await until(() => a.shipId !== null && !!a.account);
+    const token = a.account!.token;
+    park(a.shipId!);
+    a.send({ t: 'dock' });
+    await until(() => a.lastPilot?.docked === 'aurora', 3000, 'docked');
+    a.send({ t: 'trade', item: 'water', qty: 6 });
+    await until(() => a.lastPilot?.cargo.water === 6, 3000, 'bought');
+    const credits = a.lastPilot!.credits;
+    expect(credits).toBeLessThan(STARTING_CREDITS);
+    a.send({ t: 'undock' });
+    await until(() => a.shipId !== null && a.lastPilot?.docked === null, 3000, 'undocked');
+    server!.game.world.ships.get(a.shipId!)!.hull = 150;
+    await sleep(100);
+    // Server shutdown (a deploy): progress and stocks are written before the sockets close.
+    const first = server!;
+    server = null;
+    await first.close();
+    const stock = first.game.markets.aurora.water.stock;
+    expect(stock).toBeLessThan(createMarket('aurora').water.stock - 3);
+    await until(() => a.closed, 2000, 'client dropped');
+    expect(a.messages('notice').some((n) => /Redémarrage/.test(n.text))).toBe(true);
+
+    url = await boot({ accounts: accounts(store) });
+    expect(server!.game.markets.aurora.water.stock).toBeCloseTo(stock, 1);
+    const back = join(url, 'Marchand', { kind: 'token', token });
+    await until(() => !!back.welcome && back.lastPilot !== null && !!back.lastSnap, 4000, 'back');
+    expect(back.welcome!.resumed).toBe(false);
+    // Left in space: back in the hangar of the last station docked at, hull as it was.
+    expect(back.lastPilot).toMatchObject({ docked: 'aurora', credits, cargo: { water: 6 }, hull: 150 });
+    expect(back.lastSnap!.you).toBeNull();
+    expect(back.messages('notice').some((n) => /Progression chargée : amarré à Station Aurora-7/.test(n.text))).toBe(true);
+    // And by password too, after the token is gone (another browser).
+    back.close();
+    await until(() => back.closed);
+    const again = join(url, 'Marchand', { kind: 'login', name: 'marchand', password: PASSWORD });
+    await until(() => again.lastPilot !== null && !!again.account, 4000, 'password login');
+    expect(again.lastPilot).toMatchObject({ credits, cargo: { water: 6 } });
+  });
+
+  it('POST /logout revokes a login token (sign out on a shared computer)', async () => {
+    const url = await boot();
+    const a = join(url, 'Bibliothèque');
+    await until(() => !!a.account);
+    const res = await fetch(`http://127.0.0.1:${server!.port}/logout`, { method: 'POST', body: a.account!.token, headers: { 'Content-Type': 'text/plain' } });
+    expect(res.status).toBe(204);
+    const again = join(url, 'Bibliothèque', { kind: 'token', token: a.account!.token });
+    await until(() => again.closed, 3000, 'revoked token refused');
+    expect(again.messages('error')[0]).toMatchObject({ code: 'auth', reason: 'expired' });
+    // Junk is ignored.
+    expect((await fetch(`http://127.0.0.1:${server!.port}/logout`, { method: 'POST', body: 'x'.repeat(1000) }).catch(() => ({ status: 0 }))).status).not.toBe(500);
+  });
+
+  it('writes progress in batches, and at once when a pilot leaves', async () => {
+    const store = new MemoryStore();
+    const url = await boot({ accounts: accounts(store, { saveInterval: 60 }), reconnectGrace: 0 });
+    const a = join(url, 'Prudent');
+    const b = join(url, 'Pressé');
+    await until(() => a.shipId !== null && b.shipId !== null);
+    await sleep(200);
+    const writes = store.writes;
+    expect(server!.accounts.pendingCount).toBe(2); // both new pilots, waiting for the next batch
+    b.close(); // leaving: written now, without waiting for the 60 s batch
+    await until(() => store.writes > writes, 3000, 'write on leave');
+    const rec = await store.byKey('pressé');
+    expect(rec!.save).toMatchObject({ v: 1, credits: STARTING_CREDITS, station: 'aurora' });
   });
 });

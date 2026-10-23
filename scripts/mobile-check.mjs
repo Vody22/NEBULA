@@ -12,6 +12,7 @@ fs.mkdirSync('.mp-check', { recursive: true });
 await build({ entryPoints: ['src/server/node/server.ts'], bundle: true, platform: 'node', format: 'esm', packages: 'external', outfile: '.mp-check/server.mjs', logLevel: 'warning' });
 const { startServer } = await import(pathToFileURL('.mp-check/server.mjs').href);
 const server = await startServer({ port: 0, host: '127.0.0.1', staticDir: 'dist', npcs: false, log: () => {} });
+await server.ready;
 const base = `http://127.0.0.1:${server.port}`;
 
 const failures = [];
@@ -178,7 +179,11 @@ try {
   // ---- 3. Online on a phone ---------------------------------------------------
   const O = await phone({ width: 844, height: 390 }, `?server=ws://127.0.0.1:${server.port}/ws`);
   await O.page.waitForFunction(() => document.querySelector('#serverStatus.ok'), null, { timeout: 120000 });
+  await O.page.tap('[data-tab="register"]');
   await O.page.fill('#pilotName', 'Mobile');
+  await O.page.fill('#pilotPass', 'mot-de-passe-test');
+  await O.page.fill('#pilotPass2', 'mot-de-passe-test');
+  await O.page.screenshot({ path: `${out}/phone-signup.png` });
   await O.page.tap('[data-act="online"]');
   await O.page.waitForFunction(() => window.__game.running && window.__game.inspect().status?.state === 'online', null, { timeout: 120000 });
   await O.frames(3);

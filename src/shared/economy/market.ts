@@ -2,6 +2,12 @@ import { ITEMS, ITEM_IDS, addCargo, cargoTotal, removeCargo, type Cargo, type It
 
 export type StationId = 'aurora' | 'ferro';
 
+export const STATION_IDS: readonly StationId[] = ['aurora', 'ferro'];
+
+export function isStationId(v: unknown): v is StationId {
+  return typeof v === 'string' && (STATION_IDS as readonly string[]).includes(v);
+}
+
 /**
  * One commodity at one station. The price follows the stock: scarce goods
  * are dear, plentiful ones cheap. The stock drifts back toward `eq` (the

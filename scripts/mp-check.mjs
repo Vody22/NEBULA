@@ -22,6 +22,8 @@ await build({
 });
 const { startServer } = await import(pathToFileURL('.mp-check/server.mjs').href);
 const server = await startServer({ port: 0, host: '127.0.0.1', staticDir: 'dist', reconnectGrace: 150, npcs: false, log: () => {} });
+await server.ready;
+const PASSWORD = 'mot-de-passe-test';
 const base = `http://127.0.0.1:${server.port}`;
 const world = server.game.world;
 
@@ -47,11 +49,16 @@ async function pilot(name, viewport = { width: 800, height: 450 }, query = '') {
   });
   await page.goto(`${base}/?q=low${query}`, { waitUntil: 'domcontentloaded', timeout: 120000 });
   await page.waitForFunction(() => window.__menu?.isOpen && document.querySelector('#serverStatus.ok'), null, { timeout: 300000 });
+  // A new pilot: sign-up tab, name, password twice.
+  await page.click('[data-tab="register"]');
   await page.fill('#pilotName', name);
+  await page.fill('#pilotPass', PASSWORD);
+  await page.fill('#pilotPass2', PASSWORD);
   await page.click('[data-act="online"]');
   await page.waitForFunction(() => window.__game.running && window.__game.inspect().status?.state === 'online', null, { timeout: 120000 });
   return { ctx, page, errors, name, inspect: () => page.evaluate(() => window.__game.inspect()) };
 }
+const authText = (page) => page.evaluate(() => document.querySelector('#authStatus')?.textContent ?? '');
 const shipOf = (name) => [...world.ships.values()].find((s) => s.name === name && s.ownerId);
 const waitFor = async (page, fn, arg, ms = 60000) => page.waitForFunction(fn, arg, { timeout: ms, polling: 200 });
 
@@ -243,7 +250,7 @@ try {
     () => check(false, 'disconnection visible'),
   );
   await B.page.waitForFunction(() => window.__menu?.isOpen && document.querySelector('#serverStatus.ok'), null, { timeout: 300000 });
-  check((await B.page.inputValue('#pilotName')) === 'Bravo', 'pilot name remembered after reload');
+  check((await B.page.textContent('.pilot.signed .who b'))?.trim() === 'Bravo' && !(await B.page.$('#pilotPass')), 'still signed in after reload: no password asked');
   await B.page.click('[data-act="online"]');
   await B.page.waitForFunction(() => window.__game.running && window.__game.inspect().myShipId !== null, null, { timeout: 120000 });
   const ib2 = await B.inspect();
@@ -267,7 +274,42 @@ try {
     () => check(false, 'leave message'),
   );
   await A.page.screenshot({ path: `${out}/a-final.png` });
-  check(A.errors.length === 0 && B.errors.length === 0, `no page errors (${[...A.errors, ...B.errors].join(' | ')})`);
+
+  // ---- 8. Accounts in the browser: refusals shown under the form, sign out, password login ----
+  const D = await pilot('Delta');
+  await D.page.reload({ waitUntil: 'domcontentloaded' });
+  await D.page.waitForFunction(() => window.__menu?.isOpen && document.querySelector('#serverStatus.ok'), null, { timeout: 300000 });
+  await D.page.click('[data-act="signout"]');
+  check(!!(await D.page.$('#authForm #pilotPass')), '"Changer de compte" brings the login form back');
+  await D.page.click('[data-tab="register"]');
+  await D.page.fill('#pilotName', 'ALPHA');
+  await D.page.fill('#pilotPass', PASSWORD);
+  await D.page.fill('#pilotPass2', PASSWORD);
+  await D.page.click('[data-act="online"]');
+  await waitFor(D.page, () => /déjà pris/.test(document.querySelector('#authStatus')?.textContent ?? '') && document.querySelector('#serverStatus.ok'), null, 30000).then(
+    () => check(true, 'sign-up with a taken name (other case) is refused under the form'),
+    async () => check(false, `taken name refused (auth: "${await authText(D.page)}")`),
+  );
+  await D.page.fill('#pilotPass2', 'autre-chose');
+  await D.page.click('[data-act="online"]');
+  check(/ne correspondent pas/.test(await authText(D.page)), 'mismatched confirmation caught before sending');
+  await D.page.click('[data-tab="login"]');
+  await D.page.fill('#pilotName', 'Delta');
+  await D.page.fill('#pilotPass', 'mauvais-mot-de-passe');
+  await D.page.click('[data-act="online"]');
+  await waitFor(D.page, () => /incorrect/.test(document.querySelector('#authStatus')?.textContent ?? '') && document.querySelector('#serverStatus.ok'), null, 30000).then(
+    () => check(true, 'wrong password: "Pseudo ou mot de passe incorrect." and the menu stays usable'),
+    async () => check(false, `wrong password refused (auth: "${await authText(D.page)}")`),
+  );
+  check(await D.page.evaluate(() => window.__menu.isOpen), 'no game started after a refused login');
+  await D.page.screenshot({ path: `${out}/d-login-refused.png` });
+  await D.page.fill('#pilotPass', PASSWORD);
+  await D.page.click('[data-act="online"]');
+  await D.page.waitForFunction(() => window.__game.running && window.__game.inspect().status?.state === 'online' && window.__game.inspect().myName === 'Delta', null, { timeout: 120000 }).then(
+    () => check(true, 'password login after signing out'),
+    () => check(false, 'password login after signing out'),
+  );
+  check(A.errors.length === 0 && B.errors.length === 0 && D.errors.length === 0, `no page errors (${[...A.errors, ...B.errors, ...D.errors].join(' | ')})`);
 } catch (e) {
   failures.push(String(e?.message ?? e));
   console.log('ERROR', e);

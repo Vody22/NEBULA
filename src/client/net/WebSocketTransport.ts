@@ -1,4 +1,4 @@
-import { PROTOCOL_VERSION, type ClientMessage, type ServerMessage } from '../../shared/net/protocol';
+import { PROTOCOL_VERSION, type AuthRequest, type ClientMessage, type ServerMessage } from '../../shared/net/protocol';
 import type { NetStatus, Transport } from './Transport';
 
 export interface WebSocketTransportOptions {
@@ -6,26 +6,21 @@ export interface WebSocketTransportOptions {
   lagMs?: number;
   /** Random extra delay 0..jitter ms on each message (testing: ?jitter=40). */
   jitterMs?: number;
-  /** Where the reconnection token is kept (per tab, so two tabs are two pilots). */
-  storage?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null;
+  /** The server accepted the login: the token to keep for later visits. */
+  onAccount?: (a: { name: string; token: string; expiresAt: number; isNew: boolean }) => void;
+  /** The server refused the login (wrong password, expired token…). */
+  onAuthError?: (reason: string, text: string) => void;
 }
 
-const TOKEN_KEY = 'nebula-frontier.session';
 /** Errors after which reconnecting is pointless. */
-const FATAL = new Set(['full', 'version', 'kicked']);
-
-function sessionStore() {
-  try {
-    return window.sessionStorage;
-  } catch {
-    return null;
-  }
-}
+const FATAL = new Set(['full', 'version', 'kicked', 'auth']);
 
 /**
  * Online transport: talks to the Node GameServer over a WebSocket.
- * Outgoing messages are batched into one frame per rendered frame; the
- * connection is retried with back-off and the session resumed with its token.
+ * Outgoing messages are batched into one frame per rendered frame. The first
+ * connection logs in with the given credentials; once the server returns a
+ * login token, reconnections (network drop, server restart) use the token and
+ * the server resumes the pilot's session.
  */
 export class WebSocketTransport implements Transport {
   readonly online = true;
@@ -41,14 +36,12 @@ export class WebSocketTransport implements Transport {
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private closedByUs = false;
   private everConnected = false;
-  private storage: WebSocketTransportOptions['storage'];
 
   constructor(
     readonly url: string,
-    private name: string,
+    private auth: AuthRequest,
     private opts: WebSocketTransportOptions = {},
   ) {
-    this.storage = opts.storage === undefined ? sessionStore() : opts.storage;
     this.open();
   }
 
@@ -82,8 +75,8 @@ export class WebSocketTransport implements Transport {
     }
     this.ws = ws;
     ws.onopen = () => {
-      const token = this.storage?.getItem(TOKEN_KEY) ?? undefined;
-      this.delay(() => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify({ t: 'hello', version: PROTOCOL_VERSION, name: this.name, token })));
+      const hello: ClientMessage = { t: 'hello', version: PROTOCOL_VERSION, auth: this.auth };
+      this.delay(() => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify(hello)));
     };
     ws.onmessage = (ev) => {
       this.delay(() => {
@@ -120,17 +113,19 @@ export class WebSocketTransport implements Transport {
       this.status.error = undefined;
       this.everConnected = true;
       this.attempts = 0;
-      this.storage?.setItem(TOKEN_KEY, m.token);
       this.startPing();
+    } else if (m.t === 'account') {
+      // The password is not kept: reconnections use the token.
+      if (m.token) this.auth = { kind: 'token', token: m.token };
+      this.opts.onAccount?.(m);
+      return;
     } else if (m.t === 'pong') {
       const rtt = performance.now() - m.c;
       this.status.rtt = this.status.rtt ? this.status.rtt * 0.7 + rtt * 0.3 : rtt;
       return;
     } else if (m.t === 'error') {
-      if (FATAL.has(m.code)) {
-        if (m.code === 'kicked') this.storage?.removeItem(TOKEN_KEY);
-        this.fail(m.text);
-      }
+      if (m.code === 'auth') this.opts.onAuthError?.(m.reason ?? 'invalid', m.text);
+      if (FATAL.has(m.code)) this.fail(m.text);
     }
     this.inbox.push(m);
     // A hidden tab renders no frames: keep only what still matters instead of piling up snapshots.

@@ -4,6 +4,8 @@ import { extname, join, normalize, resolve, sep } from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { parseClientFrame, PROTOCOL_VERSION, type ServerMessage } from '../../shared/net/protocol';
 import { TICK_DT } from '../../shared/sim/world';
+import { AccountService, type AccountLimits } from '../accounts/AccountService';
+import { MemoryStore } from '../accounts/store';
 import { GameServer, type ClientLink } from '../GameServer';
 
 export interface NodeServerOptions {
@@ -21,15 +23,30 @@ export interface NodeServerOptions {
   npcs?: boolean;
   /** permessage-deflate on large frames (default on). */
   compression?: boolean;
+  /** Pilot accounts (default: in memory, lost on restart). */
+  accounts?: AccountService;
+  /** Limits of the default in-memory accounts (tools signing up many pilots from one address). */
+  accountLimits?: Partial<AccountLimits>;
   log?: (msg: string) => void;
 }
 
 export interface RunningServer {
   readonly game: GameServer;
+  readonly accounts: AccountService;
   readonly http: Server;
   readonly port: number;
+  /** Resolves once the accounts store answers (logins are refused before). */
+  readonly ready: Promise<void>;
+  /** Saves every pilot and the station stocks, then stops. */
   close(): Promise<void>;
 }
+
+/** Key of this sector's state in the store. */
+const SECTOR_KEY = 'aurora';
+/** Station stocks are written this often while pilots are online (and on shutdown). */
+const SECTOR_SAVE_MS = 5 * 60_000;
+/** A login that takes longer (database asleep and slow to wake) is abandoned. */
+const AUTH_TIMEOUT_MS = 20_000;
 
 /** Client messages allowed per second (inputs are 60/s), with a burst allowance. */
 const MSG_RATE = 150;
@@ -52,6 +69,19 @@ const MIME: Record<string, string> = {
   '.ico': 'image/x-icon',
   '.woff2': 'font/woff2',
 };
+
+/**
+ * The player's address, for the login limits. Render sits behind Cloudflare,
+ * which sets CF-Connecting-IP itself; X-Forwarded-For keeps whatever the
+ * client sent first, so it is only a fallback.
+ */
+function clientAddress(req: IncomingMessage): string {
+  const header = (name: string) => {
+    const v = req.headers[name];
+    return (Array.isArray(v) ? v[0] : v)?.split(',')[0]?.trim() || undefined;
+  };
+  return header('cf-connecting-ip') ?? header('x-forwarded-for') ?? req.socket.remoteAddress ?? '?';
+}
 
 /** One WebSocket client: buffers outgoing messages and flushes them as a single frame. */
 class WsLink implements ClientLink {
@@ -96,12 +126,20 @@ class WsLink implements ClientLink {
  */
 export function startServer(opts: NodeServerOptions): Promise<RunningServer> {
   const log = opts.log ?? ((m: string) => console.log(`[${new Date().toISOString()}] ${m}`));
+  const accounts = opts.accounts ?? new AccountService(new MemoryStore(), { log, limits: opts.accountLimits });
   const game = new GameServer({
     seed: opts.seed,
     snapshotEvery: opts.snapshotEvery ?? 3,
     maxPlayers: opts.maxPlayers ?? 30,
     reconnectGrace: opts.reconnectGrace,
     npcs: opts.npcs,
+    onSave: (id, save, final) => accounts.queueSave(id, save, final),
+  });
+  accounts.onTakenOver = (id) => game.dropAccount(id, 'Ce pilote vient de se connecter sur un autre serveur.');
+  const ready = accounts.start(async () => {
+    const sector = await accounts.loadSector(SECTOR_KEY);
+    const n = sector ? game.importSector(sector) : 0;
+    if (n) log(`sector: ${n} station stock lines restored`);
   });
   const origins = (opts.allowedOrigins ?? []).map((o) => o.trim().replace(/\/$/, '')).filter(Boolean);
   const anyOrigin = origins.length === 0 || origins.includes('*');
@@ -125,6 +163,19 @@ export function startServer(opts: NodeServerOptions): Promise<RunningServer> {
       res.writeHead(200, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' }).end('ok');
       return;
     }
+    if (url.pathname === '/logout' && req.method === 'POST') {
+      // Body: the login token as plain text (a "simple" cross-origin request, no preflight).
+      let body = '';
+      req.setEncoding('utf8');
+      req.on('data', (chunk: string) => {
+        body += chunk;
+        if (body.length > 256) req.destroy();
+      });
+      req.on('end', () => {
+        void accounts.revoke(body.trim(), clientAddress(req)).finally(() => res.writeHead(204, { 'Cache-Control': 'no-store' }).end());
+      });
+      return;
+    }
     if (url.pathname === '/status') {
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }).end(
         JSON.stringify({
@@ -135,6 +186,7 @@ export function startServer(opts: NodeServerOptions): Promise<RunningServer> {
           players: game.sessionCount,
           max: game.maxPlayers,
           wave: game.wave,
+          accounts: accounts.state === 'ready' ? accounts.store.kind : accounts.state,
           uptime: Math.round((Date.now() - started) / 1000),
         }),
       );
@@ -184,8 +236,11 @@ export function startServer(opts: NodeServerOptions): Promise<RunningServer> {
   function onConnection(ws: WebSocket, req: IncomingMessage) {
     const link = new WsLink(ws);
     links.add(link);
-    const addr = (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim() ?? req.socket.remoteAddress ?? '?';
+    const addr = clientAddress(req);
     let sessionId: string | null = null;
+    /** A hello is being checked (password hashing, database): further messages wait for the welcome. */
+    let authenticating = false;
+    let closed = false;
     let tokens = MSG_BURST;
     let lastRefill = Date.now();
     let violations = 0;
@@ -227,6 +282,7 @@ export function startServer(opts: NodeServerOptions): Promise<RunningServer> {
         }
         tokens--;
         if (!sessionId) {
+          if (authenticating) continue; // nothing to do before the welcome
           if (msg.t !== 'hello') {
             violations++;
             continue;
@@ -236,12 +292,40 @@ export function startServer(opts: NodeServerOptions): Promise<RunningServer> {
             link.close();
             return;
           }
-          const id = game.connect(link, msg.name, msg.token);
-          link.flush();
-          if (!id) return;
-          sessionId = id;
+          if (!msg.auth) {
+            link.send({ t: 'error', code: 'auth', reason: 'invalid', text: 'Connectez-vous avec votre pseudo et votre mot de passe.' });
+            link.close();
+            return;
+          }
+          authenticating = true;
           clearTimeout(helloTimer);
-          log(`join ${id} from ${addr} (${game.onlineCount}/${game.maxPlayers} online)`);
+          const kind = msg.auth.kind;
+          const authTimer = setTimeout(() => {
+            if (closed || sessionId) return;
+            link.send({ t: 'error', code: 'auth', reason: 'unavailable', text: 'Le serveur de comptes ne répond pas : réessayez dans un instant.' });
+            link.close();
+          }, AUTH_TIMEOUT_MS);
+          accounts.authenticate(msg.auth, addr).then((res) => {
+            clearTimeout(authTimer);
+            if (closed) return;
+            if (!res.ok) {
+              log(`auth refused (${kind}, ${res.reason}) from ${addr}`);
+              link.send({ t: 'error', code: 'auth', reason: res.reason, text: res.text });
+              link.close();
+              return;
+            }
+            const id = game.connect(link, res.profile);
+            if (!id) {
+              link.flush();
+              return;
+            }
+            sessionId = id;
+            authenticating = false;
+            link.send({ t: 'account', name: res.profile.name, token: res.token, expiresAt: res.expiresAt, isNew: res.isNew });
+            if (res.isNew) link.send({ t: 'notice', text: `Compte créé : bienvenue, ${res.profile.name}. Votre progression est sauvegardée.`, tone: 'good' });
+            link.flush();
+            log(`join ${id} pilot ${res.profile.accountId}${res.isNew ? ' (new)' : ''} by ${kind} from ${addr} (${game.onlineCount}/${game.maxPlayers} online)`);
+          });
           continue;
         }
         game.receive(sessionId, msg);
@@ -250,6 +334,7 @@ export function startServer(opts: NodeServerOptions): Promise<RunningServer> {
     });
 
     ws.on('close', () => {
+      closed = true;
       clearTimeout(helloTimer);
       clearInterval(heartbeat);
       links.delete(link);
@@ -277,6 +362,12 @@ export function startServer(opts: NodeServerOptions): Promise<RunningServer> {
     }
   }, 4);
 
+  // Station stocks outlive restarts; written only while someone plays, so a sleeping database can stay asleep.
+  const sectorTimer = setInterval(() => {
+    if (game.onlineCount > 0) void accounts.saveSector(SECTOR_KEY, game.exportSector());
+  }, SECTOR_SAVE_MS);
+  sectorTimer.unref?.();
+
   return new Promise((resolveStart, reject) => {
     http.once('error', reject);
     http.listen(opts.port, opts.host ?? '0.0.0.0', () => {
@@ -285,19 +376,25 @@ export function startServer(opts: NodeServerOptions): Promise<RunningServer> {
       log(`NEBULA FRONTIER server on :${port} (ws path /ws, max ${game.maxPlayers} players, origins ${anyOrigin ? '*' : origins.join(' ')}${staticRoot ? `, static ${staticRoot}` : ''})`);
       resolveStart({
         game,
+        accounts,
         http,
         port,
-        close: () =>
-          new Promise<void>((done) => {
-            clearInterval(loop);
-            for (const l of links) {
-              l.send({ t: 'notice', text: 'Redémarrage du serveur…', tone: 'warn' });
-              l.close();
-            }
-            wss.close();
-            http.closeAllConnections?.();
-            http.close(() => done());
-          }),
+        ready,
+        close: async () => {
+          clearInterval(loop);
+          clearInterval(sectorTimer);
+          // Save before closing the sockets: a pilot reconnecting to the next server finds its progress written.
+          game.persistAll();
+          if (accounts.state === 'ready') await accounts.saveSector(SECTOR_KEY, game.exportSector());
+          await accounts.close();
+          for (const l of links) {
+            l.send({ t: 'notice', text: 'Redémarrage du serveur…', tone: 'warn' });
+            l.close();
+          }
+          wss.close();
+          http.closeAllConnections?.();
+          await new Promise<void>((done) => http.close(() => done()));
+        },
       });
     });
   });

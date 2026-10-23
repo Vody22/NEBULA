@@ -1,7 +1,7 @@
 # NEBULA FRONTIER
 
 MMO spatial 3D dans le navigateur (Three.js + TypeScript + Vite).
-Version actuelle : **v0.2, multijoueur en ligne** : plusieurs pilotes dans le même secteur, en temps réel, avec un serveur Node.js autoritaire. Le mode solo hors ligne reste disponible.
+Version actuelle : **v0.4, comptes pilotes et sauvegarde**. Plusieurs pilotes partagent le même secteur en temps réel, avec un serveur Node.js autoritaire. On y mine, on commerce entre deux stations, et la progression est sauvegardée. Le mode solo hors ligne reste disponible.
 
 ![Station Aurora-7](docs/img/station.png)
 
@@ -23,9 +23,20 @@ Options d'URL :
 
 Mise en ligne : voir [docs/DEPLOIEMENT.md](docs/DEPLOIEMENT.md). Le client reste sur Vercel, et le serveur WebSocket va sur Render, Fly.io ou un VPS.
 
+## Comptes et sauvegarde (v0.4)
+
+- **Compte pilote** : pseudo et mot de passe, sans e-mail. Le navigateur garde la session 30 jours.
+- **Progression** : crédits, soute, score, coque et station de retour. On revient à quai là où on s'est amarré la dernière fois, même après un redémarrage du serveur. Les stocks des stations sont gardés aussi.
+- **Solo** : la progression reste dans le navigateur, séparément du compte en ligne.
+- Base PostgreSQL (Neon) côté serveur. Détails : [docs/V04_PERSISTANCE.md](docs/V04_PERSISTANCE.md).
+
+## Économie (v0.3)
+
+Amarrage aux stations Aurora-7 et Ferro-9, minage d'astéroïdes, commerce avec des prix qui suivent les stocks, réparations. Détails : [docs/V03_ECONOMIE.md](docs/V03_ECONOMIE.md).
+
 ## Multijoueur (v0.2)
 
-- **Connexion** : choix d'un pseudo, « Jouer en ligne » ou « Solo hors ligne ». Le menu indique si le serveur répond et combien de pilotes sont connectés.
+- **Connexion** : « Jouer en ligne » (avec un compte) ou « Solo hors ligne ». Le menu indique si le serveur répond et combien de pilotes sont connectés.
 - **Synchronisation** : positions, rotations, vitesses, poussée et boost, tirs, boucliers, coque, dégâts, destructions, réapparitions et PNJ. Tout est calculé par le serveur.
   - Le vaisseau du joueur est prédit localement, puis réconcilié avec le serveur.
   - Les autres vaisseaux sont interpolés.
@@ -36,7 +47,7 @@ Mise en ligne : voir [docs/DEPLOIEMENT.md](docs/DEPLOIEMENT.md). Le client reste
   - Historique récent et protection contre le spam.
   - La souris continue de piloter pendant la saisie.
 - **Interface** : état de la connexion, nombre de pilotes, latence, pseudo, noms au-dessus des vaisseaux, liste des pilotes (`Tab`), messages d'arrivée et de départ.
-- **Déconnexions** : le vaisseau d'un pilote déconnecté coupe ses moteurs, puis disparaît après 20 s. En revenant dans ce délai (même onglet, ou rechargement de la page), on retrouve son vaisseau et son score.
+- **Déconnexions** : le vaisseau d'un pilote déconnecté coupe ses moteurs, puis disparaît après 20 s. En revenant dans ce délai (même onglet, ou rechargement de la page), on retrouve son vaisseau en vol ; plus tard, on revient à quai avec sa progression.
 
 ## Contenu de la v0.1
 
@@ -102,14 +113,15 @@ src/
   shared/          Code commun client + futur serveur (aucun DOM, aucun rendu)
     sim/           World (simulation autoritaire à 60 Hz), physique, combat, IA, zone
     net/protocol   Messages client/serveur, snapshots, validation des entrées
-  server/          GameServer : sessions, IA, raids pirates, réapparitions, chat, PvP (indépendant du transport)
+  server/          GameServer : sessions, IA, raids pirates, réapparitions, chat, PvP, économie (indépendant du transport)
+    accounts/      Comptes pilotes : mots de passe, jetons, limites, stockage mémoire ou PostgreSQL
     node/          Serveur Node.js : HTTP + WebSocket /ws, configuration par variables d'environnement
   client/
     net/           Transport (frontière réseau), LocalTransport (solo), WebSocketTransport (en ligne), prédiction, interpolation
-    ui/            Menu (pseudo, en ligne / solo, pause, commandes, options), chat
+    ui/            Menu (connexion / inscription, en ligne / solo, pause, commandes, options), chat, écran de station
     render/        Ciel, planètes, astéroïdes, station, vaisseaux, lasers, effets, post-traitement
     hud/ input/ camera/ audio/
-tests/             Tests Vitest : simulation, serveur, réseau (vrais WebSockets), prédiction
+tests/             Tests Vitest : simulation, serveur, réseau (vrais WebSockets), prédiction, comptes, sauvegardes, PostgreSQL
 scripts/           Tests de bout en bout dans Chromium (WebGL logiciel)
 ```
 
@@ -124,12 +136,13 @@ Principes, détaillés dans [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) :
 
 ```bash
 npm run typecheck   # TypeScript strict
-npm test            # tests : physique, combat, énergie, raids, réglages, serveur, réseau, prédiction
+npm test            # tests : physique, combat, énergie, raids, réglages, serveur, réseau, prédiction, comptes, sauvegardes
+TEST_DATABASE_URL=postgres://… npm test   # en plus : le stockage PostgreSQL sur une base jetable (ses tables nf_* sont effacées)
 npm run build       # build de production
 npm run preview &   # puis :
 npm run smoke       # lance le jeu dans Chromium headless, pilote, tire et fait des captures
-npm run ui-check    # HUD à 3 tailles, menu pause, réaffectation, réglages, tirs F/clic (solo)
-node scripts/mp-check.mjs    # 3 navigateurs sur le vrai serveur : synchro, chat, combat commun, PvP, latence, reconnexion
+npm run ui-check    # HUD à 3 tailles, menu pause, réaffectation, réglages, tirs, amarrage, commerce, minage, sauvegarde solo
+node scripts/mp-check.mjs    # navigateurs sur le vrai serveur : inscription, synchro, chat, combat commun, PvP, latence, reconnexion, connexion refusée puis acceptée
 node scripts/mobile-check.mjs   # téléphone et tablette émulés : commandes tactiles, mise en page, chat et PvP en ligne
 node scripts/load-test.mjs 30 30   # 30 pilotes robots pendant 30 s : coût du tick et bande passante
 ```
@@ -138,5 +151,7 @@ Pour `npm run smoke`, définir `CHROMIUM_PATH` si Chromium n'est pas trouvé aut
 
 ## Feuille de route
 
-- **v0.2 : multijoueur** (cette version).
-- Ensuite : persistance (comptes, vaisseaux, crédits), minage, commerce et économie, missions, factions, nouveaux secteurs et sauts, version PC installable.
+- **v0.2 : multijoueur.**
+- **v0.3 : amarrage, minage et commerce.**
+- **v0.4 : comptes pilotes et sauvegarde** (cette version).
+- Ensuite : vaisseaux et améliorations à acheter, missions, factions, nouveaux secteurs et sauts, version PC installable.

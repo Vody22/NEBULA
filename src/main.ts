@@ -1,15 +1,16 @@
+import { clearAccount, loadAccount, saveAccount, type StoredAccount } from './client/account';
 import { Game } from './client/Game';
 import { isTouchDevice, TouchControls } from './client/input/Touch';
 import { isQualityLevel, QUALITY_LEVELS, resolveQuality } from './client/render/quality';
-import { probeServer, resolveServerUrl } from './client/net/config';
+import { probeServer, resolveServerUrl, revokeLogin } from './client/net/config';
 import { LocalTransport } from './client/net/LocalTransport';
 import type { Transport } from './client/net/Transport';
 import { WebSocketTransport } from './client/net/WebSocketTransport';
 import { keyLabel, loadSettings, saveSettings, type Settings } from './client/settings';
 import { BenchPanel } from './client/ui/BenchPanel';
 import { Chat } from './client/ui/Chat';
-import { Menu, type PlayMode } from './client/ui/Menu';
-import { PROTOCOL_VERSION } from './shared/net/protocol';
+import { Menu, type PlayMode, type StartRequest } from './client/ui/Menu';
+import { PROTOCOL_VERSION, type AuthRequest } from './shared/net/protocol';
 
 const params = new URLSearchParams(location.search);
 // Phones and tablets: touch controls, and the lighter quality level by default (?q=… to override).
@@ -70,6 +71,8 @@ if (params.has('diag')) {
 }
 
 const serverUrl = resolveServerUrl();
+/** The online login kept by this browser (token only, never the password). */
+let account: StoredAccount | null = loadAccount();
 let started = false;
 let mode: PlayMode | null = null;
 let connectWatch: ReturnType<typeof setInterval> | null = null;
@@ -98,15 +101,22 @@ game.callbacks = {
   onOpenChat: () => chat.open(),
   onToggleChat: () => chat.toggle(),
   onMenu: () => pause(),
-  onFatal: (_code, text) => {
-    // Server full, wrong version, session taken over: back to the title screen.
+  onFatal: (code, text) => {
+    // Server full, wrong version, session taken over, login refused: back to the title screen.
     leave();
-    menu.setServerStatus('bad', text);
+    // A refused login is shown under the form (see onAuthError), not as the server's state.
+    if (code !== 'auth') menu.setServerStatus('bad', text);
   },
 };
 
 const menu = new Menu(document.getElementById('menu')!, settings, {
-  onStart: (m, name) => begin(m, name),
+  onStart: (m, start) => begin(m, start),
+  onSignOut: () => {
+    // Forgotten here and revoked on the server: a shared computer keeps no usable session.
+    if (account && serverUrl) revokeLogin(serverUrl, account.token);
+    clearAccount();
+    account = null;
+  },
   onResume: () => resume(),
   onLeave: () => leave(),
   onSettingsChanged: (s: Settings) => {
@@ -118,6 +128,7 @@ const menu = new Menu(document.getElementById('menu')!, settings, {
   onBenchmark: () => location.assign('?bench'),
 });
 (window as unknown as { __menu: Menu }).__menu = menu;
+menu.setAccount(account ? { name: account.name } : null);
 
 function loop(timestamp: number) {
   game.frame(timestamp);
@@ -149,7 +160,7 @@ requestAnimationFrame(() => {
     }
     menu.show('start');
     checkServer();
-    if (params.has('autostart')) begin(params.has('online') ? 'online' : 'solo', settings.name || 'Pilote');
+    if (params.has('autostart')) begin(params.has('online') ? 'online' : 'solo', { name: account?.name ?? (settings.name || 'Pilote') });
   }, 30);
 });
 
@@ -194,14 +205,36 @@ function lagOptions() {
   return { lagMs: n('lag'), jitterMs: n('jitter') };
 }
 
-function begin(m: PlayMode, name: string) {
+function begin(m: PlayMode, start: StartRequest) {
   if (m === 'online') {
     if (!serverUrl) return;
-    menu.setServerStatus('busy', 'Connexion au serveur…');
-    const t = new WebSocketTransport(serverUrl, name, lagOptions());
+    const auth: AuthRequest | null = start.auth ?? (account ? { kind: 'token', token: account.token } : null);
+    if (!auth) {
+      menu.setAccount(null);
+      return;
+    }
+    menu.setServerStatus('busy', auth.kind === 'register' ? 'Création du compte…' : 'Connexion au serveur…');
+    const t = new WebSocketTransport(serverUrl, auth, {
+      ...lagOptions(),
+      onAccount: (a) => {
+        account = { name: a.name, token: a.token, expiresAt: a.expiresAt };
+        saveAccount(account);
+        menu.setAccount({ name: a.name });
+        menu.setAuthMessage('', '');
+      },
+      onAuthError: (reason, text) => {
+        // An expired or revoked token: forget it and ask for the password.
+        if (reason === 'expired' || (auth.kind === 'token' && reason === 'credentials')) {
+          clearAccount();
+          account = null;
+          menu.setAccount(null);
+        }
+        menu.setAuthMessage(text, 'bad');
+      },
+    });
     game.attach(t);
-    // Wait for the welcome before taking off; give up after a few seconds.
-    const deadline = performance.now() + 8000;
+    // Wait for the welcome before taking off; give up after a few seconds (logins can take longer: the database may be waking up).
+    const deadline = performance.now() + (auth.kind === 'token' ? 15000 : 25000);
     if (connectWatch) clearInterval(connectWatch);
     connectWatch = setInterval(() => {
       if (game.transport !== t) {
@@ -209,6 +242,11 @@ function begin(m: PlayMode, name: string) {
         return;
       }
       t.update(); // pump messages while the game loop is not running yet
+      if (game.transport !== t) {
+        // A fatal error (login refused…) already sent the player back to the menu.
+        clearInterval(connectWatch!);
+        return;
+      }
       if (t.status.state === 'online') {
         clearInterval(connectWatch!);
         takeOff('online', t);
@@ -220,7 +258,8 @@ function begin(m: PlayMode, name: string) {
     }, 50);
     return;
   }
-  const t = new LocalTransport(name || 'Pilote');
+  // Solo progress stays in this browser (and is separate from the online account).
+  const t = new LocalTransport(start.name || 'Pilote', { persist: true });
   game.attach(t);
   takeOff('solo', t);
 }
@@ -303,8 +342,12 @@ window.addEventListener('keydown', (e) => {
   }
 });
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) pause();
+  if (!document.hidden) return;
+  pause();
+  // Phones may close a background tab without warning: write the solo progress now.
+  game.transport?.persist?.();
 });
+window.addEventListener('pagehide', () => game.transport?.persist?.());
 canvas.addEventListener('click', () => {
   if (!touch && started && !menu.isOpen && !game.docked && !game.input.locked) game.input.requestLock();
 });

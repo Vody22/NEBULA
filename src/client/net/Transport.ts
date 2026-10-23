@@ -26,5 +26,7 @@ export interface Transport {
   /** Seconds of interpolation delay suited to this transport's snapshot rate and jitter. */
   readonly interpolationDelay: number;
   readonly label: string;
+  /** Writes any unsaved progress now (solo: this browser; online the server saves). */
+  persist?(): void;
   close(): void;
 }
