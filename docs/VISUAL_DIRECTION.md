@@ -404,7 +404,7 @@ Chaque étape fait l'objet d'un commit séparé sur `v0.2.5-graphics`, avec des 
   - Astéroïdes : quatre familles selon la variante déjà partagée avec le serveur (carbonées, agglomérats, silicatées à cassures planes, métalliques veinées), poussière claire dans les creux, relief fin par pixel (désactivé en Bas). Les formes restent entre 0,8 et 1,25 fois le rayon, ce qui reste cohérent avec la sphère de collision.
   - Non fait : déplacer ou réduire Kerys, car sa position et son rayon font partie de la zone partagée avec le serveur ; nappes de gaz de premier plan ; LOD et imposteurs des astéroïdes (étape 7).
 - **Correctif fluidité (écrans 120 à 165 Hz) :** le vaisseau du joueur est interpolé entre les deux derniers ticks de simulation (position, rotation et vitesse). La caméra de poursuite garde un retard qui ne dépend plus de la durée des images, et l'horloge suit l'horodatage de `requestAnimationFrame`. Tests : `tests/prediction.test.ts` (144 et 165 Hz) et `tests/camera.test.ts` (images irrégulières, images sautées). Aucun changement serveur ni protocole.
-- **Étape 4 (station Aurora-7, en revue) :** `src/client/render/Station.ts`.
+- **Étape 4 (station Aurora-7, validée par William) :** `src/client/render/Station.ts`.
   - Tôlerie à l'échelle (un motif tous les 24 m), fenêtres par ponts : la plupart des ponts sont sombres et seules quelques rangées sont éclairées, ce qui donne l'échelle humaine sans effet guirlande.
   - Modules de l'anneau en coques pressurisées arrondies avec bandes de renfort, blocs machines octogonaux sur la colonne, peinture sombre moins miroir.
   - Hangar dégagé du noyau, avec nervures, plafonnier, deux plateformes d'atterrissage, une baie de contrôle, un cadre renforcé et des contreforts latéraux.
@@ -413,6 +413,14 @@ Chaque étape fait l'objet d'un commit séparé sur `v0.2.5-graphics`, avec des 
   - Détails fins masqués au-delà de 5 km. Les collisions de la station (zone partagée avec le serveur) ne changent pas.
   - Captures : `screenshots/visual/step4/` (vues 06, 07, 12 et 13).
   - Limite honnête : c'est une station procédurale plus crédible, pas un modèle de production. Les mesures de triangles et d'appels de dessin sont prévues à l'étape 7.
+- **Étape 5 (effets de combat, en revue) :** `Effects.ts`, `Lasers.ts`, `ShipView.ts`.
+  - Lasers : rubans tournés vers la caméra, cœur blanc et halo couleur de faction, tête brillante et queue qui s'efface ; les tirs lointains gardent quelques pixels d'épaisseur. Éclair de bouche en deux couches, et une petite lumière sur la coque pour les tirs du joueur.
+  - Bouclier : presque invisible au repos ; un impact n'excite que la zone touchée (point blanc bref, cellules et onde qui s'éloigne), au lieu d'allumer toute la bulle.
+  - Coque : chaque impact laisse une marque de métal en fusion posée sur la surface réelle (lancer de rayon sur le maillage), qui passe du blanc à l'orange puis au rouge et s'éteint en 2,6 s. Sous 50 % de coque, jusqu'à quatre feux vacillent sur le vaisseau, en plus de la traînée de fumée.
+  - Explosions : éclair aveuglant, boule de feu dense qui refroidit du jaune au rouge, une à quatre explosions secondaires, débris (plaques, morceaux, tubes) dont une partie brûle en laissant des braises et de la fumée, nuage de poussière qui reste plusieurs secondes. Les anneaux d'onde de choc, peu crédibles dans le vide, sont supprimés.
+  - Les shaders des effets sont compilés au chargement du secteur, pour éviter un à-coup au premier tir ou à la première destruction.
+  - Coût : nombre de particules multiplié par le réglage Qualité (0,35 en Bas). Aucun changement serveur ni protocole.
+  - Outil : `scripts/vfx-capture.mjs` (moments figés, identiques à chaque capture). Captures : `screenshots/vfx/before/` et `screenshots/vfx/step5/`.
 
 ### Budgets par image (niveau Élevé)
 

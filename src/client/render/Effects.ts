@@ -76,7 +76,8 @@ class ParticlePool {
     this.points.frustumCulled = false;
   }
 
-  emit(p: THREE.Vector3, v: THREE.Vector3, c0: THREE.Color, c1: THREE.Color, size0: number, size1: number, life: number, drag = 0, alpha = 1) {
+  /** `delay` (s) holds the particle back, invisible, before it starts. */
+  emit(p: THREE.Vector3, v: THREE.Vector3, c0: THREE.Color, c1: THREE.Color, size0: number, size1: number, life: number, drag = 0, alpha = 1, delay = 0) {
     const part = this.parts[this.cursor];
     this.cursor = (this.cursor + 1) % this.max;
     part.alive = true;
@@ -87,7 +88,7 @@ class ParticlePool {
     part.size0 = size0;
     part.size1 = size1;
     part.life = life;
-    part.age = 0;
+    part.age = -delay;
     part.drag = drag;
     part.alpha = alpha;
   }
@@ -100,7 +101,7 @@ class ParticlePool {
         part.age += dt;
         if (part.age >= part.life) part.alive = false;
       }
-      if (!part.alive) {
+      if (!part.alive || part.age < 0) {
         this.size[i] = 0;
         this.col[i * 4 + 3] = 0;
         continue;
@@ -125,21 +126,25 @@ class ParticlePool {
   }
 }
 
-interface Shockwave {
-  mesh: THREE.Mesh;
-  age: number;
-  life: number;
-  size: number;
-}
-
 interface Debris {
   mesh: THREE.Mesh;
   v: THREE.Vector3;
   spin: THREE.Vector3;
   age: number;
   life: number;
+  /** Seconds it keeps burning (ember and smoke trail). */
+  burn: number;
+  emitAcc: number;
 }
 
+interface Pending {
+  pos: THREE.Vector3;
+  vel: THREE.Vector3;
+  scale: number;
+  delay: number;
+}
+
+const _lightColor = new THREE.Color();
 const rnd = () => Math.random() * 2 - 1;
 const randDir = (out: THREE.Vector3) => {
   do out.set(rnd(), rnd(), rnd());
@@ -147,20 +152,22 @@ const randDir = (out: THREE.Vector3) => {
   return out.normalize();
 };
 
-/** Explosions, sparks, muzzle flashes, impacts, smoke, debris and flash lights. */
+/** Explosions, sparks, muzzle flashes, impacts, smoke, burning debris and flash lights. */
 export class Effects {
   readonly group = new THREE.Group();
   private glow: ParticlePool;
   private smoke: ParticlePool;
-  private waves: Shockwave[] = [];
   private debris: Debris[] = [];
+  private pending: Pending[] = [];
+  /** Lights 0-2 flash for explosions and hits, light 3 for the player's own guns. */
   private lights: { light: THREE.PointLight; age: number; life: number; peak: number }[] = [];
   private v = new THREE.Vector3();
   private d = new THREE.Vector3();
   private debrisMat: THREE.MeshStandardMaterial;
+  private debrisGeos: THREE.BufferGeometry[];
+  private warm: THREE.Mesh | null = null;
   /** Particle count multiplier (graphics quality). */
   density = 1;
-  private waveMat: THREE.MeshBasicMaterial;
 
   constructor() {
     const soft = makeRadialTexture([
@@ -174,29 +181,37 @@ export class Effects {
       [0.5, 'rgba(255,255,255,0.4)'],
       [1, 'rgba(255,255,255,0)'],
     ], 128);
-    this.glow = new ParticlePool(5000, true, soft);
-    this.smoke = new ParticlePool(1500, false, puff);
+    this.glow = new ParticlePool(6000, true, soft);
+    this.smoke = new ParticlePool(1800, false, puff);
     this.group.add(this.smoke.points, this.glow.points);
 
-    this.waveMat = new THREE.MeshBasicMaterial({
-      map: makeRadialTexture([
-        [0, 'rgba(255,255,255,0)'],
-        [0.75, 'rgba(255,255,255,0)'],
-        [0.92, 'rgba(255,255,255,0.9)'],
-        [1, 'rgba(255,255,255,0)'],
-      ]),
-      color: new THREE.Color(0.9, 0.6, 0.4),
-      transparent: true,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      side: THREE.DoubleSide,
-      toneMapped: false,
-    });
-    this.debrisMat = new THREE.MeshStandardMaterial({ color: 0x55504c, metalness: 0.6, roughness: 0.6, emissive: new THREE.Color(0.6, 0.2, 0.05) });
+    // Torn hull plates and structural chunks.
+    this.debrisMat = new THREE.MeshStandardMaterial({ color: 0x8a8580, metalness: 0.7, roughness: 0.5, emissive: new THREE.Color(0.25, 0.07, 0.015) });
+    this.debrisGeos = [
+      new THREE.BoxGeometry(1, 0.12, 1.3),
+      new THREE.BoxGeometry(0.6, 0.6, 1.6),
+      new THREE.TetrahedronGeometry(0.8),
+      new THREE.CylinderGeometry(0.25, 0.35, 1.8, 6),
+    ];
     for (let i = 0; i < 4; i++) {
       const light = new THREE.PointLight(0xffaa66, 0, 900, 1.6);
       this.group.add(light);
       this.lights.push({ light, age: 1, life: 1, peak: 0 });
+    }
+  }
+
+  /**
+   * Debris only exists during explosions: while `on`, a hidden piece sits in
+   * the scene so the renderer can compile its shader ahead of the first kill.
+   */
+  warmUp(on: boolean) {
+    if (on && !this.warm) {
+      this.warm = new THREE.Mesh(this.debrisGeos[0], this.debrisMat);
+      this.warm.scale.setScalar(1e-4);
+      this.group.add(this.warm);
+    } else if (!on && this.warm) {
+      this.group.remove(this.warm);
+      this.warm = null;
     }
   }
 
@@ -206,56 +221,89 @@ export class Effects {
     this.smoke.material.uniforms.uScale.value = s;
   }
 
-  private flashLight(pos: THREE.Vector3, peak: number, life: number, color: THREE.Color) {
-    const slot = this.lights.reduce((a, b) => (a.age / a.life > b.age / b.life ? a : b));
-    slot.light.position.copy(pos);
-    slot.light.color.copy(color);
-    slot.age = 0;
-    slot.life = life;
-    slot.peak = peak;
+  private flashLight(pos: THREE.Vector3, peak: number, life: number, color: THREE.Color, distance = 900, slot?: number) {
+    const l = slot !== undefined ? this.lights[slot] : this.lights.slice(0, 3).reduce((a, b) => (a.age / a.life > b.age / b.life ? a : b));
+    l.light.position.copy(pos);
+    l.light.color.copy(color);
+    l.light.distance = distance;
+    l.age = 0;
+    l.life = life;
+    l.peak = peak;
   }
 
+  /**
+   * A ship blowing up: white flash, a fireball that cools from yellow to deep
+   * red, one or two secondary blasts, torn plates trailing embers and smoke,
+   * and a dust cloud that lingers for several seconds.
+   */
   explosion(pos: THREE.Vector3, scale: number, vel = new THREE.Vector3()) {
-    const hot = new THREE.Color(2.2, 1.5, 0.8);
-    const orange = new THREE.Color(1.3, 0.42, 0.08);
-    const red = new THREE.Color(0.35, 0.05, 0.01);
-    for (let i = 0; i < 45 * scale * this.density; i++) {
+    const n = this.density;
+    // Flash: blinding for a few frames, then the light it casts fades.
+    this.glow.emit(pos, vel, new THREE.Color(6, 5, 4), new THREE.Color(1.5, 0.6, 0.2), 30 * scale, 90 * scale, 0.16);
+    this.glow.emit(pos, vel, new THREE.Color(3, 2.4, 1.6), new THREE.Color(0.6, 0.2, 0.05), 14 * scale, 50 * scale, 0.45);
+    this.fireball(pos, vel, scale);
+    // Sparks: hot metal flung out fast.
+    const spark = new THREE.Color(6, 3.4, 1.2);
+    const sparkEnd = new THREE.Color(1.2, 0.2, 0);
+    for (let i = 0; i < 80 * scale * n; i++) {
       randDir(this.d);
-      this.v.copy(this.d).multiplyScalar((20 + Math.random() * 90) * scale).add(vel.clone().multiplyScalar(0.5));
-      this.glow.emit(pos, this.v, i % 3 ? orange : hot, red, (4 + Math.random() * 5) * scale, (14 + Math.random() * 16) * scale, 0.7 + Math.random() * 0.9, 1.5);
+      this.v.copy(this.d).multiplyScalar(120 + Math.random() * 300).add(vel);
+      this.glow.emit(pos, this.v, spark, sparkEnd, 1.3, 0.5, 0.5 + Math.random() * 1.4, 0.5);
     }
-    // core flash
-    this.glow.emit(pos, vel.clone().multiplyScalar(0.5), new THREE.Color(4, 3.2, 2.4), new THREE.Color(0.8, 0.25, 0.08), 12 * scale, 40 * scale, 0.3, 0);
-    // sparks
-    const spark = new THREE.Color(5, 3, 1.2);
-    for (let i = 0; i < 70 * scale * this.density; i++) {
-      randDir(this.d);
-      this.v.copy(this.d).multiplyScalar(120 + Math.random() * 260).add(vel);
-      this.glow.emit(pos, this.v, spark, new THREE.Color(1.5, 0.3, 0), 1.2, 0.6, 0.6 + Math.random() * 1.2, 0.6);
+    // Secondary blasts as fuel and ammunition go up.
+    const extra = 1 + Math.floor(Math.random() * 2 + (scale > 1.4 ? 2 : 0));
+    for (let k = 0; k < extra; k++) {
+      this.pending.push({
+        pos: pos.clone().add(randDir(new THREE.Vector3()).multiplyScalar((3 + Math.random() * 6) * scale)),
+        vel: vel.clone(),
+        scale: scale * (0.45 + Math.random() * 0.3),
+        delay: 0.12 + k * 0.17 + Math.random() * 0.1,
+      });
     }
-    // smoke
-    for (let i = 0; i < 26 * scale * this.density; i++) {
-      randDir(this.d);
-      this.v.copy(this.d).multiplyScalar((6 + Math.random() * 24) * scale).add(vel.clone().multiplyScalar(0.3));
-      this.smoke.emit(pos, this.v, new THREE.Color(0.12, 0.1, 0.09), new THREE.Color(0.05, 0.05, 0.06), 8 * scale, 34 * scale, 2.5 + Math.random() * 2.5, 0.6, 0.5);
-    }
-    // shockwave rings
-    for (let k = 0; k < 2; k++) {
-      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), this.waveMat.clone());
+    // Torn plates and chunks, some still burning.
+    for (let i = 0; i < Math.max(4, 14 * scale * n); i++) {
+      const s = (0.5 + Math.random() * 2) * Math.min(scale, 1.6);
+      const mesh = new THREE.Mesh(this.debrisGeos[i % this.debrisGeos.length], this.debrisMat);
+      mesh.scale.setScalar(s);
       mesh.position.copy(pos);
-      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), randDir(this.d));
+      mesh.rotation.set(Math.random() * 6, Math.random() * 6, Math.random() * 6);
       this.group.add(mesh);
-      this.waves.push({ mesh, age: 0, life: 0.8 + k * 0.3, size: (55 + k * 30) * scale });
+      this.debris.push({
+        mesh,
+        v: randDir(new THREE.Vector3()).multiplyScalar(20 + Math.random() * 80).add(vel.clone().multiplyScalar(0.6)),
+        spin: new THREE.Vector3(rnd(), rnd(), rnd()).multiplyScalar(4),
+        age: 0,
+        life: 5 + Math.random() * 4,
+        burn: Math.random() < 0.6 ? 0.8 + Math.random() * 1.8 : 0,
+        emitAcc: 0,
+      });
     }
-    // debris chunks
-    for (let i = 0; i < 10 * scale * this.density; i++) {
-      const s = 0.4 + Math.random() * 1.6;
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(s, s * 0.4, s * 1.4), this.debrisMat);
-      mesh.position.copy(pos);
-      this.group.add(mesh);
-      this.debris.push({ mesh, v: randDir(new THREE.Vector3()).multiplyScalar(30 + Math.random() * 90).add(vel.clone().multiplyScalar(0.6)), spin: new THREE.Vector3(rnd(), rnd(), rnd()).multiplyScalar(6), age: 0, life: 4 + Math.random() * 3 });
+    // Dust and smoke: grey-brown, faintly lit, drifting apart for seconds.
+    for (let i = 0; i < 34 * scale * n; i++) {
+      randDir(this.d);
+      this.v.copy(this.d).multiplyScalar((5 + Math.random() * 22) * scale).add(vel.clone().multiplyScalar(0.3));
+      const c0 = new THREE.Color(0.32, 0.27, 0.23);
+      this.smoke.emit(pos, this.v, c0, new THREE.Color(0.1, 0.1, 0.11), 10 * scale, (40 + Math.random() * 30) * scale, 4 + Math.random() * 4, 0.35, 0.55, 0.08 + Math.random() * 0.25);
     }
-    this.flashLight(pos, 3e4 * scale, 0.8, new THREE.Color(1, 0.6, 0.3));
+    this.flashLight(pos, 4e4 * scale, 1.1, new THREE.Color(1, 0.62, 0.32), 900 * Math.sqrt(scale));
+  }
+
+  /** Billowing fire: overlapping puffs that grow and cool from yellow to red. */
+  private fireball(pos: THREE.Vector3, vel: THREE.Vector3, scale: number) {
+    const n = this.density;
+    const hot = new THREE.Color(3.2, 2.2, 1.1);
+    const orange = new THREE.Color(2.2, 0.85, 0.2);
+    const ember = new THREE.Color(0.4, 0.06, 0.01);
+    // Many overlapping puffs with a dense core, so it reads as one billowing
+    // mass rather than separate balls.
+    for (let i = 0; i < 110 * scale * n + 10; i++) {
+      randDir(this.d);
+      const r = Math.pow(Math.random(), 0.8);
+      this.v.copy(this.d).multiplyScalar((6 + r * 42) * scale).add(vel.clone().multiplyScalar(0.5));
+      const p = this.d.clone().multiplyScalar(r * 4 * scale).add(pos);
+      const life = 0.7 + Math.random() * 1.1 * (1.2 - r * 0.5);
+      this.glow.emit(p, this.v, i % 3 ? orange : hot, ember, (4 + Math.random() * 5) * scale, (12 + Math.random() * 14) * scale, life, 2.2, 0.7, Math.random() * 0.1);
+    }
   }
 
   shieldSparks(pos: THREE.Vector3, color: THREE.Color) {
@@ -287,8 +335,11 @@ export class Effects {
     this.smoke.emit(pos, this.v.set(rnd(), rnd(), rnd()).multiplyScalar(4), new THREE.Color(0.35, 0.3, 0.27), new THREE.Color(0.2, 0.18, 0.16), 4, 18, 1.5, 0.4, 0.35);
   }
 
-  muzzle(pos: THREE.Vector3, vel: THREE.Vector3, color: THREE.Color) {
-    this.glow.emit(pos, vel, color, new THREE.Color(0, 0, 0), 3.5, 1.2, 0.06);
+  /** `light`: the player's own guns light up the hull around the muzzle. */
+  muzzle(pos: THREE.Vector3, vel: THREE.Vector3, color: THREE.Color, light = false) {
+    this.glow.emit(pos, vel, new THREE.Color(5, 5, 5), color, 2.2, 0.8, 0.05);
+    this.glow.emit(pos, vel, color, new THREE.Color(0, 0, 0), 5, 2, 0.08);
+    if (light) this.flashLight(pos, 600, 0.07, _lightColor.copy(color).multiplyScalar(1 / Math.max(color.r, color.g, color.b)), 40, 3);
   }
 
   /** Damaged ships trail smoke and embers. */
@@ -304,29 +355,21 @@ export class Effects {
   }
 
   update(dt: number) {
-    this.glow.update(dt);
-    this.smoke.update(dt);
-    for (let i = this.waves.length - 1; i >= 0; i--) {
-      const w = this.waves[i];
-      w.age += dt;
-      const t = w.age / w.life;
-      if (t >= 1) {
-        this.group.remove(w.mesh);
-        w.mesh.geometry.dispose();
-        (w.mesh.material as THREE.Material).dispose();
-        this.waves.splice(i, 1);
-        continue;
-      }
-      const e = 1 - Math.pow(1 - t, 3);
-      w.mesh.scale.setScalar(w.size * e + 1);
-      (w.mesh.material as THREE.MeshBasicMaterial).opacity = 1 - t;
+    // Secondary blasts whose time has come.
+    for (let i = this.pending.length - 1; i >= 0; i--) {
+      const b = this.pending[i];
+      b.delay -= dt;
+      if (b.delay > 0) continue;
+      this.pending.splice(i, 1);
+      this.glow.emit(b.pos, b.vel, new THREE.Color(4, 3, 2), new THREE.Color(0.8, 0.25, 0.05), 12 * b.scale, 40 * b.scale, 0.22);
+      this.fireball(b.pos, b.vel, b.scale);
+      this.flashLight(b.pos, 1.5e4 * b.scale, 0.5, new THREE.Color(1, 0.55, 0.25));
     }
     for (let i = this.debris.length - 1; i >= 0; i--) {
       const d = this.debris[i];
       d.age += dt;
       if (d.age > d.life) {
         this.group.remove(d.mesh);
-        d.mesh.geometry.dispose();
         this.debris.splice(i, 1);
         continue;
       }
@@ -334,8 +377,23 @@ export class Effects {
       d.mesh.rotation.x += d.spin.x * dt;
       d.mesh.rotation.y += d.spin.y * dt;
       d.mesh.rotation.z += d.spin.z * dt;
-      d.mesh.scale.setScalar(Math.min(1, (d.life - d.age) / 0.6));
+      if (d.age > d.life - 0.6) d.mesh.scale.multiplyScalar(Math.max(0, 1 - dt / Math.max(0.01, d.life - d.age)));
+      // Burning pieces trail embers and a thin smoke line while they cool.
+      if (d.age < d.burn) {
+        const heat = 1 - d.age / d.burn;
+        d.emitAcc += dt * 60 * this.density;
+        while (d.emitAcc >= 1) {
+          d.emitAcc--;
+          this.v.copy(d.v).multiplyScalar(0.15).add(this.d.set(rnd(), rnd(), rnd()).multiplyScalar(2));
+          this.glow.emit(d.mesh.position, this.v, new THREE.Color(4 * heat + 0.6, 1.6 * heat + 0.15, 0.3 * heat), new THREE.Color(0.3, 0.03, 0), 1.8 * heat + 0.5, 0.3, 0.35 + 0.3 * heat, 0.5);
+          if (Math.random() < 0.3) {
+            this.smoke.emit(d.mesh.position, this.v, new THREE.Color(0.22, 0.2, 0.18), new THREE.Color(0.08, 0.08, 0.09), 1.2, 6, 1.5 + Math.random(), 0.4, 0.45);
+          }
+        }
+      }
     }
+    this.glow.update(dt);
+    this.smoke.update(dt);
     for (const l of this.lights) {
       l.age += dt;
       const t = Math.min(1, l.age / l.life);

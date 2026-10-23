@@ -18,6 +18,19 @@ function lightSprite(color: THREE.Color, size: number, pos: THREE.Vector3) {
 }
 const _torque = new THREE.Vector3();
 const _w = new THREE.Vector3();
+const _ray = new THREE.Raycaster();
+const _from = new THREE.Vector3();
+const _dir = new THREE.Vector3();
+const _n = new THREE.Matrix3();
+
+/** Glowing weld of molten metal left by a hull hit: white, orange, red, then dark. */
+const SCORCH_LIFE = 2.6;
+const _hot = new THREE.Color(4, 3, 1.6);
+const _warm = new THREE.Color(2.2, 0.6, 0.1);
+const _cold = new THREE.Color(0.35, 0.04, 0);
+function scorchColor(t: number, out: THREE.Color) {
+  return t < 0.15 ? out.copy(_hot).lerp(_warm, t / 0.15) : out.copy(_warm).lerp(_cold, (t - 0.15) / 0.85);
+}
 
 const flameVert = /* glsl */ `
 varying vec2 vUv;
@@ -59,18 +72,25 @@ varying vec3 vLocal;
 varying vec3 vView;
 void main(){
   float fres = pow(clamp(1.0 - abs(dot(normalize(vN), normalize(vView))), 0.0, 1.0), 2.5);
-  float hex = 0.6 + 0.4*sin(vLocal.x*40.0)*sin(vLocal.y*40.0)*sin(vLocal.z*40.0);
-  float a = fres * uFlash * 0.9 * hex;
+  // Fine cells, drawn as thin bright lines only where the field is excited.
+  float cells = abs(sin(vLocal.x*46.0)*sin(vLocal.y*46.0)*sin(vLocal.z*46.0));
+  float lines = 0.35 + 0.65 * smoothstep(0.55, 0.0, cells);
+  // At rest the field is a faint film on the rim, almost invisible.
+  vec3 col = uColor * fres * uFlash * 0.03;
   for (int i=0;i<4;i++){
     float age = uTime - uHits[i].w;
     if (age < 0.0 || age > 0.8) continue;
+    float fade = 1.0 - age/0.8;
     float d = acos(clamp(dot(vLocal, uHits[i].xyz), -1.0, 1.0));
-    float rd = (d - age*3.2)*7.0;
-    float ring = exp(-rd*rd) * (1.0 - age/0.8);
-    float spot = exp(-d*d*18.0) * (1.0 - age/0.35) * step(age, 0.35);
-    a += (ring*1.3 + spot*2.5) * hex;
+    // The impact excites the field around it, a ripple runs outward and dies.
+    float near = exp(-d*d*14.0);
+    float rd = (d - age*1.2)*12.0;
+    float ring = exp(-rd*rd) * fade * near;
+    float glow = near * fade * fade * (0.25 + fres);
+    float spot = exp(-d*d*150.0) * max(0.0, 1.0 - age/0.2);
+    col += uColor * (ring*1.4 + glow*0.5) * lines + vec3(1.0) * spot * 1.2;
   }
-  gl_FragColor = vec4(uColor * a, 1.0);
+  gl_FragColor = vec4(col, 1.0);
 }`;
 
 const TRAIL_POINTS = 44;
@@ -159,6 +179,13 @@ export class ShipView {
   /** RCS puffs and the axis each one turns the ship around (unit torque). */
   private rcs: { sprite: THREE.Sprite; torque: THREE.Vector3; level: number }[] = [];
   readonly light: THREE.PointLight | null;
+  private scorches: { sprite: THREE.Sprite; age: number }[] = [];
+  private scorchIndex = 0;
+  /** Fires on a badly damaged hull, at points found on the surface once. */
+  private fires: THREE.Sprite[] = [];
+  private damage = 0;
+  /** The hull's meshes, for placing marks (sprites cannot be raycast without a camera). */
+  private hullMeshes: THREE.Object3D[] | null = null;
 
   constructor(readonly classId: ShipClassId, scene: THREE.Scene, private isLocal: boolean) {
     this.model = buildShipModel(classId);
@@ -236,6 +263,64 @@ export class ShipView {
     scene.add(this.group);
   }
 
+  /**
+   * Where a ray from `worldPos` toward the ship's centre meets the hull, in
+   * local coordinates, lifted a little off the surface. Null if it misses.
+   */
+  private hullPoint(worldPos: THREE.Vector3): THREE.Vector3 | null {
+    this.group.updateMatrixWorld();
+    _from.copy(worldPos);
+    _dir.copy(this.group.position).sub(_from);
+    const dist = _dir.length();
+    if (dist < 1e-3) return null;
+    // Start outside the shield so the ray always meets the outer skin first.
+    _from.addScaledVector(_dir.normalize(), -this.model.shieldScale.z);
+    _ray.set(_from, _dir);
+    _ray.far = dist + this.model.shieldScale.z * 2;
+    if (!this.hullMeshes) {
+      const meshes: THREE.Object3D[] = [];
+      this.model.root.traverse((o) => {
+        if ((o as THREE.Mesh).isMesh) meshes.push(o);
+      });
+      this.hullMeshes = meshes;
+    }
+    const hit = _ray.intersectObjects(this.hullMeshes, false)[0];
+    if (!hit) return null;
+    const p = hit.point.clone();
+    if (hit.face) p.addScaledVector(hit.face.normal.clone().applyMatrix3(_n.getNormalMatrix(hit.object.matrixWorld)).normalize(), 0.08);
+    return this.group.worldToLocal(p);
+  }
+
+  /** A hull hit leaves a glowing mark on the ship that cools in a few seconds. */
+  hullHit(worldPos: THREE.Vector3) {
+    const local = this.hullPoint(worldPos);
+    if (!local) return;
+    let slot = this.scorches[this.scorchIndex++ % 6];
+    if (!slot) {
+      slot = { sprite: lightSprite(new THREE.Color(), 1, local), age: SCORCH_LIFE };
+      this.scorches.push(slot);
+      this.group.add(slot.sprite);
+    }
+    slot.sprite.position.copy(local);
+    slot.age = 0;
+  }
+
+  /** 0 = intact, 1 = about to break up: fires break out on the hull below half. */
+  setDamage(level: number) {
+    this.damage = level;
+    const want = level > 0.5 ? Math.min(4, Math.ceil((level - 0.5) * 8)) : 0;
+    while (this.fires.length < want) {
+      // A random point on the hull, found by casting toward the centre.
+      const dir = new THREE.Vector3(Math.random() - 0.5, (Math.random() - 0.5) * 0.6, Math.random() - 0.5).normalize();
+      const from = dir.multiplyScalar(this.model.shieldScale.z * 2).applyQuaternion(this.group.quaternion).add(this.group.position);
+      const p = this.hullPoint(from) ?? new THREE.Vector3((Math.random() - 0.5) * 3, 0.5, Math.random() * 4);
+      const fire = lightSprite(new THREE.Color(3, 1.1, 0.25), 1.4, p);
+      this.fires.push(fire);
+      this.group.add(fire);
+    }
+    for (let i = 0; i < this.fires.length; i++) this.fires[i].visible = i < want;
+  }
+
   /** Register a shield impact at a world position. */
   shieldHit(worldPos: THREE.Vector3, time: number) {
     const local = this.group.worldToLocal(worldPos.clone());
@@ -262,6 +347,23 @@ export class ShipView {
     this.shieldMat.uniforms.uFlash.value = this.flash;
     this.shield.visible = this.flash > 0.001 || time - (this.shieldMat.uniforms.uHits.value as THREE.Vector4[]).reduce((m, h) => Math.max(m, h.w), -10) < 0.8;
     if (this.light) this.light.intensity = 40 + tv * 120;
+    for (const sc of this.scorches) {
+      sc.age += dt;
+      const t = sc.age / SCORCH_LIFE;
+      sc.sprite.visible = t < 1;
+      if (t < 1) {
+        scorchColor(t, sc.sprite.material.color);
+        sc.sprite.scale.setScalar(1.4 - 0.6 * t);
+      }
+    }
+    for (let i = 0; i < this.fires.length; i++) {
+      const f = this.fires[i];
+      if (!f.visible) continue;
+      // Ragged flicker, different for each fire.
+      const k = 0.6 + 0.25 * Math.sin(time * 23 + i * 7) + 0.15 * Math.sin(time * 41 + i * 3);
+      f.scale.setScalar((1 + this.damage) * k);
+      f.material.opacity = 0.7 + 0.3 * k;
+    }
 
     // Anti-collision: a double flash every 1.4 s.
     if (this.strobes.length) {

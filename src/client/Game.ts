@@ -315,6 +315,11 @@ export class Game {
     this.asteroids.setDetail(this.quality.level !== 'low');
     this.worldRoot.add(this.planets.group, this.station.group, this.asteroids.group);
     this.hud.setZoneName(zone.name);
+    // Compile every shader now (lasers, fire, debris) rather than hitching on
+    // the first shot or the first kill.
+    this.effects.warmUp(true);
+    this.renderer.compile(this.scene, this.cam.camera);
+    this.effects.warmUp(false);
   }
 
   private onMessage(m: ServerMessage) {
@@ -492,6 +497,7 @@ export class Game {
       view.update(dt, this.time, throttle, s.snap.boosting, this.cam.camera.position, s.snap.w);
       const cls = SHIP_CLASSES[s.snap.classId];
       const hullFrac = s.snap.hull / cls.hull;
+      view.setDamage(1 - hullFrac);
       if (hullFrac < 0.5) {
         _p.set((Math.random() - 0.5) * cls.radius * 0.6, 0, cls.radius * 0.4).applyQuaternion(s.rotation).add(s.position);
         this.effects.damageTrail(_p, s.velocity, (0.5 - hullFrac) * 2);
@@ -548,7 +554,7 @@ export class Game {
     this.station?.update(this.renderTime, this.cam.camera.position);
     this.planets?.update(this.renderTime);
     this.asteroids?.update(this.renderTime);
-    this.lasers.update(this.renderTime);
+    this.lasers.update(this.renderTime, this.cam.camera.position);
     this.effects.update(dt);
     this.dust.update(camPos, me ? me.velocity : _p.set(0, 0, 0));
 
@@ -701,7 +707,7 @@ export class Game {
           this.debug.myShots++;
           this.hud.fired();
         }
-        this.effects.muzzle(_p, new THREE.Vector3(...e.vel).multiplyScalar(0.05), e.faction === 'union' ? UNION_BOLT : RAIDER_BOLT);
+        this.effects.muzzle(_p, new THREE.Vector3(...e.vel).multiplyScalar(0.05), e.faction === 'union' ? UNION_BOLT : RAIDER_BOLT, e.shooter === this.myShipId);
         this.audio.laser(_p.distanceTo(camPos), e.faction !== 'union');
         break;
       }
@@ -715,6 +721,7 @@ export class Game {
           this.audio.shieldHit(_p.distanceTo(camPos));
         } else {
           this.effects.hullHit(_p);
+          view?.hullHit(_p);
           this.audio.hullHit(_p.distanceTo(camPos));
         }
         if (e.target === this.myShipId) {
