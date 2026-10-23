@@ -107,4 +107,30 @@ describe('client-side prediction', () => {
     expect(roughness(moves)).toBeLessThan(0.05);
     expect(roughness(turns)).toBeLessThan(0.05);
   });
+
+  it('interpolates the velocity too, so speed-driven effects do not step at 60 Hz', () => {
+    const predictor = new Predictor(new StaticGrid([]));
+    predictor.reconcile(
+      { id: 1, name: 'Pilote', classId: 'falcon', faction: 'union', owner: 'me', p: [0, 0, 0], q: [0, 0, 0, 1], v: [0, 0, 0], w: [0, 0, 0], hull: 100, shield: 100, energy: 100, throttle: 0, boosting: false, firing: false, weaponsLocked: false, pvp: false },
+      0,
+    );
+    const TICK = 1 / 60;
+    const frame = 1 / 165;
+    let acc = 0;
+    let seq = 0;
+    const speeds: number[] = [];
+    for (let f = 0; f < 165; f++) {
+      acc += frame;
+      while (acc >= TICK) {
+        acc -= TICK;
+        predictor.step(++seq, { ...neutralInput(), throttle: 1 });
+      }
+      predictor.update(frame, acc / TICK);
+      speeds.push(predictor.renderVelocity.length());
+    }
+    // Accelerating: the rendered speed rises a little on every frame, never in 60 Hz steps.
+    const deltas = speeds.slice(20, 120).map((v, i, a) => (i ? v - a[i - 1] : 0)).slice(1);
+    expect(Math.min(...deltas)).toBeGreaterThan(0);
+    expect(Math.max(...deltas) / Math.min(...deltas)).toBeLessThan(1.5);
+  });
 });

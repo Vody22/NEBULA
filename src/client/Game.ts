@@ -471,7 +471,7 @@ export class Game {
       this.myServerPos.copy(predicted.position);
       predicted.position.copy(this.predictor.renderPosition);
       predicted.rotation.copy(this.predictor.renderRotation);
-      predicted.velocity.copy(this.predictor.ship.velocity);
+      predicted.velocity.copy(this.predictor.renderVelocity);
       this.myRenderPos.copy(predicted.position);
       this.hasMyPose = true;
     }

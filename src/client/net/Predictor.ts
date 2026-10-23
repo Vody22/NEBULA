@@ -18,6 +18,7 @@ const _simBefore = new Vector3();
 const _beforeRot = new Quaternion();
 const _oldPos = new Vector3();
 const _oldRot = new Quaternion();
+const _oldVel = new Vector3();
 
 /**
  * Client-side prediction for the local player's ship. Every input tick the
@@ -34,6 +35,8 @@ export class Predictor {
   readonly rotError = new Quaternion();
   readonly renderPosition = new Vector3();
   readonly renderRotation = new Quaternion();
+  /** Velocity interpolated like the pose (camera pull-back, FOV and dust use it). */
+  readonly renderVelocity = new Vector3();
   /**
    * Simulated pose one tick earlier. The simulation runs at 60 Hz; on a
    * 120–240 Hz screen the rendered ship is interpolated between the last two
@@ -41,6 +44,7 @@ export class Predictor {
    */
   private prevPosition = new Vector3();
   private prevRotation = new Quaternion();
+  private prevVelocity = new Vector3();
   /** Size of the last correction, for diagnostics (m). */
   lastCorrection = 0;
   corrections = 0;
@@ -91,6 +95,7 @@ export class Predictor {
   private keepPrevious() {
     this.prevPosition.copy(this.ship!.position);
     this.prevRotation.copy(this.ship!.rotation);
+    this.prevVelocity.copy(this.ship!.velocity);
   }
 
   private load(s: ShipSnapshot) {
@@ -144,6 +149,7 @@ export class Predictor {
     _beforeRot.copy(this.rotError).multiply(ship.rotation);
     _oldPos.copy(ship.position);
     _oldRot.copy(ship.rotation);
+    _oldVel.copy(ship.velocity);
 
     this.load(s);
     let i = 0;
@@ -153,6 +159,7 @@ export class Predictor {
 
     // The previous tick moves with the correction, so interpolation stays continuous.
     this.prevPosition.add(_oldPos.subVectors(ship.position, _oldPos));
+    this.prevVelocity.add(_oldVel.subVectors(ship.velocity, _oldVel));
     this.prevRotation.premultiply(_q.copy(ship.rotation).multiply(_oldRot.invert())).normalize();
 
     // Keep the rendered pose where it was and let the offset fade out.
@@ -181,5 +188,6 @@ export class Predictor {
     this.renderPosition.lerpVectors(this.prevPosition, ship.position, t).add(this.posError);
     _q.slerpQuaternions(this.prevRotation, ship.rotation, t);
     this.renderRotation.copy(this.rotError).multiply(_q).normalize();
+    this.renderVelocity.lerpVectors(this.prevVelocity, ship.velocity, t);
   }
 }
