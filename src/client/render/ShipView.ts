@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { ShipClassId } from '../../shared/sim/types';
+import { FlameField, GlowField, type Flame, type Glow } from './batches';
 import { buildShipModel, type ShipModel } from './ShipModels';
 import { makeRadialTexture } from './textures';
 
@@ -10,12 +11,6 @@ const glint = () =>
     [0.2, 'rgba(255,255,255,0.6)'],
     [1, 'rgba(255,255,255,0)'],
   ]));
-function lightSprite(color: THREE.Color, size: number, pos: THREE.Vector3) {
-  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: glint(), color, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }));
-  s.position.copy(pos);
-  s.scale.setScalar(size);
-  return s;
-}
 const _torque = new THREE.Vector3();
 const _w = new THREE.Vector3();
 const _ray = new THREE.Raycaster();
@@ -32,24 +27,69 @@ function scorchColor(t: number, out: THREE.Color) {
   return t < 0.15 ? out.copy(_hot).lerp(_warm, t / 0.15) : out.copy(_warm).lerp(_cold, (t - 0.15) / 0.85);
 }
 
+// Every engine flame of every ship in the scene is one instance of the same
+// cone: colour and power come per instance, the time is shared.
 const flameVert = /* glsl */ `
+attribute vec3 aColor;
+attribute float aPower;
 varying vec2 vUv;
-void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`;
+varying vec3 vColor;
+varying float vPower;
+void main(){
+  vUv = uv;
+  vColor = aColor;
+  vPower = aPower;
+  vec4 p = vec4(position, 1.0);
+  #ifdef USE_INSTANCING
+  p = instanceMatrix * p;
+  #endif
+  gl_Position = projectionMatrix * modelViewMatrix * p;
+}`;
 const flameFrag = /* glsl */ `
-uniform vec3 uColor;
 uniform vec3 uCore;
 uniform float uTime;
-uniform float uPower;
 varying vec2 vUv;
+varying vec3 vColor;
+varying float vPower;
 void main(){
   float along = clamp(1.0 - vUv.y, 0.0, 1.0); // 1 at nozzle, 0 at tip
   float around = vUv.x;
   float flick = 0.85 + 0.15*sin(uTime*60.0 + around*25.0) * sin(uTime*37.0);
   float core = pow(along, 2.5);
   float bands = 0.75 + 0.25*sin(along*40.0 - uTime*80.0);
-  vec3 col = mix(uColor, uCore, core) * (core*1.6 + along*0.7) * bands * flick * uPower;
+  vec3 col = mix(vColor, uCore, core) * (core*1.6 + along*0.7) * bands * flick * vPower;
   gl_FragColor = vec4(col, 1.0);
 }`;
+
+/** The glow points and engine flames of all the ships of one scene, a draw call each. */
+interface ShipBatches {
+  glows: GlowField;
+  flames: FlameField;
+  time: { value: number };
+}
+const batchesOf = new WeakMap<THREE.Scene, ShipBatches>();
+function shipBatches(scene: THREE.Scene): ShipBatches {
+  let b = batchesOf.get(scene);
+  if (!b) {
+    const geo = new THREE.ConeGeometry(1, 1, 20, 1, true);
+    geo.translate(0, 0.5, 0);
+    geo.rotateX(Math.PI / 2); // base at the nozzle, tip toward +Z (behind the ship)
+    const time = { value: 0 };
+    const mat = new THREE.ShaderMaterial({
+      vertexShader: flameVert,
+      fragmentShader: flameFrag,
+      uniforms: { uCore: { value: new THREE.Color(2, 2, 2) }, uTime: time },
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      transparent: true,
+      side: THREE.DoubleSide,
+    });
+    b = { glows: new GlowField(glint()), flames: new FlameField(geo, mat), time };
+    scene.add(b.glows.mesh, b.flames.mesh);
+    batchesOf.set(scene, b);
+  }
+  return b;
+}
 
 const shieldVert = /* glsl */ `
 varying vec3 vN;
@@ -167,69 +207,52 @@ class Trail {
 export class ShipView {
   readonly group = new THREE.Group();
   readonly model: ShipModel;
-  private flames: { mesh: THREE.Mesh; mat: THREE.ShaderMaterial; radius: number }[] = [];
+  private batches: ShipBatches;
+  private flames: { flame: Flame; radius: number }[] = [];
+  /** Every glow point of this ship, to take out of the scene's field on dispose. */
+  private glows: Glow[] = [];
   private shield: THREE.Mesh;
   private shieldMat: THREE.ShaderMaterial;
   private hitIndex = 0;
   private flash = 0;
   private trail: Trail;
   private throttleVis = 0;
-  private strobes: THREE.Sprite[] = [];
+  private strobes: Glow[] = [];
   private strobePhase = Math.random() * 1.4;
   /** RCS puffs and the axis each one turns the ship around (unit torque). */
-  private rcs: { sprite: THREE.Sprite; torque: THREE.Vector3; level: number }[] = [];
+  private rcs: { glow: Glow; torque: THREE.Vector3; level: number }[] = [];
   readonly light: THREE.PointLight | null;
-  private scorches: { sprite: THREE.Sprite; age: number }[] = [];
+  private scorches: { glow: Glow; age: number }[] = [];
   private scorchIndex = 0;
   /** Fires on a badly damaged hull, at points found on the surface once. */
-  private fires: THREE.Sprite[] = [];
+  private fires: Glow[] = [];
   private damage = 0;
-  /** The hull's meshes, for placing marks (sprites cannot be raycast without a camera). */
+  /** The hull's meshes, for placing marks. */
   private hullMeshes: THREE.Object3D[] | null = null;
 
   constructor(readonly classId: ShipClassId, scene: THREE.Scene, private isLocal: boolean) {
     this.model = buildShipModel(classId);
     this.group.add(this.model.root);
-    for (const n of this.model.navs ?? []) this.group.add(lightSprite(n.color, n.size, n.pos));
+    this.batches = shipBatches(scene);
+    for (const n of this.model.navs ?? []) this.glow(n.color, n.size, n.pos);
     // The pilot's own strobes and thrusters would flicker right in front of the
     // chase camera: only other ships show them.
     for (const st of isLocal ? [] : this.model.strobes ?? []) {
-      const sp = lightSprite(st.color, 1.1, st.pos);
-      sp.visible = false;
-      this.strobes.push(sp);
-      this.group.add(sp);
+      const g = this.glow(st.color, 1.1, st.pos);
+      g.visible = false;
+      this.strobes.push(g);
     }
     for (const r of isLocal ? [] : this.model.rcs ?? []) {
-      const sprite = lightSprite(new THREE.Color(1.6, 1.8, 2.2), 0.6, r.pos.clone().addScaledVector(r.dir, 0.25));
-      sprite.visible = false;
+      const glow = this.glow(new THREE.Color(1.6, 1.8, 2.2), 0.6, r.pos.clone().addScaledVector(r.dir, 0.25));
+      glow.visible = false;
       // Thrust pushes against the exhaust: torque = r × (−dir).
       const torque = new THREE.Vector3().crossVectors(r.pos, r.dir).negate().normalize();
-      this.rcs.push({ sprite, torque, level: 0 });
-      this.group.add(sprite);
+      this.rcs.push({ glow, torque, level: 0 });
     }
-
-    const flameGeo = new THREE.ConeGeometry(1, 1, 20, 1, true);
-    flameGeo.translate(0, 0.5, 0);
-    flameGeo.rotateX(Math.PI / 2); // base at the nozzle, tip toward +Z (behind the ship)
     for (const e of this.model.engines) {
-      const mat = new THREE.ShaderMaterial({
-        vertexShader: flameVert,
-        fragmentShader: flameFrag,
-        uniforms: {
-          uColor: { value: this.model.engineColor.clone() },
-          uCore: { value: new THREE.Color(2, 2, 2) },
-          uTime: { value: 0 },
-          uPower: { value: 1 },
-        },
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-        transparent: true,
-        side: THREE.DoubleSide,
-      });
-      const mesh = new THREE.Mesh(flameGeo, mat);
-      mesh.position.copy(e.pos);
-      this.group.add(mesh);
-      this.flames.push({ mesh, mat, radius: e.radius });
+      const flame = this.batches.flames.add(this.group, e.pos);
+      flame.color.copy(this.model.engineColor);
+      this.flames.push({ flame, radius: e.radius });
     }
 
     this.shieldMat = new THREE.ShaderMaterial({
@@ -261,6 +284,12 @@ export class ShipView {
       this.group.add(this.light);
     }
     scene.add(this.group);
+  }
+
+  private glow(color: THREE.Color, size: number, pos: THREE.Vector3) {
+    const g = this.batches.glows.add(this.group, color, size, pos);
+    this.glows.push(g);
+    return g;
   }
 
   /**
@@ -297,11 +326,10 @@ export class ShipView {
     if (!local) return;
     let slot = this.scorches[this.scorchIndex++ % 6];
     if (!slot) {
-      slot = { sprite: lightSprite(new THREE.Color(), 1, local), age: SCORCH_LIFE };
+      slot = { glow: this.glow(new THREE.Color(), 1, local), age: SCORCH_LIFE };
       this.scorches.push(slot);
-      this.group.add(slot.sprite);
     }
-    slot.sprite.position.copy(local);
+    slot.glow.position.copy(local);
     slot.age = 0;
   }
 
@@ -314,9 +342,7 @@ export class ShipView {
       const dir = new THREE.Vector3(Math.random() - 0.5, (Math.random() - 0.5) * 0.6, Math.random() - 0.5).normalize();
       const from = dir.multiplyScalar(this.model.shieldScale.z * 2).applyQuaternion(this.group.quaternion).add(this.group.position);
       const p = this.hullPoint(from) ?? new THREE.Vector3((Math.random() - 0.5) * 3, 0.5, Math.random() * 4);
-      const fire = lightSprite(new THREE.Color(3, 1.1, 0.25), 1.4, p);
-      this.fires.push(fire);
-      this.group.add(fire);
+      this.fires.push(this.glow(new THREE.Color(3, 1.1, 0.25), 1.4, p));
     }
     for (let i = 0; i < this.fires.length; i++) this.fires[i].visible = i < want;
   }
@@ -335,12 +361,12 @@ export class ShipView {
     const target = boosting ? 1.8 : Math.max(0.08, throttle);
     this.throttleVis += (target - this.throttleVis) * Math.min(1, dt * 6);
     const tv = this.throttleVis;
-    for (const f of this.flames) {
-      const len = f.radius * (2 + tv * 7 + (boosting ? 6 : 0));
-      f.mesh.scale.set(f.radius * (0.75 + tv * 0.15), f.radius * (0.75 + tv * 0.15), len);
-      f.mat.uniforms.uTime.value = time;
-      f.mat.uniforms.uPower.value = 0.12 + tv * 0.7;
-      (f.mat.uniforms.uColor.value as THREE.Color).copy(boosting ? this.model.boostColor : this.model.engineColor);
+    this.batches.time.value = time;
+    for (const { flame, radius } of this.flames) {
+      const len = radius * (2 + tv * 7 + (boosting ? 6 : 0));
+      flame.scale.set(radius * (0.75 + tv * 0.15), radius * (0.75 + tv * 0.15), len);
+      flame.power = 0.12 + tv * 0.7;
+      flame.color.copy(boosting ? this.model.boostColor : this.model.engineColor);
     }
     this.flash = Math.max(0, this.flash - dt * 2.5);
     this.shieldMat.uniforms.uTime.value = time;
@@ -350,10 +376,10 @@ export class ShipView {
     for (const sc of this.scorches) {
       sc.age += dt;
       const t = sc.age / SCORCH_LIFE;
-      sc.sprite.visible = t < 1;
+      sc.glow.visible = t < 1;
       if (t < 1) {
-        scorchColor(t, sc.sprite.material.color);
-        sc.sprite.scale.setScalar(1.4 - 0.6 * t);
+        scorchColor(t, sc.glow.color);
+        sc.glow.size = 1.4 - 0.6 * t;
       }
     }
     for (let i = 0; i < this.fires.length; i++) {
@@ -361,15 +387,15 @@ export class ShipView {
       if (!f.visible) continue;
       // Ragged flicker, different for each fire.
       const k = 0.6 + 0.25 * Math.sin(time * 23 + i * 7) + 0.15 * Math.sin(time * 41 + i * 3);
-      f.scale.setScalar((1 + this.damage) * k);
-      f.material.opacity = 0.7 + 0.3 * k;
+      f.size = (1 + this.damage) * k;
+      f.opacity = 0.7 + 0.3 * k;
     }
 
     // Anti-collision: a double flash every 1.4 s.
     if (this.strobes.length) {
       const t = (time + this.strobePhase) % 1.4;
       const on = t < 0.05 || (t > 0.15 && t < 0.2);
-      for (const sp of this.strobes) sp.visible = on;
+      for (const g of this.strobes) g.visible = on;
     }
     // Manoeuvring thrusters fire on the side that drives the current rotation.
     if (this.rcs.length) {
@@ -379,10 +405,10 @@ export class ShipView {
         const drive = _torque.copy(r.torque).dot(_w);
         const target = Math.min(1, Math.max(0, (drive - 0.25) * 1.6));
         r.level += (target - r.level) * Math.min(1, dt * 6);
-        r.sprite.visible = r.level > 0.05;
-        if (r.sprite.visible) {
-          r.sprite.scale.setScalar(0.35 + r.level * 0.8);
-          (r.sprite.material as THREE.SpriteMaterial).opacity = r.level;
+        r.glow.visible = r.level > 0.05;
+        if (r.glow.visible) {
+          r.glow.size = 0.35 + r.level * 0.8;
+          r.glow.opacity = r.level;
         }
       }
     }
@@ -395,9 +421,17 @@ export class ShipView {
     this.trail.reset();
   }
 
+  /** Hides or shows the ship and its contrail (destroyed, waiting to respawn). */
+  setVisible(on: boolean) {
+    this.group.visible = on;
+    this.trail.mesh.visible = on && !this.isLocal;
+    if (on) this.trail.reset();
+  }
+
   dispose(scene: THREE.Scene) {
     scene.remove(this.group);
-    for (const o of this.group.children) if (o instanceof THREE.Sprite) o.material.dispose();
+    for (const g of this.glows) this.batches.glows.remove(g);
+    for (const { flame } of this.flames) this.batches.flames.remove(flame);
     scene.remove(this.trail.mesh);
     this.trail.mesh.geometry.dispose();
   }

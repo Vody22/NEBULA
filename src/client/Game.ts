@@ -6,6 +6,7 @@ import { neutralInput, type SimEvent } from '../shared/sim/types';
 import { TICK_DT, TICK_RATE } from '../shared/sim/world';
 import { buildZone, type ZoneDef } from '../shared/sim/zone';
 import { GameAudio } from './audio/Audio';
+import { Benchmark, type BenchCallbacks } from './bench/Benchmark';
 import { ChaseCamera } from './camera/ChaseCamera';
 import { isHostile } from './hostility';
 import { Hud } from './hud/Hud';
@@ -18,6 +19,7 @@ import { Effects } from './render/Effects';
 import { Lasers } from './render/Lasers';
 import { Planets } from './render/Planets';
 import { PostFX } from './render/PostFX';
+import { updateBatches } from './render/batches';
 import { ShipView } from './render/ShipView';
 import { QUALITY, type QualityLevel, type QualityProfile } from './render/quality';
 import { buildSky, type SkyResult } from './render/Sky';
@@ -119,6 +121,8 @@ export class Game {
   private pixelRatio: number;
   private perfTimer = 0;
   private perfFrames = 0;
+  /** Performance test (?bench): replaces the game loop while it runs. */
+  private bench: Benchmark | null = null;
   /** Exposed for automated smoke tests. */
   readonly debug = { frames: 0, ships: 0, bolts: 0, events: 0, explosions: 0, myShots: 0, myHits: 0, myKills: 0, hitsTaken: 0 };
 
@@ -318,6 +322,7 @@ export class Game {
     // Compile every shader now (lasers, fire, debris) rather than hitching on
     // the first shot or the first kill.
     this.effects.warmUp(true);
+    updateBatches();
     this.renderer.compile(this.scene, this.cam.camera);
     this.effects.warmUp(false);
   }
@@ -415,6 +420,10 @@ export class Game {
     this.debug.frames++;
 
     if (!this.zone) this.buildWorld(DEFAULT_SECTOR_SEED);
+    if (this.bench) {
+      this.bench.frame(timestamp ?? performance.now());
+      return;
+    }
     const transport = this._transport;
 
     // 1) Input (sent below, at the fixed tick rate)
@@ -592,6 +601,7 @@ export class Game {
   }
 
   private renderScene(damage: number) {
+    updateBatches();
     if (this.post) this.post.render(this.time, damage);
     else this.renderer.render(this.scene, this.cam.camera);
   }
@@ -639,16 +649,59 @@ export class Game {
     this.hud.notice('Mode graphique de secours activé', 'warn');
   }
 
-  /** One line describing the graphics setup, shown in the pause menu (and with ?diag). */
-  graphicsInfo() {
+  /** The graphics card as the browser names it. */
+  gpuName() {
     const gl = this.renderer.getContext();
-    let gpu = '';
     try {
       const ext = gl.getExtension('WEBGL_debug_renderer_info');
-      gpu = String(gl.getParameter(ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER));
+      return String(gl.getParameter(ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER));
     } catch {
-      gpu = '?';
+      return '?';
     }
+  }
+
+  /**
+   * Runs the scripted performance test at each quality level in turn. The
+   * game is not connected to any server meanwhile; reload to play again.
+   */
+  startBenchmark(levels: QualityLevel[], cb: BenchCallbacks) {
+    if (!this.zone) this.buildWorld(DEFAULT_SECTOR_SEED);
+    const zone = this.zone!;
+    this.hud.show(false);
+    this.bench = new Benchmark(
+      {
+        scene: this.scene,
+        camera: this.cam.camera,
+        renderer: this.renderer,
+        lasers: this.lasers,
+        effects: this.effects,
+        stationPos: zone.station.position,
+        setQuality: (level) => this.setQuality(level),
+        pixelRatio: () => this.pixelRatio,
+        renderPath: () => this.renderPath,
+        gpuName: () => this.gpuName(),
+        animateWorld: (time, dt, camPos, camVel) => {
+          this.sky?.update(this.cam.camera);
+          this.station?.update(time, camPos);
+          this.planets?.update(time);
+          this.asteroids?.update(time);
+          this.lasers.update(time, camPos);
+          this.effects.update(dt);
+          this.dust.update(camPos, camVel);
+        },
+        render: () => {
+          this.renderScene(0);
+          this.checkOutput();
+        },
+      },
+      levels,
+      cb,
+    );
+  }
+
+  /** One line describing the graphics setup, shown in the pause menu (and with ?diag). */
+  graphicsInfo() {
+    const gpu = this.gpuName();
     return `${gpu} · rendu ${this.renderPath} · image ${this.gfx.lastSample}/255 · noires ${this.gfx.blackSamples} · secours ${this.gfx.fallbacks} · shaders en erreur ${this.gfx.shaderErrors}`;
   }
 

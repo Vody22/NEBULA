@@ -3,6 +3,7 @@ import { SimplexNoise } from 'three/examples/jsm/math/SimplexNoise.js';
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { mulberry32 } from '../../shared/rng';
 import type { AsteroidDef } from '../../shared/sim/zone';
+import { GlowField } from './batches';
 import { NOISE_GLSL } from './glsl';
 import { makeCloudTexture } from './textures';
 
@@ -208,25 +209,23 @@ export class Asteroids {
 
     // Faint dust clouds drifting inside the belt add depth and parallax.
     const dustTex = makeCloudTexture(5);
+    // All of them in one draw call.
     const rand = mulberry32(99);
+    const dust = new GlowField(dustTex, { toneMapped: true });
+    const color = new THREE.Color();
+    const pos = new THREE.Vector3();
     for (let i = 0; i < 40; i++) {
-      const sp = new THREE.Sprite(
-        new THREE.SpriteMaterial({
-          map: dustTex,
-          color: new THREE.Color().setHSL(0.08 + rand() * 0.05, 0.08, 0.32),
-          transparent: true,
-          opacity: 0.05 + rand() * 0.06,
-          blending: THREE.AdditiveBlending,
-          depthWrite: false,
-          rotation: rand() * Math.PI * 2,
-        }),
-      );
+      color.setHSL(0.08 + rand() * 0.05, 0.08, 0.32);
+      const opacity = 0.05 + rand() * 0.06;
+      const rotation = rand() * Math.PI * 2;
       const a = rand() * Math.PI * 2;
       const r = rand() * 3200;
-      sp.position.set(Math.cos(a) * r, (rand() - 0.5) * 600, Math.sin(a) * r * 0.75).add(beltCenter);
-      sp.scale.setScalar(900 + rand() * 1800);
-      this.group.add(sp);
+      pos.set(Math.cos(a) * r, (rand() - 0.5) * 600, Math.sin(a) * r * 0.75).add(beltCenter);
+      const g = dust.add(this.group, color, 900 + rand() * 1800, pos);
+      g.opacity = opacity;
+      g.rotation = rotation;
     }
+    this.group.add(dust.mesh);
   }
 
   /** Per-pixel relief on (Moyen and above) or off (Bas). */

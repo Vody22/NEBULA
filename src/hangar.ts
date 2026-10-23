@@ -8,6 +8,7 @@ import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { ShipView } from './client/render/ShipView';
 import { buildSky } from './client/render/Sky';
 import { PostFX } from './client/render/PostFX';
+import { updateBatches } from './client/render/batches';
 import { SHIP_CLASSES } from './shared/sim/shipClasses';
 import type { ShipClassId } from './shared/sim/types';
 
@@ -182,6 +183,7 @@ function frame() {
   controls.update();
   view?.update(dt, time, throttle, false, camera.position, angular);
   sky.update(camera);
+  updateBatches();
   if (post) post.render(time, 0);
   else renderer.render(scene, camera);
   frames++;

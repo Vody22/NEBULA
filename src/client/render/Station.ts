@@ -1,12 +1,13 @@
 import * as THREE from 'three';
 import { mulberry32 } from '../../shared/rng';
 import type { StationDef } from '../../shared/sim/zone';
+import { GlowField, type Glow } from './batches';
 import { mergeByMaterial } from './merge';
 import { makeShipSheet } from './shipTextures';
 import { makeRadialTexture, makeSolarTexture } from './textures';
 
 interface Blinker {
-  sprite: THREE.Sprite;
+  glow: Glow;
   phase: number;
   rate: number;
   /** 'beacon': one slow pulse; 'strobe': a double white flash; 'chase': sequential approach light. */
@@ -133,6 +134,9 @@ export class Station {
   /** Fine detail, hidden beyond a few kilometres. */
   private detail = new THREE.Group();
   private blinkers: Blinker[] = [];
+  /** Every blinker in one draw call, every shuttle and drone light in another. */
+  private lights = new GlowField(blinkTex());
+  private traffic: GlowField;
   private orbiters: Orbiter[] = [];
   private approaches: Approach[] = [];
   private mouthZ = 300;
@@ -512,16 +516,14 @@ export class Station {
     ]);
     const shuttleGeo = new THREE.BoxGeometry(6, 3, 14);
     const shuttleMat = new THREE.MeshStandardMaterial({ color: 0xd8dde4, metalness: 0.6, roughness: 0.4 });
-    const engine = new THREE.SpriteMaterial({ map: glint, color: new THREE.Color(1, 2.5, 5), blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
-    const makeCraft = (scale: number, light: THREE.SpriteMaterial) => {
+    this.traffic = new GlowField(glint);
+    const engine = new THREE.Color(1, 2.5, 5);
+    const makeCraft = (scale: number, light: THREE.Color) => {
       const g = new THREE.Group();
       const body = new THREE.Mesh(shuttleGeo, shuttleMat);
       body.scale.setScalar(scale);
       g.add(body);
-      const t = new THREE.Sprite(light);
-      t.position.z = 8 * scale;
-      t.scale.setScalar(9 * scale);
-      g.add(t);
+      this.traffic.add(g, light, 9 * scale, new THREE.Vector3(0, 0, 8 * scale));
       g.userData.dynamic = true;
       return g;
     };
@@ -537,7 +539,7 @@ export class Station {
         wobble: 30,
       });
     }
-    const droneLight = new THREE.SpriteMaterial({ map: glint, color: new THREE.Color(2.5, 2.5, 2.2), blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
+    const droneLight = new THREE.Color(2.5, 2.5, 2.2);
     for (let i = 0; i < 10; i++) {
       const g = makeCraft(0.25, droneLight);
       this.detail.add(g);
@@ -560,7 +562,7 @@ export class Station {
     // detail group switches off with distance, so each is merged on its own).
     this.ring.userData.dynamic = true;
     this.detail.userData.dynamic = true;
-    this.group.add(this.detail);
+    this.group.add(this.detail, this.lights.mesh, this.traffic.mesh);
     mergeByMaterial(this.group);
     mergeByMaterial(this.ring);
     mergeByMaterial(this.detail);
@@ -568,19 +570,7 @@ export class Station {
   }
 
   private addBlinker(pos: THREE.Vector3, color: THREE.Color, size: number, rate: number, phase: number, kind: Blinker['kind'], parent: THREE.Object3D = this.group) {
-    const sprite = new THREE.Sprite(
-      new THREE.SpriteMaterial({
-        map: blinkTex(),
-        color,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-        toneMapped: false,
-      }),
-    );
-    sprite.position.copy(pos);
-    sprite.scale.setScalar(size);
-    parent.add(sprite);
-    this.blinkers.push({ sprite, phase, rate, kind });
+    this.blinkers.push({ glow: this.lights.add(parent, color, size, pos), phase, rate, kind });
   }
 
   update(time: number, camPos?: THREE.Vector3) {
@@ -592,8 +582,7 @@ export class Station {
       if (b.kind === 'strobe') on = t < 0.04 || (t > 0.12 && t < 0.16) ? 1 : 0;
       else if (b.kind === 'chase') on = t < 0.1 ? 1 : 0.1;
       else on = 0.15 + 0.85 * Math.exp(-((t - 0.1) ** 2) / 0.004);
-      b.sprite.material.opacity = on;
-      b.sprite.visible = on > 0.01;
+      b.glow.opacity = on;
     }
     for (const s of this.orbiters) {
       const a = s.phase + time * s.speed;

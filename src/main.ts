@@ -1,11 +1,12 @@
 import { Game } from './client/Game';
 import { isTouchDevice, TouchControls } from './client/input/Touch';
-import { resolveQuality } from './client/render/quality';
+import { isQualityLevel, QUALITY_LEVELS, resolveQuality } from './client/render/quality';
 import { probeServer, resolveServerUrl } from './client/net/config';
 import { LocalTransport } from './client/net/LocalTransport';
 import type { Transport } from './client/net/Transport';
 import { WebSocketTransport } from './client/net/WebSocketTransport';
 import { keyLabel, loadSettings, saveSettings, type Settings } from './client/settings';
+import { BenchPanel } from './client/ui/BenchPanel';
 import { Chat } from './client/ui/Chat';
 import { Menu, type PlayMode } from './client/ui/Menu';
 import { PROTOCOL_VERSION } from './shared/net/protocol';
@@ -113,6 +114,7 @@ const menu = new Menu(document.getElementById('menu')!, settings, {
     chatKeys(s);
     saveSettings(s);
   },
+  onBenchmark: () => location.assign('?bench'),
 });
 (window as unknown as { __menu: Menu }).__menu = menu;
 
@@ -137,12 +139,35 @@ requestAnimationFrame(() => {
     }
     booted = true;
     loading.classList.add('hidden');
+    requestAnimationFrame(loop);
+    if (params.has('bench')) {
+      startBench();
+      return;
+    }
     menu.show('start');
     checkServer();
-    requestAnimationFrame(loop);
     if (params.has('autostart')) begin(params.has('online') ? 'online' : 'solo', settings.name || 'Pilote');
   }, 30);
 });
+
+/**
+ * ?bench: the performance test at the four quality levels (?bench=high: one
+ * level), then its results. Offline, nothing is sent anywhere.
+ */
+function startBench() {
+  const want = params.get('bench');
+  const panel = new BenchPanel(document.body);
+  game.startBenchmark(isQualityLevel(want) ? [want] : QUALITY_LEVELS, {
+    onProgress: (text) => panel.progress(text),
+    onDone: (report) => {
+      (window as unknown as { __bench: unknown }).__bench = report;
+      panel.results(report, {
+        replay: () => location.reload(),
+        play: () => location.assign(location.pathname),
+      });
+    },
+  });
+}
 
 async function checkServer() {
   if (!serverUrl) {

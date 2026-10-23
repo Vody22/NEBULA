@@ -19,6 +19,8 @@ export interface MenuCallbacks {
   onResume(): void;
   onLeave(): void;
   onSettingsChanged(s: Settings): void;
+  /** Start the performance test (reloads the page with ?bench). */
+  onBenchmark?(): void;
 }
 
 type Mode = 'start' | 'pause';
@@ -239,7 +241,15 @@ export class Menu {
           <label class="opt check"><input type="checkbox" data-setting="invertY"${s.invertY ? ' checked' : ''}><span>Inverser l'axe vertical de la souris</span></label>
         </div>
         <p class="hint">Les réglages sont enregistrés dans ce navigateur.</p>
-        <div class="menu-buttons row"><button class="primary" data-act="back">Retour</button></div>`;
+        ${
+          this.mode === 'start'
+            ? `<p class="hint">Test de performance : mesure la fluidité de cet appareil aux quatre niveaux de qualité (environ 2 minutes, hors ligne).</p>`
+            : ''
+        }
+        <div class="menu-buttons row">
+          ${this.mode === 'start' ? '<button data-act="bench">Test de performance</button>' : ''}
+          <button class="primary" data-act="back">Retour</button>
+        </div>`;
     }
     this.root.innerHTML = `<div class="box view-${this.view}">${html}</div>`;
     const diag = this.root.querySelector('.diag');
@@ -284,6 +294,9 @@ export class Menu {
       }
       case 'leave':
         this.cb.onLeave();
+        break;
+      case 'bench':
+        this.cb.onBenchmark?.();
         break;
       case 'resume':
         this.cb.onResume();

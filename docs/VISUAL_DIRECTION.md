@@ -423,7 +423,7 @@ Chaque étape fait l'objet d'un commit séparé sur `v0.2.5-graphics`, avec des 
   - Les shaders des effets sont compilés au chargement du secteur, pour éviter un à-coup au premier tir ou à la première destruction.
   - Coût : nombre de particules multiplié par le réglage Qualité (0,35 en Bas). Aucun changement serveur ni protocole.
   - Outil : `scripts/vfx-capture.mjs` (moments figés, identiques à chaque capture). Captures : `screenshots/vfx/before/` et `screenshots/vfx/step5/`.
-- **Étape 6 (identité des factions, en revue) :** `src/client/render/FactionShips.ts`, qui réutilise le kit du Falcon (`makeKit` : matériaux partagés, feuilles de texture, atlas de décalques).
+- **Étape 6 (identité des factions, publiée sur le site principal le 23 octobre 2026) :** `src/client/render/FactionShips.ts`, qui réutilise le kit du Falcon (`makeKit` : matériaux partagés, feuilles de texture, atlas de décalques).
   - **Warden** (escorte lourde de l'Union) : fuselage blindé plus épais que le Falcon, en quatre sections ; bloc moteur large à trois tuyères ; ailes courtes avec nacelles de canons et ailettes tombantes ; grande dérive dorsale et deux dérives ventrales inclinées ; petit cockpit blindé, dôme capteur, jupes de blindage. Peinture bleu ardoise à bandes ivoire, les deux couleurs du Falcon inversées.
   - **Raider** (chasseur léger pillard) : fuselage en losange à arête vive, avec des plaques manquantes au-dessus du moteur qui laissent voir les couples ; capot blindé décalé à gauche avec une visière rouge ; lames dentelées en flèche inversée ; un gros moteur et deux propulseurs d'appoint sanglés ; réservoir supplémentaire sous une seule lame, plaque boulonnée sur le nez, dents dorsales, antenne tordue.
   - **Marauder** (canonnière lourde pillarde) : coque massive couverte de plaques soudées, éperon en tête de marteau peint en rouge avec des dents, nacelles de canons sur pylônes, tourelle dorsale à deux tubes, tour de pont avec bandeau de hublots rouges, conteneurs sanglés à l'arrière, tuyaux, pointes, quatre tuyères.
@@ -433,6 +433,20 @@ Chaque étape fait l'objet d'un commit séparé sur `v0.2.5-graphics`, avec des 
   - Mesures (coque, hors feux) : Warden 11 900 triangles et 6 appels de dessin ; Raider 8 100 triangles et 5 appels ; Marauder 11 800 triangles et 5 appels. Avant : 13 700, 1 400 et 2 000 triangles.
   - Outil : `scripts/faction-capture.mjs` (les quatre classes en ciel dégagé, un engagement vu de la caméra de poursuite, le même à 400 m, des impacts). Captures : `screenshots/ships/step6/` et `screenshots/factions/step6/`.
   - Limite honnête : ce sont des modèles procéduraux plus aboutis et cohérents entre eux, pas des assets de production modélisés à la main.
+- **Étape 7 (optimisation, en cours) :**
+  - **Test de performance dans le jeu** (`?bench`, ou Options › « Test de performance » depuis l'écran d'accueil ; `?bench=low|medium|high|ultra` pour un seul niveau). Scène scriptée et identique à chaque passage, sans serveur : 24 vaisseaux (10 de l'Union, 11 Raider, 3 Marauder) qui se battent près d'Aurora-7, tirs, impacts sur bouclier et coque, une explosion toutes les 2,4 s, trois vaisseaux endommagés en feu. Trois scènes de 9 s par niveau, après 3 s de mise en route : Station (formation qui longe l'anneau), Combat (caméra de poursuite dans la mêlée), Vue d'ensemble (caméra qui tourne autour du combat et de la station).
+  - Mesures par scène : IPS moyen, 1 % bas (moyenne des 1 % d'images les plus lentes), durée médiane d'image, saccades (images de plus de 50 ms), temps CPU, temps GPU quand le navigateur expose les requêtes de minutage (`EXT_disjoint_timer_query_webgl2`), appels de dessin et triangles. Le rapport donne aussi la carte graphique, l'écran et sa fréquence estimée. Bouton « Copier » pour l'envoyer tel quel. Code : `src/client/bench/`, `src/client/ui/BenchPanel.ts`, tests `tests/bench.test.ts`.
+  - **Regroupement des petits éléments lumineux** (`src/client/render/batches.ts`) : chaque feu, flash anticollision, RCS, marque d'impact, feu de coque, balise de la station, feu de navette ou de drone et nuage de poussière de la ceinture était un sprite, donc un appel de dessin. Ils sont maintenant dessinés par champ, en un appel chacun : les feux de tous les vaisseaux, les balises de la station, le trafic, la poussière. Les flammes de réacteur de tous les vaisseaux sont un seul maillage instancié (couleur et puissance par instance). Rendu identique : mêmes textures, même mélange additif, même taille à l'écran ; vérifié par les captures avant/après (`ship-capture`, `faction-capture`, `vfx-capture`, `visual-capture`). Tests : `tests/batches.test.ts`.
+  - Appels de dessin et triangles par scène au niveau Élevé (`scripts/bench-check.mjs`). Ces deux mesures ne dépendent pas de la carte graphique ; les IPS du rendu logiciel, eux, ne veulent rien dire.
+
+    | Scène | Avant | Après | Triangles |
+    | --- | --- | --- | --- |
+    | Station | 138 | 104 | 941 k |
+    | Combat (poursuite) | 161 | 110 | 880 k |
+    | Vue d'ensemble | 538 | 265 | 1,19 M |
+
+  - La vue d'ensemble repasse sous le budget de 300 appels. Ce qui reste, par ordre de poids : coques des vaisseaux (environ 5 appels par vaisseau visible), traînées (une par vaisseau), station et ceinture, puis le post-traitement.
+  - **Mesures sur matériel réel : en attente** (PC et téléphone de William). Les prochaines optimisations seront choisies d'après elles : instanciation des coques par classe, niveaux de détail des vaisseaux et des astéroïdes, effets selon le niveau de qualité.
 
 ### Budgets par image (niveau Élevé)
 
@@ -455,9 +469,10 @@ Chaque évolution est jugée sur cinq critères : qualité visuelle, lisibilité
 - `scripts/ui-check.mjs`, `scripts/smoke.mjs`, `scripts/mobile-check.mjs` et `scripts/mp-check.mjs` ;
 - aucune erreur WebGL ni erreur de shader : le compteur `shaders en erreur` du menu pause reste à 0 ;
 - captures avant/après avec `scripts/visual-capture.mjs`, mêmes caméras et même instant ;
-- pour les vaisseaux : `scripts/ship-capture.mjs` (dont le contrôle canons / points de tir) et `scripts/faction-capture.mjs`.
+- pour les vaisseaux : `scripts/ship-capture.mjs` (dont le contrôle canons / points de tir) et `scripts/faction-capture.mjs` ;
+- pour les performances : `scripts/bench-check.mjs` (appels de dessin et triangles par scène ; le test complet tourne de bout en bout sans erreur).
 
-**Mesures de performances :** elles ne sont valables que sur du vrai matériel. Le rendu logiciel de l'environnement de développement (SwiftShader, 2 à 30 IPS) ne mesure rien. Chaque mesure indique la carte graphique, le processeur, le navigateur, la résolution, le niveau de qualité et la scène, et le résultat est ajouté à ce document.
+**Mesures de performances :** elles ne sont valables que sur du vrai matériel, avec le test intégré (`?bench`). Le rendu logiciel de l'environnement de développement (SwiftShader, 2 à 30 IPS) ne mesure rien. Chaque mesure indique la carte graphique, le processeur, le navigateur, la résolution, le niveau de qualité et la scène, et le résultat est ajouté à ce document.
 
 **Publication :**
 
