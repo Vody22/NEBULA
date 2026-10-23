@@ -1,4 +1,4 @@
-import { Vector3 } from 'three';
+import { Line3, Vector3 } from 'three';
 import type { StationId } from '../economy/market';
 import { mulberry32 } from '../rng';
 import type { StaticCollider } from './types';
@@ -33,6 +33,10 @@ export interface AsteroidDef {
 export interface StationDef {
   id: StationId;
   name: string;
+  /** 'hub': the Aurora-7 model; 'outpost': the Ferro-9 mining depot. */
+  kind: 'hub' | 'outpost';
+  /** Turn of the model about +Y (rad); its hangar opens on local +Z. */
+  yaw: number;
   position: Vector3;
   ringRadius: number;
   ringTube: number;
@@ -78,6 +82,8 @@ export function buildZone(seed = 1337): ZoneDef {
   const station: StationDef = {
     id: 'aurora',
     name: 'Station Aurora-7',
+    kind: 'hub',
+    yaw: 0,
     position: new Vector3(0, 0, 0),
     ringRadius: 560,
     ringTube: 46,
@@ -142,8 +148,16 @@ export function buildZone(seed = 1337): ZoneDef {
       variant: Math.floor(rand() * 4),
     });
   }
-  // Keep the station approach clear.
-  const clear = asteroids.filter((a) => a.position.distanceTo(station.position) > station.ringRadius + 600 + a.radius);
+  const ferro = buildFerro(station.position, beltCenter);
+  // Keep the station approaches clear: around each station and along the depot's approach lane.
+  const lane = new Line3(ferro.dock.mouth, ferro.dock.mouth.clone().addScaledVector(ferro.dock.out, 1400));
+  const onLane = new Vector3();
+  const clear = asteroids.filter(
+    (a) =>
+      a.position.distanceTo(station.position) > station.ringRadius + 600 + a.radius &&
+      a.position.distanceTo(ferro.position) > FERRO_CLEARANCE + a.radius &&
+      lane.closestPointToPoint(a.position, true, onLane).distanceTo(a.position) > 160 + a.radius,
+  );
 
   const colliders: StaticCollider[] = [];
   clear.forEach((a, index) => {
@@ -168,6 +182,7 @@ export function buildZone(seed = 1337): ZoneDef {
       radius: station.ringTube + 6,
     });
   }
+  for (const c of FERRO_PARTS) colliders.push({ kind: 'station', center: ferroPoint(ferro, c[0], c[1], c[2]), radius: c[3] });
   for (const p of planets) colliders.push({ kind: 'planet', center: p.position, radius: p.radius });
 
   return {
@@ -176,11 +191,60 @@ export function buildZone(seed = 1337): ZoneDef {
     seed,
     sunDirection: new Vector3(-0.8, 0.35, 0.12).normalize(),
     station,
-    stations: [station],
+    stations: [station, ferro],
     planets,
     asteroids: clear,
     beltCenter,
     colliders,
     playerSpawn: new Vector3(0, 60, 1100),
   };
+}
+
+/** Nothing floats closer than this to the depot's centre (m). */
+const FERRO_CLEARANCE = 520;
+/** Hangar mouth of the depot model (Outpost.ts), on local +Z. */
+export const FERRO_MOUTH_Z = 130;
+
+/**
+ * Solid parts of the depot model, local coordinates (hangar on +Z) and
+ * radius: habitat stack, refinery, ore silos and the drill head. The hangar
+ * itself is open, like Aurora-7's.
+ */
+const FERRO_PARTS: [number, number, number, number][] = [
+  [0, 0, -45, 62],
+  [0, 78, -45, 48],
+  [0, -78, -45, 48],
+  [-165, -10, -55, 72],
+  [140, 0, -85, 62],
+  [0, -70, -430, 30],
+];
+
+/** A point of the depot model in world coordinates. */
+export function ferroPoint(st: StationDef, x: number, y: number, z: number, out = new Vector3()) {
+  const c = Math.cos(st.yaw);
+  const s = Math.sin(st.yaw);
+  return out.set(x * c + z * s, y, -x * s + z * c).add(st.position);
+}
+
+/**
+ * Dépôt Ferro-9: the mining depot at the far edge of the belt, about 7.5 km
+ * from Aurora-7, its hangar turned toward the hub.
+ */
+function buildFerro(hub: Vector3, beltCenter: Vector3): StationDef {
+  const position = beltCenter.clone().add(new Vector3(2400, 150, -2000));
+  const toHub = hub.clone().sub(position).setY(0).normalize();
+  const st: StationDef = {
+    id: 'ferro',
+    name: 'Dépôt Ferro-9',
+    kind: 'outpost',
+    yaw: Math.atan2(toHub.x, toHub.z),
+    position,
+    ringRadius: 0,
+    ringTube: 0,
+    coreRadius: 62,
+    spineLength: 0,
+    dock: { mouth: new Vector3(), radius: 170, out: toHub },
+  };
+  ferroPoint(st, 0, 0, FERRO_MOUTH_Z, st.dock.mouth);
+  return st;
 }

@@ -26,6 +26,7 @@ Possède le `World`, les sessions joueurs, les pilotes IA, le directeur de vague
 - **Entrées** : file par joueur, avec une entrée appliquée par tick. Cette régularité permet au client de rejouer exactement les mêmes pas. Les entrées en retard, dupliquées ou en excès sont ignorées.
 - **Règles** : `canDamage` (types partagés) dit qui peut toucher qui. Les PNJ de factions différentes se combattent. Deux joueurs ne se blessent que si tous deux ont activé le PvP. Le PvP ne se coupe ni pendant 15 s après un échange de tirs, ni moins de 5 s après le dernier changement. Une élimination PvP ne rapporte pas de crédits, pour éviter qu'on « farme » entre amis.
 - **Chat** : historique des 30 derniers messages, 5 messages par 10 s, répétitions ignorées. Les connexions et déconnexions s'affichent comme messages système.
+- **Économie (v0.3)** : chaque session a des crédits (500 au départ) et une soute. Le serveur tient un marché par station (`src/shared/economy`). Amarrage, commerce, réparation et minage sont décidés par lui seul : à quai, le vaisseau quitte le `World` et son état est gardé dans la session. Le minage est une commande tenue (`ShipInput.mine`) ; le `World` accumule la progression sur l'astéroïde visé et le serveur convertit les unités entières en cargaison. Détails : [V03_ECONOMIE.md](V03_ECONOMIE.md).
 - **Vagues** : leur taille augmente avec le nombre de pilotes connectés, dans une limite fixée. Le secteur est remis à zéro quand le dernier pilote part.
 
 ## Serveur Node (`src/server/node`)
@@ -38,10 +39,11 @@ Possède le `World`, les sessions joueurs, les pilotes IA, le directeur de vague
   - Un client trop lent saute des snapshots au lieu d'accumuler du retard.
 - `main.ts` : configuration par variables d'environnement (voir [DEPLOIEMENT.md](DEPLOIEMENT.md)).
 
-## Protocole (`src/shared/net/protocol.ts`, version 2)
+## Protocole (`src/shared/net/protocol.ts`, version 3)
 
-- Client → serveur : `hello { version, name, token? }`, `input { seq, input }`, `chat`, `pvp`, `ping`. Chaque message est validé par `validateClientMessage` ; le reste est rejeté et compté.
-- Serveur → client : `welcome` (session, jeton, graine, reprise), `snapshot` (tous les vaisseaux, dernière entrée appliquée `ackSeq`), `events`, `notice`, `chat`, `chatHistory`, `players`, `pong`, `error`.
+- Client → serveur : `hello { version, name, token? }`, `input { seq, input }`, `chat`, `pvp`, `ping`, et depuis la v3 `dock`, `undock`, `trade { item, qty }` (positif = achat, négatif = vente), `repair`. Chaque message est validé par `validateClientMessage` ; le reste est rejeté et compté.
+- Serveur → client : `welcome` (session, jeton, graine, reprise), `snapshot` (tous les vaisseaux, dernière entrée appliquée `ackSeq` ; `m` = astéroïde miné), `events`, `notice`, `chat`, `chatHistory`, `players`, `pong`, `error`, et depuis la v3 `pilot` (crédits, soute, station, coque à quai) à chaque changement et `market` (prix et stocks) une fois par seconde à quai.
+- Un client et un serveur de versions différentes refusent de jouer ensemble avec un message clair : le site et le serveur Render se mettent à jour en même temps.
 - Les lasers sont balistiques : un seul événement `shot` (position, vitesse, durée de vie) suffit au client pour les dessiner, sans trafic par tick.
 
 ## Client (`src/client`)
@@ -55,7 +57,7 @@ Possède le `World`, les sessions joueurs, les pilotes IA, le directeur de vague
 - `SnapshotBuffer` affiche les autres vaisseaux légèrement dans le passé et interpole entre deux snapshots : 1,5 tick en solo, 110 ms en ligne pour 20 Hz plus la gigue. Les événements sont joués quand l'horloge de rendu atteint leur tick. Les tirs du joueur partent de la position prédite de son vaisseau.
 - Le rendu n'a aucun état autoritaire : on peut le remplacer ou le faire tourner dans une application de bureau (Electron ou Tauri) sans toucher à la simulation.
 
-## Limites connues (v0.2)
+## Limites connues (v0.3)
 
 - Pas de compensation de latence pour les tirs : on vise des cibles affichées environ 100 ms dans le passé. Avec l'indicateur de tir anticipé, l'effet est faible à 20 Hz, mais il est réel au-delà de 150 ms de ping.
-- Un processus = un secteur, et l'état vit en mémoire : un redémarrage du serveur remet le secteur à zéro. Comptes et persistance viendront ensuite.
+- Un processus = un secteur, et l'état vit en mémoire : un redémarrage du serveur remet le secteur à zéro, crédits et cargaisons compris. Comptes et persistance viendront en v0.4.

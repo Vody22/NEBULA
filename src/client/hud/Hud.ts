@@ -20,8 +20,8 @@ export interface HudFrame {
   stats: PlayerStats;
   wave: number;
   respawnIn: number;
-  stationPos: THREE.Vector3;
-  stationName: string;
+  /** Every station of the sector, for markers and the radar. */
+  stations: { position: THREE.Vector3; name: string }[];
   fps: number;
   net: string;
   status: NetStatus;
@@ -86,7 +86,7 @@ export class Hud {
   private bracketInfo: HTMLDivElement;
   private arrow: HTMLDivElement;
   private markers = new Map<number, HTMLDivElement>();
-  private stationMarker: HTMLDivElement;
+  private stationMarkers: HTMLDivElement[] = [];
   private markerLayer: HTMLDivElement;
   private speedEl: HTMLSpanElement;
   private throttleFill: HTMLDivElement;
@@ -146,7 +146,6 @@ export class Hud {
     this.root.appendChild(svg);
 
     this.markerLayer = el('div', '', this.root) as HTMLDivElement;
-    this.stationMarker = this.makeMarker('station');
     this.dockMarker = this.makeMarker('dock');
 
     this.crosshair = el('div', 'abs crosshair', this.root, '<div class="ring"></div><i class="t u"></i><i class="t d"></i><i class="t l"></i><i class="t r"></i><i class="dot"></i>') as HTMLDivElement;
@@ -393,7 +392,8 @@ export class Hud {
       this.cursorLine.setAttribute('y1', '0');
       this.cursorLine.setAttribute('y2', '0');
       for (const m of this.markers.values()) m.style.display = 'none';
-      this.stationMarker.style.display = this.dockMarker.style.display = this.miningEl.style.display = 'none';
+      for (const m of this.stationMarkers) m.style.display = 'none';
+      this.dockMarker.style.display = this.miningEl.style.display = 'none';
       this.setPrompt('');
       return;
     }
@@ -490,12 +490,16 @@ export class Hud {
       }
     }
     // Station marker
-    const sd = f.stationPos.distanceTo(me.position);
-    this.project(f.stationPos, f.camera, pt);
-    // Near a hangar the docking marker takes over.
-    this.stationMarker.style.display = pt.front && !(f.dock && f.dock.distance < 3000) ? '' : 'none';
-    this.stationMarker.style.transform = `translate(${pt.x}px, ${pt.y}px)`;
-    (this.stationMarker.lastChild as HTMLElement).textContent = `${f.stationName} · ${(sd / 1000).toFixed(1)} km`;
+    f.stations.forEach((st, i) => {
+      const m = (this.stationMarkers[i] ??= this.makeMarker('station'));
+      const sd = st.position.distanceTo(me.position);
+      this.project(st.position, f.camera, pt);
+      // Near a hangar the docking marker takes over.
+      const near = f.dock && f.dock.name === st.name && f.dock.distance < 3000;
+      m.style.display = pt.front && !near ? '' : 'none';
+      m.style.transform = `translate(${pt.x}px, ${pt.y}px)`;
+      (m.lastChild as HTMLElement).textContent = `${st.name} · ${(sd / 1000).toFixed(1)} km`;
+    });
 
     this.dockGuide(f, pt);
     this.miningReadout(f, pt);
@@ -682,7 +686,7 @@ export class Hud {
       }
       ctx.globalAlpha = 1;
     };
-    plot(f.stationPos, '#7fe3ff', 6, false, 'square');
+    for (const st of f.stations) plot(st.position, '#7fe3ff', 6, false, 'square');
     for (const s of f.ships.values()) {
       if (s.snap.id === me.snap.id) continue;
       const hostile = isHostile(me.snap, s.snap);

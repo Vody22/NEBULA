@@ -30,6 +30,7 @@ import { ShipView } from './render/ShipView';
 import { QUALITY, type QualityLevel, type QualityProfile } from './render/quality';
 import { buildSky, type SkyResult } from './render/Sky';
 import { SpaceDust } from './render/SpaceDust';
+import { Outpost } from './render/Outpost';
 import { Station } from './render/Station';
 import { keyLabel, type Settings } from './settings';
 import { StationPanel, type KnownPrice } from './ui/StationPanel';
@@ -49,7 +50,6 @@ const _fwd = new THREE.Vector3();
 const _end = new THREE.Vector3();
 const _normal = new THREE.Vector3();
 const _camTarget = new THREE.Vector3();
-const _parkedTurn = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
 /** Image-based light from the baked nebula: reflections and a hint of colour, not a fill light. */
 const ENVIRONMENT_INTENSITY = 0.55;
 export const DEFAULT_SECTOR_SEED = 1337;
@@ -94,6 +94,8 @@ export class Game {
   private zone: ZoneDef | null = null;
   private sky: SkyResult | null = null;
   private station: Station | null = null;
+  /** Every station model by id (Aurora-7 and the Ferro-9 depot). */
+  private stationViews = new Map<StationId, Station | Outpost>();
   private planets: Planets | null = null;
   private asteroids: Asteroids | null = null;
   private lasers = new Lasers();
@@ -502,6 +504,12 @@ export class Game {
 
     this.planets = new Planets(zone.planets, zone.sunDirection);
     this.station = new Station(zone.station);
+    this.stationViews.clear();
+    for (const def of zone.stations) {
+      const view: Station | Outpost = def.kind === 'hub' && def.id === zone.station.id ? this.station : new Outpost(def);
+      this.stationViews.set(def.id, view);
+      if (view !== this.station) this.worldRoot.add(view.group);
+    }
     this.asteroids = new Asteroids(zone.asteroids, zone.beltCenter);
     this.asteroids.setDetail(this.quality.level !== 'low');
     this.worldRoot.add(this.planets.group, this.station.group, this.asteroids.group);
@@ -771,7 +779,7 @@ export class Game {
     // 7) World animation
     const camPos = this.cam.camera.position;
     this.sky?.update(this.cam.camera);
-    this.station?.update(this.renderTime, this.cam.camera.position);
+    for (const v of this.stationViews.values()) v.update(this.renderTime, this.cam.camera.position);
     this.planets?.update(this.renderTime);
     this.asteroids?.update(this.renderTime);
     this.lasers.update(this.renderTime, this.cam.camera.position);
@@ -790,8 +798,7 @@ export class Game {
         stats: this.stats,
         wave: this.wave,
         respawnIn: this.respawnIn,
-        stationPos: this.zone.station.position,
-        stationName: this.zone.station.name,
+        stations: this.zone.stations,
         fps: this.fps,
         net: `${Math.round(this.pixelRatio * 100)}%`,
         status: transport?.status ?? { state: 'local', rtt: 0 },
@@ -897,7 +904,7 @@ export class Game {
         gpuName: () => this.gpuName(),
         animateWorld: (time, dt, camPos, camVel) => {
           this.sky?.update(this.cam.camera);
-          this.station?.update(time, camPos);
+          for (const v of this.stationViews.values()) v.update(time, camPos);
           this.planets?.update(time);
           this.asteroids?.update(time);
           this.lasers.update(time, camPos);
@@ -1123,14 +1130,15 @@ export class Game {
 
   /** Docked: the ship on its pad, seen from inside the hangar. */
   private dockedCamera(dt: number) {
-    if (!this.station) return;
+    const view = this.pilot?.docked ? this.stationViews.get(this.pilot.docked) : undefined;
+    if (!view) return;
     if (!this.parked) {
       this.parked = new ShipView(this.lastMe?.snap.classId ?? 'falcon', this.scene, true);
       this.parked.teleported();
     }
     const c = this.cam.camera;
-    this.station.dockedView(this.time, this.parked.group.position, c.position, _camTarget);
-    this.parked.group.quaternion.copy(_parkedTurn);
+    view.dockedView(this.time, this.parked.group.position, c.position, _camTarget);
+    view.parkedRotation(this.parked.group.quaternion);
     this.parked.update(dt, this.time, 0, false, c.position);
     c.up.set(0, 1, 0);
     c.lookAt(_camTarget);
@@ -1146,7 +1154,7 @@ export class Game {
     c.up.set(0, 1, 0);
     c.lookAt(z.station.position);
     this.sky?.update(c);
-    this.station?.update(this.time);
+    for (const v of this.stationViews.values()) v.update(this.time);
     this.planets?.update(this.time);
     this.asteroids?.update(this.time);
     this.effects.update(dt);

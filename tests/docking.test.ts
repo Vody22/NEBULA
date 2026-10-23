@@ -124,6 +124,38 @@ describe('docking', () => {
     expect(last('pilot')!.pilot.docked).toBe('aurora');
   });
 
+  it('docks at the Ferro-9 depot too, with its own market, and leaves it clear of every collider', () => {
+    const { server, session, me, last } = solo();
+    const ferro = server.world.zone.stations.find((st) => st.id === 'ferro')!;
+    expect(ferro.position.distanceTo(server.world.zone.station.position)).toBeGreaterThan(6500);
+    const ship = me()!;
+    ship.position.copy(ferro.dock.mouth).addScaledVector(ferro.dock.out, 60);
+    ship.velocity.set(0, 0, 0);
+    server.receive(session, { t: 'dock' });
+    server.tick();
+    expect(last('pilot')!.pilot.docked).toBe('ferro');
+    expect(last('market')!.market.station).toBe('ferro');
+    // The depot sells ore cheaper than the hub buys it.
+    const aurora = createMarket('aurora');
+    const depot = createMarket('ferro');
+    expect(quote('ironNickel', depot.ironNickel).buy).toBeLessThan(quote('ironNickel', aurora.ironNickel).sell);
+    server.receive(session, { t: 'undock' });
+    const out = me()!;
+    expect(server.world.grid.query(out.position, 40).every((c) => c.center.distanceTo(out.position) > c.radius + SHIP_CLASSES.falcon.radius)).toBe(true);
+  });
+
+  it('keeps rocks off the depot and its approach lane', () => {
+    const zone = new GameServer({ npcs: false }).world.zone;
+    const ferro = zone.stations.find((st) => st.id === 'ferro')!;
+    for (const a of zone.asteroids) {
+      expect(a.position.distanceTo(ferro.position) - a.radius).toBeGreaterThan(500);
+      for (let d = 0; d <= 1400; d += 100) {
+        const p = ferro.dock.mouth.clone().addScaledVector(ferro.dock.out, d);
+        expect(a.position.distanceTo(p) - a.radius).toBeGreaterThan(150);
+      }
+    }
+  });
+
   it('validates the new client messages', () => {
     expect(validateClientMessage({ t: 'dock' })).toEqual({ t: 'dock' });
     expect(validateClientMessage({ t: 'trade', item: 'water', qty: -3 })).toEqual({ t: 'trade', item: 'water', qty: -3 });

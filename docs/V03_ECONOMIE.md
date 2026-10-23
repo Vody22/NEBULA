@@ -39,14 +39,14 @@ Objectif : donner au joueur une boucle économique simple et lisible, en plus du
 ## Minage
 
 - Rayon de minage : 300 m de portée, tiré droit devant depuis le nez. Il fonctionne seulement sous 60 m/s et pas pendant un tir.
-- Rendement : environ 0,6 unité par seconde, multiplié par la richesse de l'astéroïde (de 0,6 à 1,5 selon l'astéroïde, toujours la même) et par sa taille.
+- Rendement : environ 0,6 unité par seconde, multiplié par la richesse de l'astéroïde (de 0,6 à 1,5 selon l'astéroïde, toujours la même). La taille ne compte pas.
 - Le type de minerai dépend de la famille de l'astéroïde, déjà partagée avec le serveur (variante 0 à 3). Le platine tombe parfois dans les astéroïdes métalliques.
 - Les astéroïdes ne s'épuisent pas dans cette version : ce sont des obstacles fixes et partagés. Le rythme est limité par le rendement et la soute.
 - Les autres joueurs voient le rayon : l'instantané indique l'astéroïde visé.
 
 ## Amarrage
 
-- Zone d'amarrage : sphère de 220 m devant l'entrée du hangar (Aurora-7 : entrée à z ≈ 334 m). Condition : vitesse inférieure à 50 m/s et aucun combat PvP depuis 15 s.
+- Zone d'amarrage : sphère autour de l'entrée du hangar (Aurora-7 : 220 m, entrée à z ≈ 334 m ; Ferro-9 : 170 m, hangar tourné vers Aurora-7). Condition : vitesse inférieure à 50 m/s et aucun combat PvP depuis 15 s.
 - À quai, le vaisseau est retiré de l'espace et son état est conservé (coque, bouclier, énergie). Au décollage, il réapparaît devant le hangar, nez vers l'extérieur, à 30 m/s.
 - Une déconnexion à quai garde le joueur à quai.
 
@@ -54,7 +54,7 @@ Objectif : donner au joueur une boucle économique simple et lisible, en plus du
 
 - `ShipInput.mine` : le minage est une commande tenue, comme le tir.
 - Client vers serveur : `dock`, `undock`, `trade { item, qty }` (positif = achat, négatif = vente), `repair`.
-- Serveur vers client : `pilot { credits, cargo, capacity, docked }` à chaque changement, et `market { station, items }` à quai (prix, stock), une fois par seconde.
+- Serveur vers client : `pilot { credits, cargo, capacity, docked, hull, hullMax }` à chaque changement, et `market { station, items }` à quai (prix, stock), une fois par seconde.
 - `ShipSnapshot.m` : l'astéroïde miné, absent sinon.
 - Un client v0.2 reçoit une erreur de version claire. Le serveur Render et le site doivent être mis à jour ensemble.
 
@@ -71,3 +71,12 @@ Objectif : donner au joueur une boucle économique simple et lisible, en plus du
 3. Minage : simulation, rayon visible, soute dans le HUD.
 4. Dépôt Ferro-9 : zone, modèle, marché : la boucle de commerce est complète.
 5. Tests de bout en bout (interface, partie, téléphone, multijoueur), commandes tactiles, documentation, publication avec le serveur.
+
+## Journal
+
+- **Étape 1** (commit 279d0fe) : marchandises, soute, marchés et prix partagés ; 10 tests.
+- **Étape 2, serveur** (3c57a2e) : amarrage, décollage, réparation, commerce et minage décidés par le serveur, protocole v3.
+- **Étapes 2 et 3, client** (b46df6d) : écran de station (crédits, soute, réparation, marché par 1, 10 ou max, décollage), vue du vaisseau sur son aire dans le hangar, guidage d'approche (touche G), jauge de soute, rayon de minage visible pour tous (touche R ou clic droit) avec étincelles et son, infos sous le réticule (minerai, richesse, distance, raison d'un rayon inactif), boutons tactiles MINER et S'AMARRER. Les nouvelles touches ne prennent jamais une touche déjà utilisée par le joueur.
+- **Étape 4** : Dépôt Ferro-9 à 7,6 km d'Aurora-7, au bord de la ceinture : modèle procédural (habitat, raffinerie, silos, bras de forage, petit hangar), collisions, astéroïdes écartés autour du dépôt et sur son couloir d'approche, marché déjà prévu côté serveur. L'écran de station rappelle le dernier prix vu à l'autre station.
+
+Vérifié dans Chromium (rendu logiciel, donc sans valeur de performance) : approche et invite d'amarrage, amarrage, achat, vente, refus expliqués, décollage, minage jusqu'à la soute. Non vérifié : le ressenti sur un vrai GPU et sur téléphone, et une partie en ligne sur le serveur Render (il tourne encore en v2).
