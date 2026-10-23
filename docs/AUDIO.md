@@ -87,6 +87,10 @@ groupes monde, ambiance et voix ──envoi──→ réverbération du hangar �
   - l'atténuation selon la distance est calculée par le jeu (`sensorCurve`).
 - **Sans clic** : chaque changement de gain est une rampe, chaque voix volée s'éteint en fondu, et les boucles sont fondues sur elles-mêmes.
 - **Sans fuite** : chaque voix se déconnecte à sa fin, et les compteurs `started` et `ended` sont vérifiés par les tests.
+- **Veille des couches muettes** : une couche continue qui s'est tue est débranchée. Le navigateur cesse alors de la calculer, jusqu'à ce qu'elle reprenne. C'est le cas :
+  - des couches du moteur à quai et dans les menus ;
+  - des ambiances à zéro ;
+  - de la réverbération, qui n'est alimentée que dans le hangar.
 - **Sans bloquer le rendu** :
   - les sons sont rendus un par un, en rendant la main entre chacun ;
   - la musique est écrite 0,4 s à l'avance par sa propre minuterie, même quand les images sont lentes.

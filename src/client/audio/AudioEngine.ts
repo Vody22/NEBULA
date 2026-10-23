@@ -78,6 +78,9 @@ interface Voice {
   done: boolean;
 }
 
+/** Inside a hangar the world sounds (not the music or the interface) take the hall's reverb. */
+const ROOM_GROUPS: Group[] = ['fx', 'ambience', 'voice'];
+
 const MAX_VOICES = 40;
 const PER_CATEGORY: Record<string, number> = {
   weapons: 12,
@@ -106,6 +109,7 @@ export class AudioEngine {
   private analyser!: AnalyserNode;
   private scope = new Float32Array(1024);
   private room!: GainNode;
+  private roomFed = false;
   private bank = new Map<SoundId, AudioBuffer[]>();
   private limiter_ = new VoiceLimiter<Voice>(MAX_VOICES, PER_CATEGORY);
   private hrtfInUse = 0;
@@ -176,8 +180,6 @@ export class AudioEngine {
       const duck = ctx.createGain();
       const state = ctx.createGain();
       duck.connect(state).connect(g === 'fx' ? glue : this.master);
-      // Inside a hangar the world sounds (not the music or the interface) take the hall's reverb.
-      if (g === 'fx' || g === 'ambience' || g === 'voice') state.connect(this.room);
       this.groups[g] = { duck, state };
     }
     for (const b of BUSES) {
@@ -311,7 +313,22 @@ export class AudioEngine {
 
   /** Hangar reverb amount, 0 outside. */
   setRoom(amount: number, tc = 0.6) {
-    if (this.ctx) this.room.gain.setTargetAtTime(amount, this.ctx.currentTime, tc);
+    if (!this.ctx) return;
+    // The reverb is only fed inside a hangar: outside, the convolver gets no input and costs nothing.
+    if (amount > 0.001 && !this.roomFed) {
+      for (const g of ROOM_GROUPS) this.groups[g].state.connect(this.room);
+      this.roomFed = true;
+    }
+    this.room.gain.setTargetAtTime(amount, this.ctx.currentTime, tc);
+    if (amount <= 0.001 && this.roomFed && this.room.gain.value < 0.001) {
+      for (const g of ROOM_GROUPS) this.groups[g].state.disconnect(this.room);
+      this.roomFed = false;
+    }
+  }
+
+  /** Whether the hangar reverb is being fed (diagnostics). */
+  get roomActive() {
+    return this.roomFed;
   }
 
 
@@ -538,6 +555,10 @@ export class LoopVoice {
   readonly gain: GainNode;
   private pan: StereoPannerNode | null = null;
   private stopped = false;
+  /** Node feeding the bus, and whether it is connected (a silent layer is unplugged: no CPU). */
+  private out: AudioNode;
+  private dest: AudioNode;
+  private awake = true;
 
   constructor(
     private engine: AudioEngine,
@@ -556,17 +577,33 @@ export class LoopVoice {
     this.gain = ctx.createGain();
     this.gain.gain.value = 0;
     this.src.connect(this.filter).connect(this.gain);
+    this.dest = engine.bus[bus];
     if (opts.at) {
       this.pan = ctx.createStereoPanner();
       this.pan.pan.value = engine.panOf(opts.at);
-      this.gain.connect(this.pan).connect(engine.bus[bus]);
-    } else this.gain.connect(engine.bus[bus]);
+      this.gain.connect(this.pan);
+      this.out = this.pan;
+    } else this.out = this.gain;
+    this.out.connect(this.dest);
     this.src.start(ctx.currentTime, opts.offset ?? Math.random() * buffer.duration);
   }
 
   set(gain: number, tc = 0.1) {
     if (this.stopped) return;
+    if (gain > 1e-4 && !this.awake) {
+      this.out.connect(this.dest);
+      this.awake = true;
+    }
     this.gain.gain.setTargetAtTime(Math.max(0, gain), this.engine.now, tc);
+    // Faded out: unplug it, so the browser stops computing it until it is needed again.
+    if (gain <= 1e-4 && this.awake && this.gain.gain.value < 1e-4) {
+      this.out.disconnect();
+      this.awake = false;
+    }
+  }
+
+  get active() {
+    return this.awake;
   }
 
   freq(f: number, tc = 0.1) {
@@ -587,6 +624,15 @@ export class LoopVoice {
   dispose(fade = 0.3) {
     if (this.stopped) return;
     this.stopped = true;
+    if (!this.awake) {
+      // Already silent and unplugged: free it now.
+      this.src.stop();
+      this.src.disconnect();
+      this.filter.disconnect();
+      this.gain.disconnect();
+      this.pan?.disconnect();
+      return;
+    }
     const t = this.engine.now;
     this.gain.gain.cancelScheduledValues(t);
     this.gain.gain.setValueAtTime(this.gain.gain.value, t);

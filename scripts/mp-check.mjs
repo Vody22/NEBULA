@@ -21,7 +21,9 @@ await build({
   logLevel: 'warning',
 });
 const { startServer } = await import(pathToFileURL('.mp-check/server.mjs').href);
-const server = await startServer({ port: 0, host: '127.0.0.1', staticDir: 'dist', reconnectGrace: 150, npcs: false, log: () => {} });
+// Grace of 4 min: under software rendering a page reload takes 2.5 to 3 min here (a few seconds on a real computer;
+// production uses 20 s). The check is that a reload within the grace resumes the same ship, not how fast it reloads.
+const server = await startServer({ port: 0, host: '127.0.0.1', staticDir: 'dist', reconnectGrace: 240, npcs: false, log: () => {} });
 await server.ready;
 const PASSWORD = 'mot-de-passe-test';
 const base = `http://127.0.0.1:${server.port}`;
@@ -245,6 +247,7 @@ try {
   const bravoId = ibBefore.myShipId;
   const bravoSession = ibBefore.sessionId;
   const reloadStart = Date.now();
+  console.log(`     Bravo before reload: ship ${bravoId}, docked ${ibBefore.pilot?.docked ?? null}`);
   await B.page.reload({ waitUntil: 'domcontentloaded' });
   await waitFor(A.page, () => window.__game.inspect().players.some((p) => p.name === 'Bravo' && !p.online), null, 20000).then(
     () => check(true, 'Bravo shown as disconnected to the others'),
@@ -252,6 +255,7 @@ try {
   );
   await B.page.waitForFunction(() => window.__menu?.isOpen && document.querySelector('#serverStatus.ok'), null, { timeout: 300000 });
   check((await B.page.textContent('.pilot.signed .who b'))?.trim() === 'Bravo' && !(await B.page.$('#pilotPass')), 'still signed in after reload: no password asked');
+  console.log(`     (title menu back after ${((Date.now() - reloadStart) / 1000).toFixed(0)} s; grace 240 s)`);
   await B.page.click('[data-act="online"]');
   await B.page.waitForFunction(() => window.__game.running && window.__game.inspect().myShipId !== null, null, { timeout: 240000 }).catch(async (e) => {
     const st = await B.page.evaluate(() => {
@@ -273,7 +277,7 @@ try {
   );
 
   await C.ctx.close(); // tab closed for good
-  await waitFor(A.page, () => !window.__game.inspect().ships.some((s) => s.name === 'Charlie'), null, 240000).then(
+  await waitFor(A.page, () => !window.__game.inspect().ships.some((s) => s.name === 'Charlie'), null, 360000).then(
     () => check(true, 'a pilot who closes the game disappears after the grace period (no ghost ship)'),
     () => check(false, 'ghost ship removed'),
   );

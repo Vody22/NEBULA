@@ -64,11 +64,18 @@ export class EngineSound {
   private wasPresent = false;
   private view = { interior: 0, wide: 0 };
   private sputter = 1;
+  private out: GainNode;
+  private dest: AudioNode;
+  private plugged = true;
   private clock = 0;
 
   constructor(private a: AudioEngine) {
     const ctx = a.ctx!;
-    const bus = a.bus.engines;
+    // The oscillator layers share one output, unplugged while the drive is off (docked, menus).
+    const bus = ctx.createGain();
+    this.out = bus;
+    this.dest = a.bus.engines;
+    bus.connect(this.dest);
     const mkOsc = (type: OscillatorType, f: number): Osc => {
       const osc = ctx.createOscillator();
       osc.type = type;
@@ -146,6 +153,12 @@ export class EngineSound {
     }
     this.power += ((i.present ? 1 : 0) - this.power) * Math.min(1, dt * (i.present ? 2.2 : 1.3));
     const pw = this.power;
+    const running = pw > 0.002 || this.boostEnv > 0.002 || i.present;
+    if (running !== this.plugged) {
+      if (running) this.out.connect(this.dest);
+      else this.out.disconnect();
+      this.plugged = running;
+    }
 
     const thr = Math.max(0, i.throttle);
     const dThr = (i.throttle - this.lastThrottle) / Math.max(dt, 1e-3);
