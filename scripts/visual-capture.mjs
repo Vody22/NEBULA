@@ -116,6 +116,9 @@ await shot('07-station-close', () => window.__place({ pos: [760, 90, 330], targe
 await shot('08-planet-kerys', () => window.__place({ pos: [600, 300, 1500], target: [-26000, -6500, -52000], fov: 50 }));
 await shot('09-thalassa-nyx', () => window.__place({ pos: [1200, 300, 600], target: [30000, 7000, -26000], fov: 45 }));
 await shot('10-nebula-sky', () => window.__place({ pos: [0, 2000, 3000], target: [0, 4000, 9000], fov: 70 }));
+// Station details (added in step 4, no v0.2 "before").
+await shot('12-hangar-approach', () => window.__place({ pos: [70, -15, 470], target: [0, -5, 300], fov: 60 }));
+await shot('13-cargo-ring', () => window.__place({ pos: [-300, -30, 360], target: [-190, -68, 245], fov: 50 }));
 await shot('11-asteroids', () => {
   const { g } = window.__shot;
   const big = g.zone.asteroids.filter((a) => a.radius > 150).sort((a, b) => a.position.length() - b.position.length())[0];

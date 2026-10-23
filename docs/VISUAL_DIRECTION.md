@@ -386,7 +386,7 @@ Chaque étape fait l'objet d'un commit séparé sur `v0.2.5-graphics`, avec des 
 ### Journal de réalisation
 
 - **Étapes 0 et 1 (terminées) :** menu « Qualité graphique » (Automatique, Bas, Moyen, Élevé, Ultra, ou `?q=`), soleil dominant à 4,2 avec contre-jour froid, environnement à 0,55, bloom à seuil 1,05, aberration seulement sous les dégâts. Captures : `screenshots/visual/step1/`.
-- **Étape 2 (Falcon Mk.II, en revue) :** `src/client/render/FalconMk2.ts`, outils `shipKit.ts` et textures `shipTextures.ts`.
+- **Étape 2 (Falcon Mk.II, validée par William) :** `src/client/render/FalconMk2.ts`, outils `shipKit.ts` et textures `shipTextures.ts`.
   - Coque profilée à chanfreins en quatre sections de blindage, avec de vrais joints au-dessus d'un noyau sombre ; dos anthracite, bande bleu marine, liseré cyan sous le cockpit.
   - Nacelles en deux sections, prise d'air avec soufflante, tuyère en trois couches (pétales, anneau chaud, cône d'éjection), brunissement thermique, radiateurs à ailettes.
   - Cockpit vitré avec arceaux, siège, casque du pilote et deux écrans ; sonde de nez, dôme capteur, antennes.
@@ -398,11 +398,21 @@ Chaque étape fait l'objet d'un commit séparé sur `v0.2.5-graphics`, avec des 
   - Le Warden reprend provisoirement cette coque avec sa propre peinture ; sa silhouette distincte arrive à l'étape 6.
   - Visionneuse `hangar.html` (`?ship=`, `?view=`), captures `scripts/ship-capture.mjs`, export GLB par le bouton « Exporter GLB ».
   - Limite honnête : c'est un modèle procédural détaillé, pas un asset de production modélisé et texturé à la main.
-- **Étape 3 (univers, en revue) :**
+- **Étape 3 (univers, validée par William) :**
   - Ciel : un cœur de nébuleuse lumineux par système, dégradé cyan, magenta puis ambre, masses de gaz sur environ 60 % du ciel, bandes de poussière en absorption. Les étoiles brillantes sont désormais des points nets calculés à chaque image (6 000, couleurs spectrales O à M, magnitudes variées), au lieu d'être cuites floues dans le cube.
   - Planètes : côté nuit noir, lumière rougie au terminateur, lumières de villes sur Thalassa, ombre douce des nuages, assombrissement du limbe des géantes, brume de distance (Kerys 0,26). Anneaux : annelets par bruit avec filtrage par octave (plus de moiré), divisions nettes, face non éclairée plus sombre.
   - Astéroïdes : quatre familles selon la variante déjà partagée avec le serveur (carbonées, agglomérats, silicatées à cassures planes, métalliques veinées), poussière claire dans les creux, relief fin par pixel (désactivé en Bas). Les formes restent entre 0,8 et 1,25 fois le rayon, ce qui reste cohérent avec la sphère de collision.
   - Non fait : déplacer ou réduire Kerys, car sa position et son rayon font partie de la zone partagée avec le serveur ; nappes de gaz de premier plan ; LOD et imposteurs des astéroïdes (étape 7).
+- **Correctif fluidité (écrans 120 à 165 Hz) :** le vaisseau du joueur est interpolé entre les deux derniers ticks de simulation (position, rotation et vitesse). La caméra de poursuite garde un retard qui ne dépend plus de la durée des images, et l'horloge suit l'horodatage de `requestAnimationFrame`. Tests : `tests/prediction.test.ts` (144 et 165 Hz) et `tests/camera.test.ts` (images irrégulières, images sautées). Aucun changement serveur ni protocole.
+- **Étape 4 (station Aurora-7, en revue) :** `src/client/render/Station.ts`.
+  - Tôlerie à l'échelle (un motif tous les 24 m), fenêtres par ponts : la plupart des ponts sont sombres et seules quelques rangées sont éclairées, ce qui donne l'échelle humaine sans effet guirlande.
+  - Modules de l'anneau en coques pressurisées arrondies avec bandes de renfort, blocs machines octogonaux sur la colonne, peinture sombre moins miroir.
+  - Hangar dégagé du noyau, avec nervures, plafonnier, deux plateformes d'atterrissage, une baie de contrôle, un cadre renforcé et des contreforts latéraux.
+  - Zones cargo à l'échelle des conteneurs (12 m), grues portiques, poutres vers le noyau.
+  - Trafic : les navettes d'arrivée passent sous l'anneau au lieu de le traverser.
+  - Détails fins masqués au-delà de 5 km. Les collisions de la station (zone partagée avec le serveur) ne changent pas.
+  - Captures : `screenshots/visual/step4/` (vues 06, 07, 12 et 13).
+  - Limite honnête : c'est une station procédurale plus crédible, pas un modèle de production. Les mesures de triangles et d'appels de dessin sont prévues à l'étape 7.
 
 ### Budgets par image (niveau Élevé)
 

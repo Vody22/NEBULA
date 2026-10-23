@@ -545,7 +545,7 @@ export class Game {
     // 7) World animation
     const camPos = this.cam.camera.position;
     this.sky?.update(this.cam.camera);
-    this.station?.update(this.renderTime);
+    this.station?.update(this.renderTime, this.cam.camera.position);
     this.planets?.update(this.renderTime);
     this.asteroids?.update(this.renderTime);
     this.lasers.update(this.renderTime);
