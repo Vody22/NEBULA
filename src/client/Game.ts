@@ -145,6 +145,7 @@ export class Game {
     buyShip: (ship) => this._transport?.send({ t: 'buyShip', ship }),
     useShip: (ship) => this._transport?.send({ t: 'useShip', ship }),
     upgrade: (slot) => this._transport?.send({ t: 'upgrade', slot }),
+    mission: (op, id) => this._transport?.send({ t: 'mission', op, id }),
     undock: () => this.undock(),
     menu: () => this.callbacks.onMenu?.(),
   });
@@ -582,6 +583,9 @@ export class Game {
       case 'market':
         this.seenMarkets.set(m.market.station, { market: m.market, at: performance.now() });
         this.stationPanel.setMarket(m.market);
+        break;
+      case 'board':
+        this.stationPanel.setBoard(m.offers);
         break;
     }
   }
@@ -1092,7 +1096,7 @@ export class Game {
     const index = active ? me.snap.m! : hit?.index;
     const rock = index !== undefined ? zone.asteroids[index] : undefined;
     const speed = me.velocity.length();
-    const full = !!this.pilot && cargoTotal(this.pilot.cargo) >= this.pilot.capacity;
+    const full = !!this.pilot && cargoTotal(this.pilot.cargo) + this.pilot.reserved >= this.pilot.capacity;
     let state: MiningInfo['state'];
     if (!input.mine && !active) {
       // A hint only when the ship could actually mine it.

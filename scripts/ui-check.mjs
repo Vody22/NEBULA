@@ -310,6 +310,44 @@ for (const [w, h] of [[568, 1244], [1280, 720], [1920, 1080]]) {
     return g.myShipId != null && !g.stationScreen && s?.classId === 'warden';
   }, null, { timeout: 30000 }).then(() => true, () => false);
   check(inWarden, 'take-off in the Warden');
+  // v0.6: contracts. A courier job taken at Aurora-7 is shown in flight and paid on docking at Ferro-9.
+  const dockAt = (station) => page.evaluate((id) => {
+    const srv = window.__game.transport.server;
+    const st = srv.world.zone.stations.find((x) => x.id === id);
+    const s = [...srv.world.ships.values()].find((x) => x.ownerId);
+    window.__game.input.input.throttle = 0;
+    s.position.copy(st.dock.mouth); s.velocity.set(0, 0, 0);
+    window.__game.transport.send({ t: 'dock' });
+  }, station);
+  await page.evaluate(() => {
+    window.__game.transport.server.boards.aurora.offers[0] = { id: 9001, kind: 'courier', station: 'aurora', target: 'ferro', count: 5, progress: 0, reward: 350 };
+  });
+  await dockAt('aurora');
+  await page.waitForFunction(() => window.__game.inspect().stationScreen && window.__game.inspect().pilot.docked === 'aurora', null, { timeout: 30000 });
+  await page.click('#station [data-tab="jobs"]');
+  const board = await page.evaluate(() => ({
+    shown: getComputedStyle(document.querySelector('#station .pane-jobs')).display !== 'none',
+    offers: document.querySelectorAll('#station .jobs.offers button[data-accept]').length,
+    first: document.querySelector('#station .jobs.offers li .n')?.textContent ?? '',
+  }));
+  check(board.shown && board.offers >= 1 && /Livraison : 5 caisses pour Ferro-9/.test(board.first), `the Missions tab lists the station's contracts (${JSON.stringify(board)})`);
+  await page.screenshot({ path: `${out}/missions-board.png` });
+  await page.click('#station button[data-accept="9001"]');
+  const took = await page.waitForFunction(() => window.__game.inspect().pilot.missions.length === 1 && window.__game.inspect().pilot.reserved === 5, null, { timeout: 30000 }).then(() => true, () => false);
+  const hold = await page.evaluate(() => document.querySelector('#station .hold').textContent);
+  check(took && /^6 \/ 60$/.test(hold.trim()), `contract accepted: the crates take hold space (${hold})`);
+  await page.click('#station .undock');
+  await page.waitForFunction(() => window.__game.inspect().myShipId != null && !window.__game.inspect().stationScreen, null, { timeout: 30000 });
+  const tracker = await page.evaluate(() => document.querySelector('#zone .jobs')?.textContent ?? '');
+  check(/Livraison : 5 caisses pour Ferro-9/.test(tracker) && /amarrez-vous à Ferro-9/.test(tracker), `the flight HUD tracks the contract (${tracker})`);
+  await page.screenshot({ path: `${out}/missions-hud.png` });
+  const before6 = await page.evaluate(() => window.__game.inspect().pilot.credits);
+  await dockAt('ferro');
+  const paid = await page.waitForFunction((c) => {
+    const p = window.__game.inspect().pilot;
+    return p.docked === 'ferro' && p.missions.length === 0 && p.credits === c + 350;
+  }, before6, { timeout: 30000 }).then(() => true, () => false);
+  check(paid, 'docking at Ferro-9 delivers the crates and pays 350 cr');
   check(errors.length === 0, `economy: no console errors/warnings ${errors.join(' | ')}`);
   await ctx.close();
 }

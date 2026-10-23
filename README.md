@@ -1,7 +1,7 @@
 # NEBULA FRONTIER
 
 MMO spatial 3D dans le navigateur (Three.js + TypeScript + Vite).
-Version actuelle : **v0.5, vaisseaux et améliorations**. Plusieurs pilotes partagent le même secteur en temps réel, avec un serveur Node.js autoritaire. On y mine, on commerce entre deux stations, on améliore son vaisseau ou on en achète un autre, et la progression est sauvegardée. Le mode solo hors ligne reste disponible.
+Version actuelle : **v0.6, missions**. Plusieurs pilotes partagent le même secteur en temps réel, avec un serveur Node.js autoritaire. On y mine, on commerce entre deux stations, on remplit des contrats, on améliore son vaisseau ou on en achète un autre, et la progression est sauvegardée. Le mode solo hors ligne reste disponible.
 
 ![Station Aurora-7](docs/img/station.png)
 
@@ -22,6 +22,13 @@ Options d'URL :
 - `?autostart` : démarrage direct en solo.
 
 Mise en ligne : voir [docs/DEPLOIEMENT.md](docs/DEPLOIEMENT.md). Le client reste sur Vercel, et le serveur WebSocket va sur Render, Fly.io ou un VPS.
+
+## Missions (v0.6)
+
+- **Onglet « Missions »** en station : chaque station propose 4 contrats, et un pilote peut en mener 3 à la fois.
+- **Livraison** de caisses à l'autre station, **minage** d'un minerai à rapporter, **chasse** aux pirates.
+- En ligne, le tableau est commun : un contrat pris disparaît pour les autres. Le suivi s'affiche en vol, sous le nom du secteur.
+- Détails : [docs/V06_MISSIONS.md](docs/V06_MISSIONS.md).
 
 ## Vaisseaux et améliorations (v0.5)
 
@@ -148,7 +155,7 @@ TEST_DATABASE_URL=postgres://… npm test   # en plus : le stockage PostgreSQL s
 npm run build       # build de production
 npm run preview &   # puis :
 npm run smoke       # lance le jeu dans Chromium headless, pilote, tire et fait des captures
-npm run ui-check    # HUD à 3 tailles, menu pause, réaffectation, réglages, tirs, amarrage, commerce, minage, sauvegarde solo, chantier
+npm run ui-check    # HUD à 3 tailles, menu pause, réaffectation, réglages, tirs, amarrage, commerce, minage, sauvegarde solo, chantier, contrats
 node scripts/mp-check.mjs    # navigateurs sur le vrai serveur : inscription, synchro, chat, combat commun, PvP, latence, reconnexion, connexion refusée puis acceptée
 node scripts/mobile-check.mjs   # téléphone et tablette émulés : commandes tactiles, mise en page, chat et PvP en ligne
 node scripts/load-test.mjs 30 30   # 30 pilotes robots pendant 30 s : coût du tick et bande passante
@@ -161,5 +168,6 @@ Pour `npm run smoke`, définir `CHROMIUM_PATH` si Chromium n'est pas trouvé aut
 - **v0.2 : multijoueur.**
 - **v0.3 : amarrage, minage et commerce.**
 - **v0.4 : comptes pilotes et sauvegarde.**
-- **v0.5 : vaisseaux et améliorations** (cette version).
-- Ensuite : missions, factions, nouveaux secteurs et sauts, version PC installable.
+- **v0.5 : vaisseaux et améliorations.**
+- **v0.6 : missions** (cette version).
+- Ensuite : factions, nouveaux secteurs et sauts, version PC installable.

@@ -12,7 +12,7 @@ import { noMods } from '../src/shared/sim/upgrades';
  * dropped first), e.g. postgres://nebula:nebula-test@127.0.0.1:5432/nebula_test.
  */
 const url = process.env.TEST_DATABASE_URL;
-const save = (credits: number): PilotSave => ({ v: SAVE_VERSION, credits, cargo: { water: 2 }, kills: 1, deaths: 0, station: 'ferro', hull: 200, ship: 'falcon', fleet: { falcon: { mods: noMods(), hull: 200 } } });
+const save = (credits: number): PilotSave => ({ v: SAVE_VERSION, credits, cargo: { water: 2 }, kills: 1, deaths: 0, station: 'ferro', hull: 200, ship: 'falcon', fleet: { falcon: { mods: noMods(), hull: 200 } }, missions: [] });
 
 describe.skipIf(!url)('PostgresStore (real database)', () => {
   const stores: PostgresStore[] = [];

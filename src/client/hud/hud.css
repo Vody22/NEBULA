@@ -169,6 +169,13 @@ kbd { display: inline-block; min-width: 1.6em; text-align: center; font-family: 
 #zone .net { margin-top: 5px; padding-left: 12px; font-size: 14px; font-weight: 600; letter-spacing: 0.4px; color: var(--hud-text); white-space: nowrap; }
 #zone .net b { color: #fff; }
 #zone .net.warn { color: var(--warn); }
+#zone .jobs { margin-top: 10px; padding-left: 12px; display: flex; flex-direction: column; gap: 5px; max-width: 330px; }
+#zone .jobs .count { display: none; font-size: 12px; font-weight: 600; color: var(--hud); }
+#zone .jobs .job { font-size: 13px; line-height: 1.25; padding-left: 8px; border-left: 2px solid rgba(143, 233, 255, 0.35); }
+#zone .jobs .job b { display: block; font-weight: 600; color: #fff; }
+#zone .jobs .job span { color: var(--hud-dim); }
+#zone .jobs .job.k-hunt { border-left-color: rgba(255, 110, 90, 0.6); }
+#zone .jobs .job.k-mining { border-left-color: rgba(255, 191, 77, 0.6); }
 #zone .net .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 7px; vertical-align: 1px; background: var(--hud-dim); }
 #zone .net .dot.ok { background: var(--friend); box-shadow: 0 0 6px var(--friend); }
 #zone .net .dot.warn { background: var(--warn); }
@@ -348,6 +355,8 @@ body.touch #menu .quickhelp { display: none; }
 
 /* --- Narrow / portrait windows (e.g. 568 px wide): stack the HUD */
 @media (max-width: 820px) {
+  #zone .jobs .job { display: none; }
+  #zone .jobs .count { display: block; }
   :root { --gap: 10px; }
   #topbar { top: var(--gap); gap: 10px; padding: 5px 12px 6px; }
   #topbar .v { font-size: 15px; }
@@ -442,6 +451,8 @@ body.touch #menu .quickhelp { display: none; }
 
 /* HUD in touch mode: status and flight info go to the top, the bottom corners belong to the thumbs. */
 body.touch #zone .help { display: none; }
+body.touch #zone .jobs .job { display: none; }
+body.touch #zone .jobs .count { display: block; }
 body.touch #capture { display: none; }
 body.touch #topbar { top: 8px; left: 50%; right: auto; transform: translateX(-50%); justify-content: center; padding: 4px 12px 5px; gap: 10px; }
 body.touch #topbar .v { font-size: 14px; }

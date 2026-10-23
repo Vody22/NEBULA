@@ -42,9 +42,22 @@ body.touch #station .undock kbd { display: none; }
 #station .tabs button:last-child { border-radius: 0 8px 8px 0; }
 #station .tabs button + button { border-left: none; }
 #station .tabs button[aria-selected='true'] { background: rgba(127, 227, 255, 0.35); border-color: var(--hud); }
-#station .pane-yard { display: none; }
-#station.yard .pane-market, #station.yard .qty { display: none; }
-#station.yard .pane-yard { display: block; }
+#station .pane-yard, #station .pane-jobs { display: none; }
+#station.yard .pane-market, #station.yard .qty, #station.jobs .pane-market, #station.jobs .qty { display: none; }
+#station.yard .pane-yard, #station.jobs .pane-jobs { display: block; }
+
+/* Contracts */
+#station .jobs { list-style: none; margin: 0 0 12px; padding: 0; }
+#station .jobs li { display: flex; align-items: center; gap: 12px; padding: 7px 6px; border-bottom: 1px solid rgba(143, 233, 255, 0.07); }
+#station .jobs li.none { color: var(--hud-dim); font-size: 14px; }
+#station .jobs .n { flex: 1; font-weight: 600; font-size: 15px; }
+#station .jobs small { display: block; font-size: 12px; font-weight: 500; color: var(--hud-dim); }
+#station .jobs small.need { color: var(--warn); }
+#station .jobs .reward { font-family: var(--font-display); font-weight: 600; color: #ffe08a; white-space: nowrap; }
+#station .jobs button { min-width: 110px; padding: 6px 10px; min-height: 32px; font-size: 11px; letter-spacing: 1px; }
+#station .jobs button.na { opacity: 0.4; }
+#station .jobs button[data-abandon] { border-color: rgba(255, 191, 77, 0.6); }
+#station .jcount { color: var(--hud-dim); font-weight: 500; letter-spacing: 1px; margin-left: 6px; }
 
 #station .shipcard { display: flex; gap: 14px; justify-content: space-between; align-items: flex-start; padding: 10px 12px; margin-bottom: 12px; background: rgba(143, 233, 255, 0.05); border: 1px solid var(--hud-faint); border-radius: 10px; }
 #station .shipcard h4 { font-family: var(--font-display); font-size: 18px; font-weight: 700; letter-spacing: 2px; margin: 2px 0; }
@@ -108,7 +121,8 @@ body.touch #station .undock kbd { display: none; }
   #station .specs dd { font-size: 13px; }
   #station .mods small { display: none; }
   #station .mods .n, #station .fleet .n { font-size: 14px; }
-  #station .mods button, #station .fleet button { min-width: 0; }
+  #station .mods button, #station .fleet button, #station .jobs button { min-width: 0; }
+  #station .jobs .n { font-size: 13px; }
   #station table { font-size: 14px; }
   #station td.name small { display: none; }
   #station td, #station th { padding: 4px; }

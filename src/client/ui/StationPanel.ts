@@ -1,5 +1,6 @@
 import { ITEMS, ITEM_IDS, cargoTotal, type ItemId } from '../../shared/economy/items';
 import { repairCost } from '../../shared/economy/market';
+import { MAX_ACTIVE, crates, missionBrief, missionStatus, missionTitle, type Mission } from '../../shared/missions';
 import type { MarketView, PilotState } from '../../shared/net/protocol';
 import { SHIP_CLASSES } from '../../shared/sim/shipClasses';
 import type { ShipClassId } from '../../shared/sim/types';
@@ -12,6 +13,7 @@ export interface StationCallbacks {
   buyShip(ship: ShipClassId): void;
   useShip(ship: ShipClassId): void;
   upgrade(slot: UpgradeSlot): void;
+  mission(op: 'accept' | 'abandon', id: number): void;
   undock(): void;
   /** Touch screens: the pause menu (the flight buttons are hidden at the station). */
   menu(): void;
@@ -27,7 +29,7 @@ export interface KnownPrice {
 }
 
 type Qty = 1 | 10 | 'max';
-type Tab = 'market' | 'yard';
+type Tab = 'market' | 'yard' | 'jobs';
 
 const fmt = (n: number) => Math.round(n).toLocaleString('fr-FR');
 
@@ -51,6 +53,7 @@ export class StationPanel {
   private pilot: PilotState | null = null;
   private market: MarketView | null = null;
   private known: Map<ItemId, KnownPrice> = new Map();
+  private offers: Mission[] = [];
 
   constructor(parent: HTMLElement, private cb: StationCallbacks) {
     const root = document.createElement('div');
@@ -73,7 +76,7 @@ export class StationPanel {
       </div>
       <div class="mhead">
         <div class="tabs" role="tablist" aria-label="Services de la station">
-          <button role="tab" data-tab="market" aria-selected="true">Marché</button><button role="tab" data-tab="yard" aria-selected="false">Chantier</button>
+          <button role="tab" data-tab="market" aria-selected="true">Marché</button><button role="tab" data-tab="yard" aria-selected="false">Chantier</button><button role="tab" data-tab="jobs" aria-selected="false">Missions</button>
         </div>
         <div class="qty" role="group" aria-label="Quantité par ordre">
           <button data-qty="1" aria-pressed="true">×1</button><button data-qty="10" aria-pressed="false">×10</button><button data-qty="max" aria-pressed="false">Max</button>
@@ -91,6 +94,13 @@ export class StationPanel {
         <h3>Améliorations du vaisseau</h3>
         <ul class="mods"></ul>
         <p class="hint">Améliorations installées dans toutes les stations ; vaisseaux vendus au chantier d'Aurora-7. Un vaisseau détruit revient au hangar avec ses améliorations, mais sa cargaison est perdue.</p>
+      </div>
+      <div class="scroll pane-jobs">
+        <h3>Contrats en cours <span class="jcount"></span></h3>
+        <ul class="jobs active"></ul>
+        <h3>Proposés ici</h3>
+        <ul class="jobs offers"></ul>
+        <p class="hint">Livraison : les caisses prennent de la place en soute et sont perdues si le vaisseau est détruit. Minage : seul le minerai extrait après avoir accepté compte. Chasse : payée dès le dernier pirate abattu. Les livraisons et le minerai se remettent en s'amarrant à la station indiquée.</p>
       </div>`;
     parent.appendChild(root);
     this.root = root;
@@ -112,6 +122,8 @@ export class StationPanel {
       // A mouse click must not leave focus on the button: Espace and Entrée fly the ship and open the chat.
       if (e.detail > 0) b.blur();
       if (b.dataset.tab) this.setTab(b.dataset.tab as Tab);
+      else if (b.dataset.accept) this.cb.mission('accept', Number(b.dataset.accept));
+      else if (b.dataset.abandon) this.cb.mission('abandon', Number(b.dataset.abandon));
       else if (b.dataset.up) this.cb.upgrade(b.dataset.up as UpgradeSlot);
       else if (b.dataset.buy) this.cb.buyShip(b.dataset.buy as ShipClassId);
       else if (b.dataset.use) this.cb.useShip(b.dataset.use as ShipClassId);
@@ -139,6 +151,13 @@ export class StationPanel {
   hide() {
     this.root.classList.add('hidden');
     this.market = null;
+    this.offers = [];
+  }
+
+  /** The contracts this station offers. */
+  setBoard(offers: Mission[]) {
+    this.offers = offers;
+    this.refresh();
   }
 
   setUndockKey(label: string) {
@@ -162,11 +181,12 @@ export class StationPanel {
   }
 
   get tab(): Tab {
-    return this.root.classList.contains('yard') ? 'yard' : 'market';
+    return this.root.classList.contains('yard') ? 'yard' : this.root.classList.contains('jobs') ? 'jobs' : 'market';
   }
 
   setTab(t: Tab) {
     this.root.classList.toggle('yard', t === 'yard');
+    this.root.classList.toggle('jobs', t === 'jobs');
     for (const b of Array.from(this.root.querySelectorAll<HTMLButtonElement>('.tabs button'))) {
       b.setAttribute('aria-selected', String(b.dataset.tab === t));
     }
@@ -187,7 +207,7 @@ export class StationPanel {
     if (this.qty !== 'max') return this.qty;
     if (!p || !line) return 1;
     if (!buy) return Math.max(1, p.cargo[item] ?? 0);
-    const free = p.capacity - cargoTotal(p.cargo);
+    const free = p.capacity - cargoTotal(p.cargo) - p.reserved;
     return Math.max(1, Math.min(free, line.stock, Math.floor(p.credits / line.buy), 1000));
   }
 
@@ -288,11 +308,37 @@ export class StationPanel {
     }
   }
 
+  /** Rebuilt only when the contracts change, so buttons keep focus between market updates. */
+  private jobsKey = '';
+
+  private refreshJobs(p: PilotState) {
+    const key = JSON.stringify([p.missions, this.offers, p.docked, p.capacity - cargoTotal(p.cargo) - p.reserved, p.missions.length]);
+    if (key === this.jobsKey) return;
+    this.jobsKey = key;
+    const free = p.capacity - cargoTotal(p.cargo) - p.reserved;
+    const esc = (t: string) => t.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]!);
+    const row = (m: Mission, sub: string, btn: string) =>
+      `<li class="k-${m.kind}"><div class="n">${esc(missionTitle(m))}<small>${esc(sub)}</small></div><div class="reward">${fmt(m.reward)} cr</div>${btn}</li>`;
+    this.root.querySelector('.jcount')!.textContent = `${p.missions.length} / ${MAX_ACTIVE}`;
+    this.root.querySelector('.jobs.active')!.innerHTML = p.missions.length
+      ? p.missions.map((m) => row(m, missionStatus(m), `<button data-abandon="${m.id}" aria-label="Abandonner : ${esc(missionTitle(m))}">Abandonner</button>`)).join('')
+      : '<li class="none">Aucun contrat. Choisissez-en un ci-dessous.</li>';
+    this.root.querySelector('.jobs.offers')!.innerHTML = this.offers.length
+      ? this.offers
+          .map((m) => {
+            const blocked = p.missions.length >= MAX_ACTIVE || crates(m) > free;
+            return row(m, missionBrief(m), `<button data-accept="${m.id}" class="${blocked ? 'na' : ''}" aria-label="Accepter : ${esc(missionTitle(m))}">Accepter</button>`);
+          })
+          .join('')
+      : '<li class="none">Pas de nouveau contrat pour le moment.</li>';
+  }
+
   private refresh() {
     const p = this.pilot;
     if (p) this.refreshYard(p);
+    if (p) this.refreshJobs(p);
     if (p) {
-      const used = cargoTotal(p.cargo);
+      const used = cargoTotal(p.cargo) + p.reserved;
       this.creditsEl.textContent = `${fmt(p.credits)} cr`;
       this.holdEl.textContent = `${used} / ${p.capacity}`;
       this.holdBar.style.transform = `scaleX(${p.capacity ? used / p.capacity : 0})`;
@@ -323,7 +369,7 @@ export class StationPanel {
       hold.textContent = have ? String(have) : '';
       row.tr.classList.toggle('held', have > 0);
       // Dimmed when it cannot work right now; still clickable, the station says why.
-      const free = p ? p.capacity - cargoTotal(p.cargo) : 0;
+      const free = p ? p.capacity - cargoTotal(p.cargo) - p.reserved : 0;
       row.buy.classList.toggle('na', !line || !p || free <= 0 || line.stock < 1 || p.credits < line.buy);
       row.sell.classList.toggle('na', have <= 0);
     }

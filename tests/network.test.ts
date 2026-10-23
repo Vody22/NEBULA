@@ -482,6 +482,25 @@ describe('pilot accounts (WebSocket)', () => {
     expect(back.lastPilot!.fleet.map((f) => f.classId)).toEqual(['falcon', 'warden']);
   });
 
+  it('contracts over the network: one board for everyone, a taken contract leaves it for the others', async () => {
+    const url = await boot();
+    const a = join(url, 'Coursier');
+    const b = join(url, 'Rival');
+    await until(() => a.shipId !== null && b.shipId !== null);
+    park(a.shipId!);
+    a.send({ t: 'dock' });
+    park(b.shipId!);
+    b.send({ t: 'dock' });
+    await until(() => a.messages('board').length > 0 && b.messages('board').length > 0, 3000, 'boards');
+    const offer = a.messages('board').at(-1)!.offers[0];
+    a.send({ t: 'mission', op: 'accept', id: offer.id });
+    await until(() => a.lastPilot?.missions.some((m) => m.id === offer.id) === true, 3000, 'accepted');
+    await until(() => !b.messages('board').at(-1)!.offers.some((o) => o.id === offer.id), 3000, 'gone for the other pilot');
+    b.send({ t: 'mission', op: 'accept', id: offer.id });
+    await sleep(200);
+    expect(b.lastPilot!.missions).toEqual([]);
+  });
+
   it('POST /logout revokes a login token (sign out on a shared computer)', async () => {
     const url = await boot();
     const a = join(url, 'Bibliothèque');

@@ -14,7 +14,7 @@ const NO_MODS = noMods();
 const WARDEN_PRICE = SHIPYARD.find((o) => o.classId === 'warden')!.price;
 
 function pilotSave(extra: Partial<PilotSave> = {}): PilotSave {
-  return { v: SAVE_VERSION, credits: 20000, cargo: {}, kills: 0, deaths: 0, station: 'aurora', hull: SHIP_CLASSES.falcon.hull, ship: 'falcon', fleet: { falcon: { mods: noMods(), hull: SHIP_CLASSES.falcon.hull } }, ...extra };
+  return { v: SAVE_VERSION, credits: 20000, cargo: {}, kills: 0, deaths: 0, station: 'aurora', hull: SHIP_CLASSES.falcon.hull, ship: 'falcon', fleet: { falcon: { mods: noMods(), hull: SHIP_CLASSES.falcon.hull } }, missions: [], ...extra };
 }
 
 /** A returning account pilot, docked at its station. */

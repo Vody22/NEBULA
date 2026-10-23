@@ -1,6 +1,7 @@
 import { Quaternion, Vector3 } from 'three';
-import { addCargo, cargoTotal, ITEMS, ITEM_IDS, type Cargo, type ItemId } from '../shared/economy/items';
+import { addCargo, cargoTotal, ITEMS, ITEM_IDS, removeCargo, type Cargo, type ItemId } from '../shared/economy/items';
 import { createMarket, quote, REPAIR_COST, repairCost, stepMarket, trade, TRADE_REFUSALS, type MarketState, type StationId } from '../shared/economy/market';
+import { BOARD_RENEW, BOARD_SIZE, boardKinds, crates, MAX_ACTIVE, makeOffer, missionTitle, OFFER_REFILL, type Mission } from '../shared/missions';
 import { restoreSector, SAVE_VERSION, sectorSave, validateSave, type PilotSave, type SectorSave } from '../shared/save';
 import { effectiveStats, noMods, offerOf, SHIPYARD_STATION, UPGRADES, upgradeCost, type ShipStats, type UpgradeSlot } from '../shared/sim/upgrades';
 import { AIPilot } from '../shared/sim/ai';
@@ -74,6 +75,14 @@ interface Session {
   /** The ship flown, and every ship owned with its upgrades (the flown ship's hull lives in `stored` or in space). */
   ship: ShipClassId;
   fleet: PilotSave['fleet'];
+  /** Contracts in progress (v0.6). */
+  missions: Mission[];
+}
+
+/** A station's contract board: empty slots are refilled after OFFER_REFILL seconds. */
+interface Board {
+  offers: (Mission | null)[];
+  refillAt: number[];
 }
 
 export interface GameServerOptions {
@@ -151,6 +160,11 @@ export class GameServer {
   private playersDirty = true;
   readonly markets: Record<StationId, MarketState> = { aurora: createMarket('aurora'), ferro: createMarket('ferro') };
   private marketClock = 0;
+  readonly boards: Record<StationId, Board>;
+  private boardRenewAt = BOARD_RENEW;
+  private nextMission = 1;
+  /** Contract offers (their own random stream, like loot). */
+  private missionRng;
   /** Platinum finds (kept apart from the wave director's random stream). */
   private lootRng;
   private onSave: GameServerOptions['onSave'];
@@ -160,6 +174,8 @@ export class GameServer {
     this.world = new World(buildZone(seed));
     this.rng = mulberry32(seed ^ 0x9e3779b9);
     this.lootRng = mulberry32(seed ^ 0x51ed270b);
+    this.missionRng = mulberry32(seed ^ 0x2545f491);
+    this.boards = { aurora: this.newBoard('aurora'), ferro: this.newBoard('ferro') };
     this.snapshotEvery = opts.snapshotEvery ?? 1;
     this.npcs = opts.npcs ?? true;
     this.maxPlayers = opts.maxPlayers ?? 30;
@@ -249,6 +265,7 @@ export class GameServer {
       saveDirty: profile.accountId !== null && !save,
       ship: shipClass,
       fleet,
+      missions: save ? save.missions.map((m) => ({ ...m, id: this.nextMission++ })) : [],
     };
     this.sessions.set(id, session);
     this.welcome(session, false);
@@ -273,6 +290,7 @@ export class GameServer {
     if (this.chatLog.length) s.link?.send({ t: 'chatHistory', lines: this.chatLog.slice() });
     s.pilotDirty = true;
     this.sendMarket(s);
+    this.sendBoard(s);
   }
 
   private uniqueName(base: string) {
@@ -386,6 +404,10 @@ export class GameServer {
       case 'upgrade':
         this.upgrade(s, msg.slot);
         break;
+      case 'mission':
+        if (msg.op === 'accept') this.acceptMission(s, msg.id);
+        else this.abandonMission(s, msg.id);
+        break;
     }
   }
 
@@ -419,6 +441,8 @@ export class GameServer {
     this.playersDirty = true;
     this.notice(s, `Amarré à ${st.name}`, 'good');
     this.sendMarket(s);
+    this.sendBoard(s);
+    this.completeAtStation(s);
   }
 
   private undock(s: Session) {
@@ -459,7 +483,7 @@ export class GameServer {
     const next = s.fleet[classId];
     if (!s.docked || !s.stored || !next || s.ship === classId) return;
     const cls = effectiveStats(classId, next.mods);
-    if (cargoTotal(s.cargo) > cls.cargo) return this.notice(s, `Soute trop pleine pour le ${SHIP_CLASSES[classId].label} (${cls.cargo} unités) : vendez d'abord une partie de la cargaison.`, 'warn');
+    if (cargoTotal(s.cargo) + this.reserved(s) > cls.cargo) return this.notice(s, `Soute trop pleine pour le ${SHIP_CLASSES[classId].label} (${cls.cargo} unités) : vendez d'abord une partie de la cargaison.`, 'warn');
     s.fleet[s.ship]!.hull = s.stored.hull;
     s.ship = classId;
     s.stored = { hull: Math.min(cls.hull, next.hull), shield: cls.shield, energy: cls.energy };
@@ -487,6 +511,131 @@ export class GameServer {
     this.notice(s, `${UPGRADES[slot].label} niveau ${owned.mods[slot]}  −${cost} cr`, 'good');
   }
 
+  /** Hold units taken by courier crates. */
+  private reserved(s: Session) {
+    let n = 0;
+    for (const m of s.missions) n += crates(m);
+    return n;
+  }
+
+  /** What the hold can take in cargo, crates set aside (trade() and addCargo() compare it with the cargo total). */
+  private holdSpace(s: Session) {
+    return this.shipStats(s).cargo - this.reserved(s);
+  }
+
+  private newBoard(station: StationId): Board {
+    return {
+      offers: boardKinds(this.missionRng, BOARD_SIZE).map((kind) => makeOffer(this.missionRng, station, this.nextMission++, kind)),
+      refillAt: new Array(BOARD_SIZE).fill(0),
+    };
+  }
+
+  /** Once a second: refill taken slots, and renew every board now and then so offers do not go stale. */
+  private stepBoards() {
+    const t = this.world.time;
+    const changed = new Set<StationId>();
+    if (t >= this.boardRenewAt) {
+      this.boardRenewAt = t + BOARD_RENEW;
+      for (const id of Object.keys(this.boards) as StationId[]) {
+        this.boards[id] = this.newBoard(id);
+        changed.add(id);
+      }
+    }
+    for (const [id, b] of Object.entries(this.boards) as [StationId, Board][]) {
+      b.offers.forEach((o, i) => {
+        if (o || t < b.refillAt[i]) return;
+        b.offers[i] = makeOffer(this.missionRng, id, this.nextMission++);
+        changed.add(id);
+      });
+    }
+    for (const s of this.sessions.values()) if (s.docked && changed.has(s.docked)) this.sendBoard(s);
+  }
+
+  private sendBoard(s: Session) {
+    if (!s.docked || !s.link) return;
+    s.link.send({ t: 'board', station: s.docked, offers: this.boards[s.docked].offers.filter((o): o is Mission => o !== null) });
+  }
+
+  private stationName = (id: StationId) => this.station(id).name;
+
+  private acceptMission(s: Session, id: number) {
+    if (!s.docked) return;
+    const board = this.boards[s.docked];
+    const i = board.offers.findIndex((o) => o?.id === id);
+    // Gone already (taken by another pilot, renewed): the client gets the current board back.
+    if (i < 0) return this.sendBoard(s);
+    const offer = board.offers[i]!;
+    if (s.missions.length >= MAX_ACTIVE) return this.notice(s, `Contrats : ${MAX_ACTIVE} au maximum en même temps.`, 'warn');
+    if (crates(offer) > this.holdSpace(s) - cargoTotal(s.cargo)) return this.notice(s, `Il faut ${crates(offer)} places libres en soute pour ces caisses.`, 'warn');
+    board.offers[i] = null;
+    board.refillAt[i] = this.world.time + OFFER_REFILL;
+    s.missions.push({ ...offer });
+    s.pilotDirty = true;
+    this.notice(s, `Contrat accepté : ${missionTitle(offer)}`, 'good');
+    for (const o of this.sessions.values()) if (o.docked === s.docked) this.sendBoard(o);
+  }
+
+  private abandonMission(s: Session, id: number) {
+    const m = s.missions.find((x) => x.id === id);
+    if (!m) return;
+    s.missions = s.missions.filter((x) => x !== m);
+    s.holdFullNotified = false;
+    s.pilotDirty = true;
+    this.notice(s, `Contrat abandonné : ${missionTitle(m)}`, 'warn');
+  }
+
+  private pay(s: Session, m: Mission) {
+    s.missions = s.missions.filter((x) => x !== m);
+    s.stats.credits += m.reward;
+    s.holdFullNotified = false;
+    s.pilotDirty = true;
+    this.notice(s, `Contrat rempli : ${missionTitle(m)}  +${m.reward} cr`, 'good');
+  }
+
+  /** Docking: deliver crates and mined ore to this station. */
+  private completeAtStation(s: Session) {
+    for (const m of [...s.missions]) {
+      if (m.target !== s.docked) continue;
+      if (m.kind === 'courier') this.pay(s, m);
+      else if (m.kind === 'mining' && m.progress >= m.count) {
+        const have = s.cargo[m.item!] ?? 0;
+        if (have < m.count) {
+          this.notice(s, `Contrat de minage : il manque ${m.count - have} ${ITEMS[m.item!].label} en soute.`, 'warn');
+          continue;
+        }
+        removeCargo(s.cargo, m.item!, m.count);
+        this.pay(s, m);
+      }
+    }
+  }
+
+  /** One unit of ore went into the hold: it counts for the first unfinished contract asking for it. */
+  private mined(s: Session, item: ItemId) {
+    const m = s.missions.find((x) => x.kind === 'mining' && x.item === item && x.progress < x.count);
+    if (!m) return;
+    m.progress++;
+    if (m.progress === m.count) this.notice(s, `Minerai réuni : rapportez-le à ${this.stationName(m.target)}`, 'good');
+  }
+
+  private pirateDown(s: Session) {
+    const m = s.missions.find((x) => x.kind === 'hunt' && x.progress < x.count);
+    if (!m) return;
+    m.progress++;
+    s.pilotDirty = true;
+    if (m.progress >= m.count) this.pay(s, m);
+  }
+
+  /** The ship was destroyed: crates are gone with it, and so is the ore mined for contracts. */
+  private missionsLost(s: Session) {
+    for (const m of [...s.missions]) {
+      if (m.kind === 'courier') {
+        s.missions = s.missions.filter((x) => x !== m);
+        this.notice(s, `Contrat échoué : caisses perdues avec le vaisseau (${this.stationName(m.target)})`, 'warn');
+      } else if (m.kind === 'mining') m.progress = 0;
+    }
+    s.pilotDirty = true;
+  }
+
   private repair(s: Session) {
     if (!s.docked || !s.stored) return;
     const max = this.shipStats(s).hull;
@@ -503,7 +652,7 @@ export class GameServer {
 
   private trade(s: Session, item: ItemId, qty: number) {
     if (!s.docked) return;
-    const r = trade(this.markets[s.docked], item, qty, s.stats, s.cargo, this.shipStats(s).cargo);
+    const r = trade(this.markets[s.docked], item, qty, s.stats, s.cargo, this.holdSpace(s));
     if (!r.ok) return this.notice(s, TRADE_REFUSALS[r.reason], 'warn');
     if (r.qty < 0) s.holdFullNotified = false;
     const label = ITEMS[item].label;
@@ -535,6 +684,8 @@ export class GameServer {
       hull,
       hullMax: cls.hull,
       ship: s.ship,
+      reserved: this.reserved(s),
+      missions: s.missions.map((m) => ({ ...m })),
       fleet: (Object.entries(s.fleet) as [ShipClassId, NonNullable<PilotSave['fleet'][ShipClassId]>][]).map(([classId, o]) => ({
         classId,
         mods: { ...o.mods },
@@ -564,6 +715,7 @@ export class GameServer {
       hull: flownHull,
       ship: s.ship,
       fleet,
+      missions: s.missions.map((m) => ({ ...m })),
     };
   }
 
@@ -600,11 +752,12 @@ export class GameServer {
       if (!ship || ship.mining === null || ship.mineProgress < 1) continue;
       const ore = oreOf(w.zone.asteroids[ship.mining].variant);
       const units = Math.floor(ship.mineProgress);
-      const cap = this.shipStats(s).cargo;
+      const cap = this.holdSpace(s);
       let added = 0;
       for (; added < units; added++) {
         const item: ItemId = ore === 'ironNickel' && this.lootRng() < PLATINUM_CHANCE ? 'platinum' : ore;
         if (!addCargo(s.cargo, item, 1, cap)) break;
+        this.mined(s, item);
         if (item === 'platinum') this.notice(s, 'Pépite de platine !', 'good');
       }
       ship.mineProgress -= added;
@@ -722,6 +875,7 @@ export class GameServer {
       this.marketClock -= 1;
       for (const m of Object.values(this.markets)) stepMarket(m, 1);
       for (const s of this.sessions.values()) this.sendMarket(s);
+      this.stepBoards();
     }
     if (this.npcs && this.sessions.size > 0) this.directWaves(TICK_DT);
 
@@ -797,6 +951,7 @@ export class GameServer {
             s.pilotDirty = true;
             this.notice(s, 'Cargaison perdue avec le vaisseau.', 'warn');
           }
+          this.missionsLost(s);
         }
       }
       if (e.faction === 'union' && !ownerSession) {
@@ -813,6 +968,7 @@ export class GameServer {
           ks.stats.credits += bounty;
           if (bounty) ks.pilotDirty = true;
           ks.link?.send({ t: 'notice', text: bounty ? `${e.name} détruit  +${bounty} cr` : `${e.name} abattu en PvP`, tone: 'good' });
+          if (e.faction === 'raiders') this.pirateDown(ks);
           if (ownerSession) this.system(`${ks.name} a abattu ${e.name}`);
           this.playersDirty = true;
         }

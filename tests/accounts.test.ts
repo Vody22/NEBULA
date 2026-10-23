@@ -10,7 +10,7 @@ import { noMods } from '../src/shared/sim/upgrades';
 import { STARTING_CREDITS } from '../src/server/GameServer';
 
 const PASSWORD = 'mot-de-passe-test';
-const save = (credits: number, extra: Partial<PilotSave> = {}): PilotSave => ({ v: SAVE_VERSION, credits, cargo: {}, kills: 0, deaths: 0, station: 'aurora', hull: 260, ship: 'falcon', fleet: { falcon: { mods: noMods(), hull: 260 } }, ...extra });
+const save = (credits: number, extra: Partial<PilotSave> = {}): PilotSave => ({ v: SAVE_VERSION, credits, cargo: {}, kills: 0, deaths: 0, station: 'aurora', hull: 260, ship: 'falcon', fleet: { falcon: { mods: noMods(), hull: 260 } }, missions: [], ...extra });
 const register = (name: string, password = PASSWORD): AuthRequest => ({ kind: 'register', name, password });
 const login = (name: string, password = PASSWORD): AuthRequest => ({ kind: 'login', name, password });
 

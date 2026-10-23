@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { interceptPoint } from '../../shared/math';
 import { cargoTotal } from '../../shared/economy/items';
+import { missionStatus, missionTitle } from '../../shared/missions';
 import type { PilotState, PlayerInfo, PlayerStats } from '../../shared/net/protocol';
 import { statsOfPacked } from '../../shared/sim/upgrades';
 import type { ShipInput } from '../../shared/sim/types';
@@ -135,6 +136,7 @@ export class Hud {
   private prompt: HTMLDivElement;
   private miningEl: HTMLDivElement;
   private holdTxt: HTMLSpanElement;
+  private jobsEl: HTMLDivElement;
   private holdBar: HTMLElement;
   private keys = { dock: 'G', mine: 'R' };
   private damage = 0;
@@ -183,6 +185,8 @@ export class Hud {
     this.netEl = el('div', 'net', zone) as HTMLDivElement;
     this.netEl.id = 'netStatus';
     this.netEl.setAttribute('role', 'status');
+    // Contracts in progress, under the sector name.
+    this.jobsEl = el('div', 'jobs', zone) as HTMLDivElement;
     this.fpsEl = el('div', 'abs', this.root) as HTMLDivElement;
     this.fpsEl.id = 'fps';
     // Wallet: credits and hold, top right.
@@ -380,7 +384,16 @@ export class Hud {
     this.netEl.classList.toggle('warn', f.status.state !== 'online' && f.status.state !== 'local');
     this.creditsEl.textContent = (f.pilot?.credits ?? f.stats.credits).toLocaleString('fr-FR');
     if (f.pilot) {
-      const used = cargoTotal(f.pilot.cargo);
+      const used = cargoTotal(f.pilot.cargo) + f.pilot.reserved;
+      const esc = (t: string) => t.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]!);
+      const jobs = f.pilot.missions;
+      this.html(
+        this.jobsEl,
+        jobs.length
+          ? `<div class="count">${jobs.length} contrat${jobs.length > 1 ? 's' : ''} en cours</div>` +
+              jobs.map((m) => `<div class="job k-${m.kind}"><b>${esc(missionTitle(m))}</b><span>${esc(missionStatus(m))}</span></div>`).join('')
+          : '',
+      );
       this.holdTxt.textContent = `${used} / ${f.pilot.capacity}`;
       this.holdBox.classList.toggle('full', used >= f.pilot.capacity);
       this.holdBar.style.transform = `scaleX(${f.pilot.capacity ? used / f.pilot.capacity : 0})`;

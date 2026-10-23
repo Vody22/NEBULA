@@ -13,7 +13,7 @@ const HULL = SHIP_CLASSES.falcon.hull;
 const CARGO = SHIP_CLASSES.falcon.cargo;
 const NO_MODS = { guns: 0, shields: 0, armor: 0, engines: 0, hold: 0, mining: 0 };
 /** The fleet of a pilot who only has the Falcon. */
-const falconOnly = (hull: number) => ({ hull, ship: 'falcon' as const, fleet: { falcon: { mods: NO_MODS, hull } } });
+const falconOnly = (hull: number) => ({ hull, ship: 'falcon' as const, fleet: { falcon: { mods: NO_MODS, hull } }, missions: [] });
 
 /** A GameServer with one account pilot, recording what it asks to save. */
 function game(save?: unknown, now = () => Date.UTC(2026, 9, 23)) {

@@ -1,5 +1,6 @@
 import { isItemId, type Cargo, type ItemId } from '../economy/items';
 import type { StationId } from '../economy/market';
+import type { Mission } from '../missions';
 import type { EntityId, FactionId, Ship, ShipClassId, ShipInput, SimEvent } from '../sim/types';
 import { isUpgradeSlot, offerOf, packMods, type ShipMods, type UpgradeSlot } from '../sim/upgrades';
 
@@ -8,7 +9,7 @@ import { isUpgradeSlot, offerOf, packMods, type ShipMods, type UpgradeSlot } fro
  * plain JSON-serialisable data so it can travel over WebSocket unchanged
  * (a binary encoding can replace JSON later without touching game code).
  */
-export const PROTOCOL_VERSION = 5;
+export const PROTOCOL_VERSION = 6;
 
 export interface ShipSnapshot {
   id: EntityId;
@@ -57,6 +58,10 @@ export interface PilotState {
   ship: ShipClassId;
   /** Every ship owned (v0.5), the one flown included. */
   fleet: { classId: ShipClassId; mods: ShipMods; hull: number }[];
+  /** Hold units taken by courier crates (v0.6): free space is capacity − cargo − reserved. */
+  reserved: number;
+  /** Contracts in progress (v0.6). */
+  missions: Mission[];
 }
 
 /** A station's market as the docked player sees it. */
@@ -119,7 +124,9 @@ export type ClientMessage =
   /** Docked: fly another owned ship. */
   | { t: 'useShip'; ship: ShipClassId }
   /** Docked: next level of an upgrade on the ship flown. */
-  | { t: 'upgrade'; slot: UpgradeSlot };
+  | { t: 'upgrade'; slot: UpgradeSlot }
+  /** Take a contract from the board of the station docked at, or drop one in progress (anywhere). */
+  | { t: 'mission'; op: 'accept' | 'abandon'; id: number };
 
 export type ServerMessage =
   | { t: 'welcome'; playerId: string; token: string; name: string; zoneSeed: number; tickRate: number; snapshotRate: number; resumed: boolean }
@@ -132,6 +139,8 @@ export type ServerMessage =
   | { t: 'pong'; c: number }
   | { t: 'pilot'; pilot: PilotState }
   | { t: 'market'; market: MarketView }
+  /** Docked: the contracts the station offers, on docking and whenever they change. */
+  | { t: 'board'; station: StationId; offers: Mission[] }
   /** After a successful login: the token to keep for the next connections, and whether the account was just created. */
   | { t: 'account'; name: string; token: string; expiresAt: number; isNew: boolean }
   /** `reason` details an `auth` error ('credentials', 'taken', 'invalid', 'limited', 'expired', 'unavailable'). */
@@ -281,6 +290,9 @@ export function validateClientMessage(raw: unknown): ClientMessage | null {
       return typeof o.ship === 'string' && offerOf(o.ship as ShipClassId) ? { t: o.t, ship: o.ship as ShipClassId } : null;
     case 'upgrade':
       return isUpgradeSlot(o.slot) ? { t: 'upgrade', slot: o.slot } : null;
+    case 'mission':
+      if ((o.op !== 'accept' && o.op !== 'abandon') || typeof o.id !== 'number' || !Number.isInteger(o.id) || o.id < 1) return null;
+      return { t: 'mission', op: o.op, id: o.id };
     default:
       return null;
   }

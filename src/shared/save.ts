@@ -1,5 +1,6 @@
 import { ITEM_IDS, type Cargo } from './economy/items';
 import { isStationId, type MarketState, type StationId } from './economy/market';
+import { cleanMissions, crates, type Mission } from './missions';
 import type { ShipClassId } from './sim/types';
 import { cleanMods, effectiveStats, noMods, offerOf, type ShipMods } from './sim/upgrades';
 
@@ -22,6 +23,8 @@ export interface PilotSave {
   ship: ShipClassId;
   /** Every ship the pilot owns, with its upgrades and hull points. The Falcon is always there. */
   fleet: Partial<Record<ShipClassId, OwnedShip>>;
+  /** Contracts in progress (v0.6; absent in older saves). Their ids are reassigned on load. */
+  missions: Mission[];
 }
 
 export interface OwnedShip {
@@ -64,7 +67,16 @@ export function validateSave(raw: unknown): PilotSave | null {
   fleet.falcon ??= { mods: noMods(), hull: effectiveStats('falcon', noMods()).hull };
   const ship: ShipClassId = typeof o.ship === 'string' && fleet[o.ship as ShipClassId] ? (o.ship as ShipClassId) : 'falcon';
 
-  const capacity = effectiveStats(ship, fleet[ship]!.mods).cargo;
+  // Courier crates take hold space first; contracts that no longer fit are dropped.
+  const hold = effectiveStats(ship, fleet[ship]!.mods).cargo;
+  const missions: Mission[] = [];
+  let reserved = 0;
+  for (const m of cleanMissions(o.missions)) {
+    if (reserved + crates(m) > hold) continue;
+    reserved += crates(m);
+    missions.push(m);
+  }
+  const capacity = hold - reserved;
   const cargo: Cargo = {};
   let room = capacity;
   const src = o.cargo && typeof o.cargo === 'object' ? (o.cargo as Record<string, unknown>) : {};
@@ -85,6 +97,7 @@ export function validateSave(raw: unknown): PilotSave | null {
     hull: fleet[ship]!.hull,
     ship,
     fleet,
+    missions,
   };
 }
 
