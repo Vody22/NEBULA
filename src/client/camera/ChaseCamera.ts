@@ -19,6 +19,10 @@ export class ChaseCamera {
   mode: CameraMode = 'chase';
   private rot = new THREE.Quaternion();
   private pos = new THREE.Vector3();
+  /** Ship velocity smoothed at the follow rate: the camera trails by lagVel / rate. */
+  private lagVel = new THREE.Vector3();
+  private prevShipRot = new THREE.Quaternion();
+  private subRot = new THREE.Quaternion();
   private initialized = false;
   private shake = 0;
   private boostBlend = 0;
@@ -46,16 +50,29 @@ export class ChaseCamera {
   }
 
   /** `cursor` is the virtual-joystick offset; it slightly offsets the view in the turn direction. */
-  update(dt: number, shipPos: THREE.Vector3, shipRot: THREE.Quaternion, boosting: boolean, speed: number, cursor: { x: number; y: number }, shipScale = 1) {
+  update(dt: number, shipPos: THREE.Vector3, shipRot: THREE.Quaternion, boosting: boolean, shipVel: THREE.Vector3, cursor: { x: number; y: number }, shipScale = 1) {
+    const speed = shipVel.length();
     const m = MODES[this.mode];
     this.scale += (shipScale - this.scale) * damp(3, dt);
     if (!this.initialized) {
       this.rot.copy(shipRot);
-      this.pos.copy(shipPos);
+      this.prevShipRot.copy(shipRot);
+      this.lagVel.set(0, 0, 0);
       this.initialized = true;
     }
-    this.rot.slerp(shipRot, damp(m.rotRate, dt));
-    this.pos.lerp(shipPos, damp(m.posRate * 4, dt));
+    // The ship turned smoothly during the frame, not in one jump at its start:
+    // follow it in ~1 ms sub-steps so the lag does not depend on frame times.
+    const n = Math.min(32, Math.max(1, Math.ceil(dt / 0.001)));
+    const k = damp(m.rotRate, dt / n);
+    for (let i = 1; i <= n; i++) this.rot.slerp(this.subRot.slerpQuaternions(this.prevShipRot, shipRot, i / n), k);
+    this.prevShipRot.copy(shipRot);
+    // Same trailing as lerping towards the ship every frame, but computed from
+    // the smoothed velocity: a per-frame lerp makes the gap depend on the frame
+    // time, so on a 144-165 Hz screen the slightest frame-time jitter shook the
+    // ship on screen.
+    const rate = m.posRate * 4;
+    this.lagVel.lerp(shipVel, damp(rate, dt));
+    this.pos.copy(shipPos).addScaledVector(this.lagVel, -1 / rate);
 
     this.boostBlend += ((boosting ? 1 : 0) - this.boostBlend) * damp(3, dt);
     this.lookAhead.x += (cursor.x - this.lookAhead.x) * damp(4, dt);

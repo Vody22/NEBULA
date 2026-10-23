@@ -116,8 +116,8 @@ const menu = new Menu(document.getElementById('menu')!, settings, {
 });
 (window as unknown as { __menu: Menu }).__menu = menu;
 
-function loop() {
-  game.frame();
+function loop(timestamp: number) {
+  game.frame(timestamp);
   updateCaptureHint();
   if (touchControls) {
     touchControls.setVisible(started && !menu.isOpen && !chat.isOpen);

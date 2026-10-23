@@ -398,9 +398,12 @@ export class Game {
     this.hud.setPaused(p);
   }
 
-  /** One frame. Called from requestAnimationFrame. */
-  frame() {
-    this.timer.update();
+  /**
+   * One frame. Called from requestAnimationFrame with its timestamp, which is
+   * aligned on the display refresh (performance.now() jitters by a few ms).
+   */
+  frame(timestamp?: number) {
+    this.timer.update(timestamp);
     const dt = Math.min(this.timer.getDelta(), 0.1);
     this.time += dt;
     this.fps += (1 / Math.max(dt, 1e-4) - this.fps) * 0.05;
@@ -516,7 +519,7 @@ export class Game {
         this.lastMyShipId = this.myShipId;
         this.targetId = null;
       }
-      this.cam.update(dt, me.position, me.rotation, me.snap.boosting, me.velocity.length(), this.input.cursor, SHIP_CLASSES[me.snap.classId].radius / 9);
+      this.cam.update(dt, me.position, me.rotation, me.snap.boosting, me.velocity, this.input.cursor, SHIP_CLASSES[me.snap.classId].radius / 9);
       this.lastMe = me;
       this.audio.engineUpdate(Math.max(0, me.snap.throttle), me.snap.boosting);
       const hullFrac = me.snap.hull / SHIP_CLASSES[me.snap.classId].hull;
