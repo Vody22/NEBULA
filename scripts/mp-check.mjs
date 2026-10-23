@@ -224,8 +224,9 @@ try {
   await waitFor(C.page, () => window.__game.inspect().ships.filter((s) => s.owner).length === 3, null, 60000);
   const cBefore = shipOf('Charlie').position.clone();
   await C.page.keyboard.down('KeyW');
+  // A third software-rendered page can go seconds between frames: wait for the server to see the throttle (2.5 s at least).
   let serverThrottle = 0;
-  for (let i = 0; i < 25; i++) {
+  for (let i = 0; i < 150 && (i < 25 || serverThrottle === 0); i++) {
     await sleep(100);
     serverThrottle = Math.max(serverThrottle, shipOf('Charlie').input.throttle);
   }
