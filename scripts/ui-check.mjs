@@ -1,7 +1,8 @@
 // In-browser UI and gameplay check (expects `vite preview` on UI_URL, default
 // http://localhost:4173). Verifies HUD layout at several window sizes, the
 // pause menu (simulation frozen, keyboard navigation, rebinding, persisted
-// settings) and that both fire controls shoot. Writes screenshots to UI_OUT.
+// settings), that both fire controls shoot, and the v0.3 loop: docking,
+// trading, take-off and mining. Writes screenshots to UI_OUT.
 import { chromium } from 'playwright-core';
 import fs from 'node:fs';
 
@@ -176,7 +177,8 @@ for (const [w, h] of [[568, 1244], [1280, 720], [1920, 1080]]) {
   await page.keyboard.down('KeyF');
   await page.waitForTimeout(3000);
   await page.keyboard.up('KeyF');
-  await page.waitForTimeout(1500);
+  // Software rendering runs this page at a few frames per second: wait for the bolt to land rather than a fixed delay.
+  await page.waitForFunction(() => window.__game.debug.myKills >= 1, null, { timeout: 20000, polling: 250 }).catch(() => {});
   const d = await page.evaluate(() => ({ ...window.__game.debug }));
   check(d.myShots > 0, `F shoots (${d.myShots} shots)`);
   check(d.myHits > 0 && d.myKills >= 1, `hits and kill registered for the player (hits ${d.myHits}, kills ${d.myKills})`);
@@ -195,6 +197,68 @@ for (const [w, h] of [[568, 1244], [1280, 720], [1920, 1080]]) {
   await page.keyboard.up('KeyF');
   check(/ARMES EN RECHARGE/.test(chip), 'empty capacitor shows "ARMES EN RECHARGE"');
   check(errors.length === 0, `combat: no console errors/warnings ${errors.join(' | ')}`);
+  await ctx.close();
+}
+
+// ---- v0.3: dock with G, trade at the station screen, take off, mine with R ----
+{
+  const { ctx, page, errors } = await open({ width: 1280, height: 720 });
+  await page.click('[data-act="solo"]');
+  await page.waitForFunction(() => !window.__menu.isOpen && window.__game.inspect().pilot);
+  const me = `[...window.__game.transport.server.world.ships.values()].find((x) => x.ownerId)`;
+  await page.evaluate(`(() => { const s = ${me}; const z = window.__game.transport.server.world.zone;
+    window.__game.input.input.throttle = 0; s.position.copy(z.station.dock.mouth).add({ x: 0, y: 0, z: 100 }); s.velocity.set(0, 0, 0); s.rotation.set(0, 0, 0, 1); })()`);
+  const zone = await page.waitForFunction(() => window.__game.inspect().dockable, null, { timeout: 30000 }).then(() => true, () => false);
+  const prompt = await page.evaluate(() => document.querySelector('.prompt')?.textContent ?? '');
+  check(zone && /amarrer/.test(prompt), `docking zone detected and the HUD says to press G (${prompt})`);
+  await page.keyboard.press('KeyG');
+  const docked = await page.waitForFunction(() => window.__game.inspect().stationScreen && window.__game.inspect().pilot.docked === 'aurora', null, { timeout: 30000 }).then(() => true, () => false);
+  check(docked && !(await page.evaluate(() => document.getElementById('death').classList.contains('show'))), 'G docks: station screen open, no death screen');
+  await page.screenshot({ path: `${out}/station-screen.png` });
+  await page.click('#station .qty button[data-qty="10"]');
+  await page.click('#station tr[data-item="water"] button[data-trade="buy"]');
+  const bought = await page.waitForFunction(() => window.__game.inspect().pilot.cargo.water === 10, null, { timeout: 30000 }).then(() => true, () => false);
+  const credits = await page.evaluate(() => window.__game.inspect().pilot.credits);
+  check(bought && credits < 500, `buying 10 water fills the hold and costs credits (${credits} cr left)`);
+  await page.click('#station .qty button[data-qty="max"]');
+  await page.click('#station tr[data-item="water"] button[data-trade="sell"]');
+  const sold = await page.waitForFunction(() => !window.__game.inspect().pilot.cargo.water, null, { timeout: 30000 }).then(() => true, () => false);
+  check(sold, '"Max" sells the whole stack');
+  await page.click('#station .undock');
+  const out1 = await page.waitForFunction(() => window.__game.inspect().myShipId != null && !window.__game.inspect().stationScreen, null, { timeout: 30000 }).then(() => true, () => false);
+  check(out1, 'take-off puts the ship back in space and closes the station screen');
+  // Mining: a rock 140 m ahead with nothing else in the way.
+  const aimed = await page.evaluate(`(() => {
+    const srv = window.__game.transport.server; const z = srv.world.zone; const s = ${me};
+    const V = z.station.position.constructor; const Q = s.rotation.constructor;
+    for (let i = 0; i < z.asteroids.length; i++) {
+      const a = z.asteroids[i]; if (a.radius > 60 || a.radius < 15) continue;
+      for (const d of [[1, 0.2, 0.1], [-1, 0.1, 0.3], [0.2, 1, 0], [0, -1, 0.2]]) {
+        const dir = new V(...d).normalize();
+        const p = a.position.clone().addScaledVector(dir, a.radius + 140);
+        let clear = true;
+        for (let k = 0; k <= 10 && clear; k++) {
+          const q = p.clone().lerp(a.position, (k / 10) * (140 / (a.radius + 140)));
+          clear = !srv.world.grid.query(q, 80).some((c) => c.index !== i && c.center.distanceTo(q) < c.radius / 0.85 + 40);
+        }
+        if (!clear) continue;
+        window.__game.input.input.throttle = 0; window.__game.input.centerCursor();
+        s.position.copy(p); s.velocity.set(0, 0, 0); s.angularVelocity.set(0, 0, 0);
+        s.rotation.copy(new Q().setFromUnitVectors(new V(0, 0, -1), dir.clone().negate()));
+        return true;
+      }
+    }
+    return false;
+  })()`);
+  await page.keyboard.down('KeyR');
+  const beam = await page.waitForFunction(() => window.__game.inspect().beams > 0, null, { timeout: 60000 }).then(() => true, () => false);
+  const readout = await page.evaluate(() => document.querySelector('.mining')?.textContent ?? '');
+  check(aimed && beam && /Extraction/.test(readout), `holding R draws the beam and the HUD shows the rock (${readout})`);
+  await page.screenshot({ path: `${out}/mining.png` });
+  const ore = await page.waitForFunction(() => Object.keys(window.__game.inspect().pilot.cargo).length > 0, null, { timeout: 240000, polling: 500 }).then(() => true, () => false);
+  await page.keyboard.up('KeyR');
+  check(ore, `ore reaches the hold (${JSON.stringify(await page.evaluate(() => window.__game.inspect().pilot.cargo))})`);
+  check(errors.length === 0, `economy: no console errors/warnings ${errors.join(' | ')}`);
   await ctx.close();
 }
 
