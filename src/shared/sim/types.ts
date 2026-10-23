@@ -1,4 +1,5 @@
 import type { Quaternion, Vector3 } from 'three';
+import type { ShipMods } from './upgrades';
 
 export type EntityId = number;
 export type FactionId = 'union' | 'raiders';
@@ -44,6 +45,8 @@ export interface Ship {
   id: EntityId;
   name: string;
   classId: ShipClassId;
+  /** Upgrade levels (v0.5); all zero for NPCs. Read the effective stats with statsOf(ship). */
+  mods: ShipMods;
   faction: FactionId;
   /** Player session id for human-controlled ships, null for NPCs. */
   ownerId: string | null;

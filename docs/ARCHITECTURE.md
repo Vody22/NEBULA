@@ -15,6 +15,7 @@
 - `shipPhysics` : fonction pure `(état, entrée, dt) → état`. Assistance de vol = les propulseurs poursuivent une vitesse cible avec une autorité limitée par axe, d'où la dérive en virage. Mode newtonien = accélération pure.
 - `AIPilot` : produit un `ShipInput` par tick, exactement comme un joueur. Les PNJ passent donc par les mêmes règles que les humains.
 - `zone` : génération déterministe du secteur à partir d'une graine.
+- `upgrades` (v0.5) : niveaux d'amélioration par vaisseau (`Ship.mods`), prix, offre du chantier. Toute la simulation lit les caractéristiques par `statsOf(ship)` (classe × améliorations, mises en cache), jamais directement `SHIP_CLASSES`, pour que le serveur et la prédiction du client volent le même vaisseau.
 
 Conventions : mètres, secondes, axe avant = −Z, haut = +Y, droite = +X.
 
@@ -28,6 +29,7 @@ Possède le `World`, les sessions joueurs, les pilotes IA, le directeur des raid
 - **Règles** : `canDamage` (types partagés) dit qui peut toucher qui. Les PNJ de factions différentes se combattent. Deux joueurs ne se blessent que si tous deux ont activé le PvP. Le PvP ne se coupe ni pendant 15 s après un échange de tirs, ni moins de 5 s après le dernier changement. Une élimination PvP ne rapporte pas de crédits, pour éviter qu'on « farme » entre amis.
 - **Chat** : historique des 30 derniers messages, 5 messages par 10 s, répétitions ignorées. Les connexions et déconnexions s'affichent comme messages système.
 - **Économie (v0.3)** : chaque session a des crédits (500 au départ) et une soute. Le serveur tient un marché par station (`src/shared/economy`). Amarrage, commerce, réparation et minage sont décidés par lui seul : à quai, le vaisseau quitte le `World` et son état est gardé dans la session. Le minage est une commande tenue (`ShipInput.mine`) ; le `World` accumule la progression sur l'astéroïde visé et le serveur convertit les unités entières en cargaison. Détails : [V03_ECONOMIE.md](V03_ECONOMIE.md).
+- **Flotte (v0.5)** : la session garde le vaisseau piloté (`ship`) et la flotte possédée (`fleet` : améliorations et coque de chaque vaisseau). Achat, changement de vaisseau et améliorations se font à quai, validés par le serveur (crédits, chantier d'Aurora-7, soute qui doit tenir dans le nouveau vaisseau). Détails : [V05_VAISSEAUX.md](V05_VAISSEAUX.md).
 - **Raids pirates** : après un raid repoussé, le secteur reste calme 45 à 90 s. La taille d'un raid dépend surtout du nombre de pilotes connectés, dans une limite fixée. Le secteur est remis à zéro quand le dernier pilote part.
 
 ## Serveur Node (`src/server/node`)
@@ -47,10 +49,10 @@ Possède le `World`, les sessions joueurs, les pilotes IA, le directeur des raid
 - `store.ts` : l'interface `AccountStore` et `MemoryStore` (tests, serveur local sans base) ; `PostgresStore.ts` : PostgreSQL (Neon), tables `nf_*` créées et migrées au démarrage.
 - Règles partagées avec le menu : `src/shared/accounts.ts` (pseudos, mots de passe) et `src/shared/save.ts` (format et validation des sauvegardes). Détails : [V04_PERSISTANCE.md](V04_PERSISTANCE.md).
 
-## Protocole (`src/shared/net/protocol.ts`, version 4)
+## Protocole (`src/shared/net/protocol.ts`, version 5)
 
-- Client → serveur : `hello { version, auth }` (inscription, connexion ou jeton, depuis la v4), `input { seq, input }`, `chat`, `pvp`, `ping`, et depuis la v3 `dock`, `undock`, `trade { item, qty }` (positif = achat, négatif = vente), `repair`. Chaque message est validé par `validateClientMessage` ; le reste est rejeté et compté.
-- Serveur → client : `welcome` (session, graine, reprise), `account` (pseudo et jeton de connexion, depuis la v4), `snapshot` (tous les vaisseaux, dernière entrée appliquée `ackSeq` ; `m` = astéroïde miné), `events`, `notice`, `chat`, `chatHistory`, `players`, `pong`, `error` (`code: 'auth'` et une raison pour un refus de connexion), et depuis la v3 `pilot` (crédits, soute, station, coque à quai) à chaque changement et `market` (prix et stocks) une fois par seconde à quai.
+- Client → serveur : `hello { version, auth }` (inscription, connexion ou jeton, depuis la v4), `input { seq, input }`, `chat`, `pvp`, `ping`, et depuis la v3 `dock`, `undock`, `trade { item, qty }` (positif = achat, négatif = vente), `repair`, et depuis la v5 `buyShip { ship }`, `useShip { ship }`, `upgrade { slot }`. Chaque message est validé par `validateClientMessage` ; le reste est rejeté et compté.
+- Serveur → client : `welcome` (session, graine, reprise), `account` (pseudo et jeton de connexion, depuis la v4), `snapshot` (tous les vaisseaux, dernière entrée appliquée `ackSeq` ; `m` = astéroïde miné ; `u` = niveaux d'amélioration, six chiffres, depuis la v5), `events`, `notice`, `chat`, `chatHistory`, `players`, `pong`, `error` (`code: 'auth'` et une raison pour un refus de connexion), et depuis la v3 `pilot` (crédits, soute, station, coque à quai ; vaisseau piloté et flotte depuis la v5) à chaque changement et `market` (prix et stocks) une fois par seconde à quai.
 - Un client et un serveur de versions différentes refusent de jouer ensemble avec un message clair : le site et le serveur Render se mettent à jour en même temps.
 - Les lasers sont balistiques : un seul événement `shot` (position, vitesse, durée de vie) suffit au client pour les dessiner, sans trafic par tick.
 

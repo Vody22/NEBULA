@@ -5,6 +5,7 @@ import { segmentSphere } from '../shared/math';
 import type { ChatLine, ErrorCode, MarketView, PilotState, PlayerInfo, PlayerStats, ServerMessage } from '../shared/net/protocol';
 import { MINING_MAX_SPEED, MINING_RANGE, MINING_RATE, miningTarget, oreOf, richness, richnessLabel } from '../shared/sim/mining';
 import { SHIP_CLASSES } from '../shared/sim/shipClasses';
+import { statsOfPacked, unpackMods } from '../shared/sim/upgrades';
 import { StaticGrid } from '../shared/sim/spatialGrid';
 import { neutralInput, type Ship, type ShipClassId, type ShipInput, type SimEvent } from '../shared/sim/types';
 import { TICK_DT, TICK_RATE } from '../shared/sim/world';
@@ -141,6 +142,9 @@ export class Game {
   readonly stationPanel = new StationPanel(document.body, {
     trade: (item, qty) => this._transport?.send({ t: 'trade', item, qty }),
     repair: () => this._transport?.send({ t: 'repair' }),
+    buyShip: (ship) => this._transport?.send({ t: 'buyShip', ship }),
+    useShip: (ship) => this._transport?.send({ t: 'useShip', ship }),
+    upgrade: (slot) => this._transport?.send({ t: 'upgrade', slot }),
     undock: () => this.undock(),
     menu: () => this.callbacks.onMenu?.(),
   });
@@ -712,7 +716,7 @@ export class Game {
       view.group.quaternion.copy(s.rotation);
       const throttle = s.snap.boosting ? 1 : Math.max(0, s.snap.throttle);
       view.update(dt, this.time, throttle, s.snap.boosting, this.cam.camera.position, s.snap.w);
-      const cls = SHIP_CLASSES[s.snap.classId];
+      const cls = statsOfPacked(s.snap.classId, s.snap.u);
       const hullFrac = s.snap.hull / cls.hull;
       view.setDamage(1 - hullFrac);
       if (hullFrac < 0.5) {
@@ -743,10 +747,10 @@ export class Game {
         this.lastMyShipId = this.myShipId;
         this.targetId = null;
       }
-      this.cam.update(dt, me.position, me.rotation, me.snap.boosting, me.velocity, this.input.cursor, SHIP_CLASSES[me.snap.classId].radius / 9);
+      this.cam.update(dt, me.position, me.rotation, me.snap.boosting, me.velocity, this.input.cursor, statsOfPacked(me.snap.classId, me.snap.u).radius / 9);
       this.lastMe = me;
       this.audio.engineUpdate(Math.max(0, me.snap.throttle), me.snap.boosting);
-      const hullFrac = me.snap.hull / SHIP_CLASSES[me.snap.classId].hull;
+      const hullFrac = me.snap.hull / statsOfPacked(me.snap.classId, me.snap.u).hull;
       this.alarmIn -= dt;
       if (hullFrac < 0.25 && this.alarmIn <= 0) {
         this.audio.alarm();
@@ -1062,7 +1066,7 @@ export class Game {
       if (!rock || !view) continue;
       const seg = (this.beamList[n] ??= { from: new THREE.Vector3(), to: new THREE.Vector3() });
       _q.copy(view.group.quaternion);
-      seg.from.set(0, 0, -SHIP_CLASSES[s.snap.classId].radius * 0.6).applyQuaternion(_q).add(view.group.position);
+      seg.from.set(0, 0, -statsOfPacked(s.snap.classId, s.snap.u).radius * 0.6).applyQuaternion(_q).add(view.group.position);
       _fwd.set(0, 0, -1).applyQuaternion(_q);
       _end.copy(seg.from).addScaledVector(_fwd, MINING_RANGE);
       const t = segmentSphere(seg.from, _end, rock.position, rock.radius);
@@ -1082,7 +1086,7 @@ export class Game {
   private miningInfo(me: InterpolatedShip, input: ShipInput, dt: number): MiningInfo | null {
     const zone = this.zone!;
     const active = me.snap.m !== undefined;
-    const probe = { classId: me.snap.classId, position: me.position, rotation: me.rotation } as unknown as Ship;
+    const probe = { classId: me.snap.classId, mods: unpackMods(me.snap.u), position: me.position, rotation: me.rotation } as unknown as Ship;
     const hit = this.grid ? miningTarget(probe, this.grid, zone.asteroids) : null;
     if (!input.mine && !active && !hit) return null;
     const index = active ? me.snap.m! : hit?.index;
@@ -1101,7 +1105,7 @@ export class Game {
     else if (!hit) state = 'none';
     // Held, in range and slow: the server's answer is on its way.
     else state = 'active';
-    const rate = index !== undefined ? MINING_RATE * richness(index) : 0;
+    const rate = index !== undefined ? MINING_RATE * statsOfPacked(me.snap.classId, me.snap.u).miningRate * richness(index) : 0;
     if (state === 'active') this.mineProgress = Math.min(0.98, this.mineProgress + rate * dt);
     return {
       state,
@@ -1128,8 +1132,11 @@ export class Game {
   private dockedCamera(dt: number) {
     const view = this.pilot?.docked ? this.stationViews.get(this.pilot.docked) : undefined;
     if (!view) return;
+    // A ship swapped at the shipyard rolls onto the pad.
+    const shipClass = this.pilot?.ship ?? this.lastMe?.snap.classId ?? 'falcon';
+    if (this.parked && this.parked.classId !== shipClass) this.disposeParked();
     if (!this.parked) {
-      this.parked = new ShipView(this.lastMe?.snap.classId ?? 'falcon', this.scene, true);
+      this.parked = new ShipView(shipClass, this.scene, true);
       this.parked.teleported();
     }
     const c = this.cam.camera;

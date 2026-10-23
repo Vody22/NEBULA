@@ -1,7 +1,7 @@
 import { Vector3 } from 'three';
 import type { ItemId } from '../economy/items';
 import { segmentSphere } from '../math';
-import { SHIP_CLASSES } from './shipClasses';
+import { statsOf } from './upgrades';
 import type { StaticGrid } from './spatialGrid';
 import type { Ship } from './types';
 import type { AsteroidDef } from './zone';
@@ -48,7 +48,7 @@ const _fwd = new Vector3();
 
 /** The beam starts at the nose. */
 export function beamOrigin(ship: Ship, out: Vector3): Vector3 {
-  return out.set(0, 0, -SHIP_CLASSES[ship.classId].radius * 0.6).applyQuaternion(ship.rotation).add(ship.position);
+  return out.set(0, 0, -statsOf(ship).radius * 0.6).applyQuaternion(ship.rotation).add(ship.position);
 }
 
 /**
@@ -96,5 +96,5 @@ export function stepMining(ship: Ship, dt: number, grid: StaticGrid, asteroids: 
   }
   if (ship.mining !== hit.index) ship.mineProgress = Math.min(ship.mineProgress, 0.999);
   ship.mining = hit.index;
-  ship.mineProgress += MINING_RATE * richness(hit.index) * dt;
+  ship.mineProgress += MINING_RATE * statsOf(ship).miningRate * richness(hit.index) * dt;
 }

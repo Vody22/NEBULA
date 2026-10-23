@@ -275,6 +275,41 @@ for (const [w, h] of [[568, 1244], [1280, 720], [1920, 1080]]) {
     `solo progress survives a reload: docked at Aurora-7, ${after.credits} cr, hold ${JSON.stringify(after.cargo)} (before: ${before.credits} cr, ${JSON.stringify(before.cargo)})`,
   );
   await page.screenshot({ path: `${out}/solo-resumed.png` });
+  // v0.5: the shipyard tab. A rich pilot fits an upgrade, buys the Warden and takes off in it.
+  await page.evaluate(() => {
+    const s = [...window.__game.transport.server.sessions.values()][0];
+    s.stats.credits = 20000;
+    s.pilotDirty = true;
+  });
+  await page.waitForFunction(() => window.__game.inspect().pilot.credits === 20000, null, { timeout: 30000 });
+  await page.click('#station [data-tab="yard"]');
+  const yard = await page.evaluate(() => ({
+    shown: getComputedStyle(document.querySelector('#station .pane-yard')).display !== 'none',
+    market: getComputedStyle(document.querySelector('#station .pane-market')).display,
+    rows: document.querySelectorAll('#station .mods li').length,
+    ship: document.querySelector('#station .sname').textContent,
+  }));
+  check(yard.shown && yard.market === 'none' && yard.rows === 6 && /Falcon/.test(yard.ship), `the Chantier tab shows the ship flown and six upgrades (${JSON.stringify(yard)})`);
+  await page.screenshot({ path: `${out}/shipyard.png` });
+  await page.click('#station .mods li[data-slot="armor"] button');
+  const fitted = await page.waitForFunction(() => window.__game.inspect().pilot.fleet[0].mods.armor === 1, null, { timeout: 30000 }).then(() => true, () => false);
+  const fp = await page.evaluate(() => window.__game.inspect().pilot);
+  const pips = await page.evaluate(() => document.querySelectorAll('#station .mods li[data-slot="armor"] .pips i.on').length);
+  check(fitted && fp.credits === 19500 && fp.hullMax > 260 && pips === 1, `armor level 1 fitted: ${fp.credits} cr left, hull ${fp.hull}/${fp.hullMax}, ${pips} pip lit`);
+  await page.click('#station .fleet li[data-ship="warden"] button');
+  const boughtShip = await page.waitForFunction(() => window.__game.inspect().pilot.ship === 'warden', null, { timeout: 30000 }).then(() => true, () => false);
+  const wp = await page.evaluate(() => window.__game.inspect().pilot);
+  const flownLabel = await page.evaluate(() => document.querySelector('#station .fleet li.flown .n').firstChild.textContent);
+  check(boughtShip && wp.capacity === 60 && wp.fleet.length === 2 && flownLabel === 'Warden', `Warden bought and flown: hold ${wp.capacity}, ${wp.credits} cr, ${wp.fleet.length} ships in the hangar`);
+  await page.waitForTimeout(800);
+  await page.screenshot({ path: `${out}/shipyard-warden.png` });
+  await page.click('#station .undock');
+  const inWarden = await page.waitForFunction(() => {
+    const g = window.__game.inspect();
+    const s = [...window.__game.transport.server.world.ships.values()].find((x) => x.ownerId);
+    return g.myShipId != null && !g.stationScreen && s?.classId === 'warden';
+  }, null, { timeout: 30000 }).then(() => true, () => false);
+  check(inWarden, 'take-off in the Warden');
   check(errors.length === 0, `economy: no console errors/warnings ${errors.join(' | ')}`);
   await ctx.close();
 }

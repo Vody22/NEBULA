@@ -1,7 +1,7 @@
 # NEBULA FRONTIER
 
 MMO spatial 3D dans le navigateur (Three.js + TypeScript + Vite).
-Version actuelle : **v0.4, comptes pilotes et sauvegarde**. Plusieurs pilotes partagent le même secteur en temps réel, avec un serveur Node.js autoritaire. On y mine, on commerce entre deux stations, et la progression est sauvegardée. Le mode solo hors ligne reste disponible.
+Version actuelle : **v0.5, vaisseaux et améliorations**. Plusieurs pilotes partagent le même secteur en temps réel, avec un serveur Node.js autoritaire. On y mine, on commerce entre deux stations, on améliore son vaisseau ou on en achète un autre, et la progression est sauvegardée. Le mode solo hors ligne reste disponible.
 
 ![Station Aurora-7](docs/img/station.png)
 
@@ -22,6 +22,13 @@ Options d'URL :
 - `?autostart` : démarrage direct en solo.
 
 Mise en ligne : voir [docs/DEPLOIEMENT.md](docs/DEPLOIEMENT.md). Le client reste sur Vercel, et le serveur WebSocket va sur Render, Fly.io ou un VPS.
+
+## Vaisseaux et améliorations (v0.5)
+
+- **Chantier** : un onglet de l'écran de station, à côté du marché.
+- **Améliorations** : canons, boucliers, blindage, moteurs, soute et rayon de minage, trois niveaux chacun (500, 1 400 puis 3 200 cr sur le Falcon). Elles s'installent dans toutes les stations et changent vraiment la simulation, côté serveur comme dans la prédiction du client.
+- **Deuxième vaisseau** : le Warden, un transporteur (soute de 60 au lieu de 40, plus lent et moins armé), vendu 2 000 cr au chantier d'Aurora-7. On passe d'un vaisseau à l'autre à quai ; chacun garde sa coque et ses améliorations.
+- Le Warden reprend le modèle 3D de l'escorte alliée : de nouveaux modèles viendront plus tard. Détails : [docs/V05_VAISSEAUX.md](docs/V05_VAISSEAUX.md).
 
 ## Comptes et sauvegarde (v0.4)
 
@@ -141,7 +148,7 @@ TEST_DATABASE_URL=postgres://… npm test   # en plus : le stockage PostgreSQL s
 npm run build       # build de production
 npm run preview &   # puis :
 npm run smoke       # lance le jeu dans Chromium headless, pilote, tire et fait des captures
-npm run ui-check    # HUD à 3 tailles, menu pause, réaffectation, réglages, tirs, amarrage, commerce, minage, sauvegarde solo
+npm run ui-check    # HUD à 3 tailles, menu pause, réaffectation, réglages, tirs, amarrage, commerce, minage, sauvegarde solo, chantier
 node scripts/mp-check.mjs    # navigateurs sur le vrai serveur : inscription, synchro, chat, combat commun, PvP, latence, reconnexion, connexion refusée puis acceptée
 node scripts/mobile-check.mjs   # téléphone et tablette émulés : commandes tactiles, mise en page, chat et PvP en ligne
 node scripts/load-test.mjs 30 30   # 30 pilotes robots pendant 30 s : coût du tick et bande passante
@@ -153,5 +160,6 @@ Pour `npm run smoke`, définir `CHROMIUM_PATH` si Chromium n'est pas trouvé aut
 
 - **v0.2 : multijoueur.**
 - **v0.3 : amarrage, minage et commerce.**
-- **v0.4 : comptes pilotes et sauvegarde** (cette version).
-- Ensuite : vaisseaux et améliorations à acheter, missions, factions, nouveaux secteurs et sauts, version PC installable.
+- **v0.4 : comptes pilotes et sauvegarde.**
+- **v0.5 : vaisseaux et améliorations** (cette version).
+- Ensuite : missions, factions, nouveaux secteurs et sauts, version PC installable.

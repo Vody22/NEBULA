@@ -1,5 +1,5 @@
 import { Vector3 } from 'three';
-import { SHIP_CLASSES } from './shipClasses';
+import { statsOf } from './upgrades';
 import type { StaticGrid } from './spatialGrid';
 import type { Ship } from './types';
 
@@ -16,7 +16,7 @@ const _n = new Vector3();
  * (push out + bounce). `onImpact` receives the hull damage of a hard hit.
  */
 export function stepShipSystems(ship: Ship, dt: number, grid: StaticGrid, onImpact?: (damage: number) => void) {
-  const cls = SHIP_CLASSES[ship.classId];
+  const cls = statsOf(ship);
   ship.sinceDamage += dt;
   if (ship.sinceDamage > cls.shieldDelay) {
     ship.shield = Math.min(cls.shield, ship.shield + cls.shieldRegen * dt);
@@ -31,7 +31,7 @@ export function stepShipSystems(ship: Ship, dt: number, grid: StaticGrid, onImpa
 
 /** Static collisions: push out along the normal and take damage from impact speed. */
 export function resolveStaticCollisions(ship: Ship, grid: StaticGrid, onImpact?: (damage: number) => void) {
-  const cls = SHIP_CLASSES[ship.classId];
+  const cls = statsOf(ship);
   const nearby = grid.query(ship.position, cls.radius + 2);
   for (const c of nearby) {
     _n.subVectors(ship.position, c.center);

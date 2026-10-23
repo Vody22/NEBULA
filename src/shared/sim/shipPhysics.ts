@@ -1,6 +1,6 @@
 import { Quaternion, Vector3 } from 'three';
 import { clamp } from '../math';
-import { SHIP_CLASSES } from './shipClasses';
+import { statsOf } from './upgrades';
 import type { Ship } from './types';
 
 const _q = new Quaternion();
@@ -22,7 +22,7 @@ function approach(current: number, target: number, maxDelta: number) {
  * authoritative server and in client-side prediction.
  */
 export function stepShipPhysics(ship: Ship, dt: number) {
-  const cls = SHIP_CLASSES[ship.classId];
+  const cls = statsOf(ship);
   const input = ship.input;
 
   // --- Rotation: angular velocity eases toward the requested rate (inertia).

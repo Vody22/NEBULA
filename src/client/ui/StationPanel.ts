@@ -1,11 +1,17 @@
 import { ITEMS, ITEM_IDS, cargoTotal, type ItemId } from '../../shared/economy/items';
 import { repairCost } from '../../shared/economy/market';
 import type { MarketView, PilotState } from '../../shared/net/protocol';
+import { SHIP_CLASSES } from '../../shared/sim/shipClasses';
+import type { ShipClassId } from '../../shared/sim/types';
+import { effectiveStats, noMods, SHIPYARD, SHIPYARD_STATION, UPGRADES, UPGRADE_MAX, UPGRADE_SLOTS, upgradeCost, type ShipMods, type UpgradeSlot } from '../../shared/sim/upgrades';
 import './station.css';
 
 export interface StationCallbacks {
   trade(item: ItemId, qty: number): void;
   repair(): void;
+  buyShip(ship: ShipClassId): void;
+  useShip(ship: ShipClassId): void;
+  upgrade(slot: UpgradeSlot): void;
   undock(): void;
   /** Touch screens: the pause menu (the flight buttons are hidden at the station). */
   menu(): void;
@@ -21,6 +27,7 @@ export interface KnownPrice {
 }
 
 type Qty = 1 | 10 | 'max';
+type Tab = 'market' | 'yard';
 
 const fmt = (n: number) => Math.round(n).toLocaleString('fr-FR');
 
@@ -65,16 +72,26 @@ export class StationPanel {
         <div class="cell"><div class="label">Coque</div><div class="v hull"></div><button class="repair" data-act="repair"></button></div>
       </div>
       <div class="mhead">
-        <h3>Marché</h3>
+        <div class="tabs" role="tablist" aria-label="Services de la station">
+          <button role="tab" data-tab="market" aria-selected="true">Marché</button><button role="tab" data-tab="yard" aria-selected="false">Chantier</button>
+        </div>
         <div class="qty" role="group" aria-label="Quantité par ordre">
           <button data-qty="1" aria-pressed="true">×1</button><button data-qty="10" aria-pressed="false">×10</button><button data-qty="max" aria-pressed="false">Max</button>
         </div>
       </div>
-      <div class="scroll"><table>
+      <div class="scroll pane-market"><table>
         <thead><tr><th>Marchandise</th><th>Stock</th><th>Achat</th><th>Vente</th><th class="cmp">Vu ailleurs</th><th>Soute</th><th></th></tr></thead>
         <tbody></tbody>
       </table></div>
-      <p class="hint">Les prix montent quand le stock de la station baisse et baissent quand il monte : vendre une grosse cargaison fait chuter le prix, qui remonte peu à peu.</p>`;
+      <p class="hint pane-market">Les prix montent quand le stock de la station baisse et baissent quand il monte : vendre une grosse cargaison fait chuter le prix, qui remonte peu à peu.</p>
+      <div class="scroll pane-yard">
+        <div class="shipcard"><div><div class="label">Aux commandes</div><h4 class="sname"></h4><p class="role"></p></div><dl class="specs"></dl></div>
+        <h3>Hangar</h3>
+        <ul class="fleet"></ul>
+        <h3>Améliorations du vaisseau</h3>
+        <ul class="mods"></ul>
+        <p class="hint">Améliorations installées dans toutes les stations ; vaisseaux vendus au chantier d'Aurora-7. Un vaisseau détruit revient au hangar avec ses améliorations, mais sa cargaison est perdue.</p>
+      </div>`;
     parent.appendChild(root);
     this.root = root;
     this.nameEl = root.querySelector('h2')!;
@@ -86,13 +103,19 @@ export class StationPanel {
     this.undockKey = root.querySelector('.undock kbd')!;
     this.body = root.querySelector('tbody')!;
     this.buildRows();
+    this.buildYard();
+    this.setTab('market');
 
     root.addEventListener('click', (e) => {
       const b = (e.target as HTMLElement).closest('button');
       if (!b) return;
       // A mouse click must not leave focus on the button: Espace and Entrée fly the ship and open the chat.
       if (e.detail > 0) b.blur();
-      if (b.dataset.qty) this.setQty(b.dataset.qty === 'max' ? 'max' : (Number(b.dataset.qty) as 1 | 10));
+      if (b.dataset.tab) this.setTab(b.dataset.tab as Tab);
+      else if (b.dataset.up) this.cb.upgrade(b.dataset.up as UpgradeSlot);
+      else if (b.dataset.buy) this.cb.buyShip(b.dataset.buy as ShipClassId);
+      else if (b.dataset.use) this.cb.useShip(b.dataset.use as ShipClassId);
+      else if (b.dataset.qty) this.setQty(b.dataset.qty === 'max' ? 'max' : (Number(b.dataset.qty) as 1 | 10));
       else if (b.dataset.act === 'undock') this.cb.undock();
       else if (b.dataset.act === 'repair') this.cb.repair();
       else if (b.dataset.act === 'menu') this.cb.menu();
@@ -138,6 +161,18 @@ export class StationPanel {
     this.refresh();
   }
 
+  get tab(): Tab {
+    return this.root.classList.contains('yard') ? 'yard' : 'market';
+  }
+
+  setTab(t: Tab) {
+    this.root.classList.toggle('yard', t === 'yard');
+    for (const b of Array.from(this.root.querySelectorAll<HTMLButtonElement>('.tabs button'))) {
+      b.setAttribute('aria-selected', String(b.dataset.tab === t));
+    }
+    for (const el of Array.from(this.root.querySelectorAll<HTMLElement>('.scroll'))) el.scrollTop = 0;
+  }
+
   private setQty(q: Qty) {
     this.qty = q;
     for (const b of Array.from(this.root.querySelectorAll<HTMLButtonElement>('.qty button'))) {
@@ -177,8 +212,85 @@ export class StationPanel {
     }
   }
 
+  private buildYard() {
+    const mods = this.root.querySelector('.mods')!;
+    for (const slot of UPGRADE_SLOTS) {
+      const li = document.createElement('li');
+      li.dataset.slot = slot;
+      li.innerHTML = `<div class="n">${UPGRADES[slot].label}<small>${UPGRADES[slot].effect} par niveau</small></div><div class="pips" aria-hidden="true">${'<i></i>'.repeat(UPGRADE_MAX)}</div><button data-up="${slot}"></button>`;
+      mods.appendChild(li);
+    }
+    const fleet = this.root.querySelector('.fleet')!;
+    for (const offer of SHIPYARD) {
+      const c = SHIP_CLASSES[offer.classId];
+      const li = document.createElement('li');
+      li.dataset.ship = offer.classId;
+      li.innerHTML = `<div class="n">${c.label}<small>${offer.role}</small><small class="st"></small></div><button></button>`;
+      fleet.appendChild(li);
+    }
+  }
+
+  private refreshYard(p: PilotState) {
+    const flown = p.fleet.find((f) => f.classId === p.ship);
+    const mods: ShipMods = flown?.mods ?? noMods();
+    const stats = effectiveStats(p.ship, mods);
+    const offer = SHIPYARD.find((o) => o.classId === p.ship);
+    this.root.querySelector('.sname')!.textContent = SHIP_CLASSES[p.ship].label;
+    this.root.querySelector('.role')!.textContent = offer?.role ?? '';
+    const specs: [string, string][] = [
+      ['Coque', fmt(stats.hull)],
+      ['Bouclier', fmt(stats.shield)],
+      ['Vitesse', `${fmt(stats.maxSpeed)} m/s`],
+      ['Dégâts', `${stats.weapon.damage.toFixed(1).replace('.', ',')} / tir`],
+      ['Soute', `${stats.cargo} u`],
+      ['Minage', `×${stats.miningRate.toFixed(2).replace('.', ',')}`],
+    ];
+    const dl = this.root.querySelector('.specs')!;
+    const html = specs.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join('');
+    if (dl.innerHTML !== html) dl.innerHTML = html;
+
+    for (const li of Array.from(this.root.querySelectorAll<HTMLElement>('.mods li'))) {
+      const slot = li.dataset.slot as UpgradeSlot;
+      const level = mods[slot];
+      Array.from(li.querySelectorAll('.pips i')).forEach((pip, i) => pip.classList.toggle('on', i < level));
+      const cost = upgradeCost(p.ship, mods, slot);
+      const btn = li.querySelector('button')!;
+      btn.textContent = cost === null ? 'Maximum' : `Niveau ${level + 1} · ${fmt(cost)} cr`;
+      btn.disabled = cost === null;
+      btn.classList.toggle('na', cost !== null && p.credits < cost);
+      btn.setAttribute('aria-label', cost === null ? `${UPGRADES[slot].label} : niveau maximal` : `Améliorer ${UPGRADES[slot].label} au niveau ${level + 1} pour ${fmt(cost)} crédits`);
+    }
+
+    const atYard = p.docked === SHIPYARD_STATION;
+    for (const li of Array.from(this.root.querySelectorAll<HTMLElement>('.fleet li'))) {
+      const id = li.dataset.ship as ShipClassId;
+      const owned = p.fleet.find((f) => f.classId === id);
+      const offerHere = SHIPYARD.find((o) => o.classId === id)!;
+      const s = effectiveStats(id, owned?.mods ?? noMods());
+      li.querySelector('.st')!.textContent = `Coque ${fmt(s.hull)} · Soute ${s.cargo} u · ${fmt(s.maxSpeed)} m/s`;
+      li.classList.toggle('flown', id === p.ship);
+      const btn = li.querySelector('button')!;
+      delete btn.dataset.buy;
+      delete btn.dataset.use;
+      btn.disabled = id === p.ship;
+      btn.classList.remove('na');
+      if (id === p.ship) btn.textContent = 'Aux commandes';
+      else if (owned) {
+        btn.textContent = 'Piloter';
+        btn.dataset.use = id;
+        btn.classList.toggle('na', cargoTotal(p.cargo) > s.cargo);
+      } else {
+        btn.textContent = `Acheter · ${fmt(offerHere.price)} cr`;
+        btn.dataset.buy = id;
+        btn.classList.toggle('na', !atYard || p.credits < offerHere.price);
+        btn.title = atYard ? '' : "En vente au chantier d'Aurora-7";
+      }
+    }
+  }
+
   private refresh() {
     const p = this.pilot;
+    if (p) this.refreshYard(p);
     if (p) {
       const used = cargoTotal(p.cargo);
       this.creditsEl.textContent = `${fmt(p.credits)} cr`;

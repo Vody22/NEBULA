@@ -35,6 +35,35 @@ body.touch #station .undock kbd { display: none; }
 #station .qty button + button { border-left: none; }
 #station .qty button[aria-pressed='true'] { background: rgba(127, 227, 255, 0.35); border-color: var(--hud); }
 
+/* Market / shipyard tabs: the quantity selector only concerns the market. */
+#station .tabs { display: flex; }
+#station .tabs button { border-radius: 0; min-width: 96px; letter-spacing: 2px; }
+#station .tabs button:first-child { border-radius: 8px 0 0 8px; }
+#station .tabs button:last-child { border-radius: 0 8px 8px 0; }
+#station .tabs button + button { border-left: none; }
+#station .tabs button[aria-selected='true'] { background: rgba(127, 227, 255, 0.35); border-color: var(--hud); }
+#station .pane-yard { display: none; }
+#station.yard .pane-market, #station.yard .qty { display: none; }
+#station.yard .pane-yard { display: block; }
+
+#station .shipcard { display: flex; gap: 14px; justify-content: space-between; align-items: flex-start; padding: 10px 12px; margin-bottom: 12px; background: rgba(143, 233, 255, 0.05); border: 1px solid var(--hud-faint); border-radius: 10px; }
+#station .shipcard h4 { font-family: var(--font-display); font-size: 18px; font-weight: 700; letter-spacing: 2px; margin: 2px 0; }
+#station .shipcard .role { margin: 0; font-size: 13px; color: var(--hud-dim); }
+#station .specs { display: grid; grid-template-columns: repeat(3, auto); gap: 4px 16px; margin: 0; font-variant-numeric: tabular-nums; }
+#station .specs dt { font-family: var(--font-display); font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--hud-dim); }
+#station .specs dd { margin: 0; font-size: 15px; font-weight: 600; white-space: nowrap; }
+#station .pane-yard h3 { margin: 4px 0 6px; }
+#station .mods, #station .fleet { list-style: none; margin: 0 0 12px; padding: 0; }
+#station .mods li, #station .fleet li { display: flex; align-items: center; gap: 12px; padding: 6px; border-bottom: 1px solid rgba(143, 233, 255, 0.07); }
+#station .mods .n, #station .fleet .n { flex: 1; font-weight: 600; font-size: 16px; }
+#station .mods small, #station .fleet small { display: block; font-size: 12px; font-weight: 500; color: var(--hud-dim); }
+#station .pips { display: flex; gap: 4px; }
+#station .pips i { width: 14px; height: 6px; border-radius: 2px; background: rgba(143, 233, 255, 0.15); }
+#station .pips i.on { background: var(--hud); box-shadow: 0 0 6px rgba(127, 227, 255, 0.6); }
+#station .mods button, #station .fleet button { min-width: 150px; padding: 6px 10px; min-height: 32px; font-size: 11px; letter-spacing: 1px; }
+#station .mods button.na, #station .fleet button.na { opacity: 0.4; }
+#station .fleet li.flown .n { color: var(--hud); }
+
 #station .scroll { flex: 1; min-height: 0; overflow-y: auto; touch-action: pan-y; overscroll-behavior: contain; }
 #station table { width: 100%; border-collapse: collapse; font-size: 16px; font-variant-numeric: tabular-nums; }
 #station th { position: sticky; top: 0; background: rgb(8, 18, 30); text-align: left; font-family: var(--font-display); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 1.5px; color: var(--hud-dim); font-weight: 500; padding: 5px 6px; border-bottom: 1px solid var(--hud-line); white-space: nowrap; }
@@ -73,6 +102,13 @@ body.touch #station .undock kbd { display: none; }
   #station .cell { padding: 5px 8px; }
   #station .cell .v { font-size: 15px; }
   #station .hint { display: none; }
+  #station .tabs button { min-width: 0; padding: 6px 10px; }
+  #station .shipcard { flex-direction: column; gap: 6px; padding: 6px 8px; }
+  #station .shipcard h4 { font-size: 15px; }
+  #station .specs dd { font-size: 13px; }
+  #station .mods small { display: none; }
+  #station .mods .n, #station .fleet .n { font-size: 14px; }
+  #station .mods button, #station .fleet button { min-width: 0; }
   #station table { font-size: 14px; }
   #station td.name small { display: none; }
   #station td, #station th { padding: 4px; }
@@ -80,6 +116,13 @@ body.touch #station .undock kbd { display: none; }
   #hud.docked #feed { left: 50%; transform: translateX(-50%); text-align: center; top: auto; bottom: 8px; max-width: calc(100vw - 24px); }
   #hud.docked #topbar { display: none; }
   #hud.docked #zone { display: none; }
+}
+/* Landscape phones: the ship card on one line, so the hangar shows without scrolling. */
+@media (max-height: 520px) {
+  #station .shipcard { flex-direction: row; align-items: center; margin-bottom: 6px; }
+  #station .shipcard .role { display: none; }
+  #station .specs { grid-template-columns: repeat(6, auto); gap: 2px 12px; }
+  #station .fleet small:not(.st) { display: none; }
 }
 body.touch #station { top: calc(8px + env(safe-area-inset-top, 0px)); bottom: calc(8px + env(safe-area-inset-bottom, 0px)); right: calc(8px + env(safe-area-inset-right, 0px)); }
 body.touch #hud.docked #topbar, body.touch #hud.docked #zone { display: none; }

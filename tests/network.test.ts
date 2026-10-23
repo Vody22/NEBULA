@@ -6,6 +6,7 @@ import { AccountService } from '../src/server/accounts/AccountService';
 import { MemoryStore } from '../src/server/accounts/store';
 import { STARTING_CREDITS } from '../src/server/GameServer';
 import { createMarket } from '../src/shared/economy/market';
+import { SAVE_VERSION } from '../src/shared/save';
 import { PROTOCOL_VERSION, type AuthRequest, type ClientMessage, type ServerMessage } from '../src/shared/net/protocol';
 import { SHIP_CLASSES } from '../src/shared/sim/shipClasses';
 import { neutralInput, type ShipInput } from '../src/shared/sim/types';
@@ -446,6 +447,41 @@ describe('pilot accounts (WebSocket)', () => {
     expect(again.lastPilot).toMatchObject({ credits, cargo: { water: 6 } });
   });
 
+  it('shipyard over the network: a bought and upgraded ship is seen by others and survives a restart', async () => {
+    const store = new MemoryStore();
+    let url = await boot({ accounts: accounts(store) });
+    const a = join(url, 'Armateur');
+    const b = join(url, 'Témoin');
+    await until(() => a.shipId !== null && !!a.account && b.shipId !== null);
+    const token = a.account!.token;
+    (server!.game as unknown as { sessions: Map<string, { name: string; stats: { credits: number } }> }).sessions.forEach((s) => {
+      if (s.name === 'Armateur') s.stats.credits = 5000;
+    });
+    park(a.shipId!);
+    a.send({ t: 'dock' });
+    await until(() => a.lastPilot?.docked === 'aurora', 3000, 'docked');
+    a.send({ t: 'buyShip', ship: 'warden' });
+    a.send({ t: 'upgrade', slot: 'engines' });
+    // Not something a client may buy.
+    a.send({ t: 'buyShip', ship: 'marauder' } as unknown as ClientMessage);
+    await until(() => a.lastPilot?.ship === 'warden' && a.lastPilot.fleet[1]?.mods.engines === 1, 3000, 'bought');
+    expect(a.lastPilot!.credits).toBe(5000 - 2000 - 600);
+    expect(a.closed).toBe(false);
+    a.send({ t: 'undock' });
+    await until(() => a.shipId !== null && !!b.lastSnap?.snap.ships.some((s) => s.id === a.shipId && s.classId === 'warden'), 3000, 'seen by the other pilot');
+    expect(b.lastSnap!.snap.ships.find((s) => s.id === a.shipId)!.u).toBe('000100');
+
+    const first = server!;
+    server = null;
+    await first.close();
+    await until(() => a.closed, 2000, 'client dropped');
+    url = await boot({ accounts: accounts(store) });
+    const back = join(url, 'Armateur', { kind: 'token', token });
+    await until(() => back.lastPilot !== null, 4000, 'back');
+    expect(back.lastPilot).toMatchObject({ ship: 'warden', docked: 'aurora', credits: 2400, capacity: SHIP_CLASSES.warden.cargo });
+    expect(back.lastPilot!.fleet.map((f) => f.classId)).toEqual(['falcon', 'warden']);
+  });
+
   it('POST /logout revokes a login token (sign out on a shared computer)', async () => {
     const url = await boot();
     const a = join(url, 'Bibliothèque');
@@ -471,6 +507,6 @@ describe('pilot accounts (WebSocket)', () => {
     b.close(); // leaving: written now, without waiting for the 60 s batch
     await until(() => store.writes > writes, 3000, 'write on leave');
     const rec = await store.byKey('pressé');
-    expect(rec!.save).toMatchObject({ v: 1, credits: STARTING_CREDITS, station: 'aurora' });
+    expect(rec!.save).toMatchObject({ v: SAVE_VERSION, credits: STARTING_CREDITS, station: 'aurora' });
   });
 });

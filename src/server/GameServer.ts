@@ -2,6 +2,7 @@ import { Quaternion, Vector3 } from 'three';
 import { addCargo, cargoTotal, ITEMS, ITEM_IDS, type Cargo, type ItemId } from '../shared/economy/items';
 import { createMarket, quote, REPAIR_COST, repairCost, stepMarket, trade, TRADE_REFUSALS, type MarketState, type StationId } from '../shared/economy/market';
 import { restoreSector, SAVE_VERSION, sectorSave, validateSave, type PilotSave, type SectorSave } from '../shared/save';
+import { effectiveStats, noMods, offerOf, SHIPYARD_STATION, UPGRADES, upgradeCost, type ShipStats, type UpgradeSlot } from '../shared/sim/upgrades';
 import { AIPilot } from '../shared/sim/ai';
 import { oreOf, PLATINUM_CHANCE } from '../shared/sim/mining';
 import { mulberry32 } from '../shared/rng';
@@ -70,6 +71,9 @@ interface Session {
   home: StationId;
   /** Something worth saving changed (credits, cargo, docking, score). */
   saveDirty: boolean;
+  /** The ship flown, and every ship owned with its upgrades (the flown ship's hull lives in `stored` or in space). */
+  ship: ShipClassId;
+  fleet: PilotSave['fleet'];
 }
 
 export interface GameServerOptions {
@@ -107,8 +111,8 @@ const PVP_KILL_BOUNTY = 0;
 /** Credits of a new pilot. */
 export const STARTING_CREDITS = 500;
 export { REPAIR_COST };
-/** Players fly the Falcon: its hold is theirs. */
-const PLAYER_CLASS: ShipClassId = 'falcon';
+/** Every new pilot's ship. */
+const STARTER_SHIP: ShipClassId = 'falcon';
 
 function randomToken() {
   const b = new Uint8Array(18);
@@ -211,8 +215,10 @@ export class GameServer {
       return '';
     }
     const id = `p${this.nextSession++}`;
-    const cls = SHIP_CLASSES[PLAYER_CLASS];
-    const save = profile.save != null ? validateSave(profile.save, cls.hull, cls.cargo) : null;
+    const save = profile.save != null ? validateSave(profile.save) : null;
+    const fleet: PilotSave['fleet'] = save ? save.fleet : { [STARTER_SHIP]: { mods: noMods(), hull: effectiveStats(STARTER_SHIP, noMods()).hull } };
+    const shipClass = save ? save.ship : STARTER_SHIP;
+    const cls = effectiveStats(shipClass, fleet[shipClass]!.mods);
     const session: Session = {
       id,
       token: randomToken(),
@@ -236,11 +242,13 @@ export class GameServer {
       cargo: save ? { ...save.cargo } : {},
       // A returning pilot is back at its station, ship in the hangar; a new one starts in space.
       docked: save ? save.station : null,
-      stored: save ? { hull: Math.min(cls.hull, save.hull), shield: cls.shield, energy: cls.energy } : null,
+      stored: save ? { hull: Math.min(cls.hull, fleet[shipClass]!.hull), shield: cls.shield, energy: cls.energy } : null,
       pilotDirty: true,
       holdFullNotified: false,
       home: save?.station ?? 'aurora',
       saveDirty: profile.accountId !== null && !save,
+      ship: shipClass,
+      fleet,
     };
     this.sessions.set(id, session);
     this.welcome(session, false);
@@ -369,6 +377,15 @@ export class GameServer {
       case 'repair':
         this.repair(s);
         break;
+      case 'buyShip':
+        this.buyShip(s, msg.ship);
+        break;
+      case 'useShip':
+        this.useShip(s, msg.ship);
+        break;
+      case 'upgrade':
+        this.upgrade(s, msg.slot);
+        break;
     }
   }
 
@@ -390,7 +407,7 @@ export class GameServer {
     if (ship.velocity.length() > DOCK_MAX_SPEED) return this.notice(s, `Amarrage : ralentissez sous ${DOCK_MAX_SPEED} m/s.`, 'warn');
     if (w.time - ship.lastPvpCombat < PVP_COMBAT_LOCK) return this.notice(s, 'Amarrage refusé : combat PvP en cours.', 'warn');
     // The station recharges shield and capacitor; the hull needs a paid repair.
-    const cls = SHIP_CLASSES[ship.classId];
+    const cls = this.shipStats(s);
     s.stored = { hull: ship.hull, shield: cls.shield, energy: cls.energy };
     w.removeShip(ship.id);
     this.shipOwner.delete(ship.id);
@@ -419,9 +436,60 @@ export class GameServer {
     s.pilotDirty = true;
   }
 
+  /** What the pilot's current ship can do, upgrades included. */
+  private shipStats(s: Session): ShipStats {
+    return effectiveStats(s.ship, s.fleet[s.ship]!.mods);
+  }
+
+  private buyShip(s: Session, classId: ShipClassId) {
+    const offer = offerOf(classId);
+    if (!s.docked || !offer) return;
+    if (s.docked !== SHIPYARD_STATION) return this.notice(s, `Les vaisseaux se vendent au chantier de ${this.station(SHIPYARD_STATION).name}.`, 'warn');
+    if (s.fleet[classId]) return this.useShip(s, classId);
+    if (s.stats.credits < offer.price) return this.notice(s, TRADE_REFUSALS.funds, 'warn');
+    s.stats.credits -= offer.price;
+    s.fleet[classId] = { mods: noMods(), hull: effectiveStats(classId, noMods()).hull };
+    s.pilotDirty = true;
+    this.notice(s, `${SHIP_CLASSES[classId].label} acheté  −${offer.price} cr`, 'good');
+    this.useShip(s, classId);
+  }
+
+  /** Docked: the current ship goes to the hangar (hull kept), another one is prepared. */
+  private useShip(s: Session, classId: ShipClassId) {
+    const next = s.fleet[classId];
+    if (!s.docked || !s.stored || !next || s.ship === classId) return;
+    const cls = effectiveStats(classId, next.mods);
+    if (cargoTotal(s.cargo) > cls.cargo) return this.notice(s, `Soute trop pleine pour le ${SHIP_CLASSES[classId].label} (${cls.cargo} unités) : vendez d'abord une partie de la cargaison.`, 'warn');
+    s.fleet[s.ship]!.hull = s.stored.hull;
+    s.ship = classId;
+    s.stored = { hull: Math.min(cls.hull, next.hull), shield: cls.shield, energy: cls.energy };
+    s.holdFullNotified = false;
+    s.pilotDirty = true;
+    this.notice(s, `Aux commandes du ${SHIP_CLASSES[classId].label}`, 'good');
+  }
+
+  /** Docked: next level of an upgrade on the current ship. */
+  private upgrade(s: Session, slot: UpgradeSlot) {
+    if (!s.docked || !s.stored) return;
+    const owned = s.fleet[s.ship]!;
+    const cost = upgradeCost(s.ship, owned.mods, slot);
+    if (cost === null) return this.notice(s, `${UPGRADES[slot].label} : niveau maximal atteint.`, 'warn');
+    if (s.stats.credits < cost) return this.notice(s, TRADE_REFUSALS.funds, 'warn');
+    const before = this.shipStats(s);
+    s.stats.credits -= cost;
+    owned.mods = { ...owned.mods, [slot]: owned.mods[slot] + 1 };
+    const after = this.shipStats(s);
+    // New plating and shield emitters are fitted intact.
+    s.stored.hull = Math.min(after.hull, s.stored.hull + (after.hull - before.hull));
+    s.stored.shield = after.shield;
+    s.holdFullNotified = false;
+    s.pilotDirty = true;
+    this.notice(s, `${UPGRADES[slot].label} niveau ${owned.mods[slot]}  −${cost} cr`, 'good');
+  }
+
   private repair(s: Session) {
     if (!s.docked || !s.stored) return;
-    const max = SHIP_CLASSES[PLAYER_CLASS].hull;
+    const max = this.shipStats(s).hull;
     const missing = max - s.stored.hull;
     if (missing < 0.5) return this.notice(s, 'La coque est intacte.');
     const fix = Math.min(missing, s.stats.credits / REPAIR_COST);
@@ -435,7 +503,7 @@ export class GameServer {
 
   private trade(s: Session, item: ItemId, qty: number) {
     if (!s.docked) return;
-    const r = trade(this.markets[s.docked], item, qty, s.stats, s.cargo, SHIP_CLASSES[PLAYER_CLASS].cargo);
+    const r = trade(this.markets[s.docked], item, qty, s.stats, s.cargo, this.shipStats(s).cargo);
     if (!r.ok) return this.notice(s, TRADE_REFUSALS[r.reason], 'warn');
     if (r.qty < 0) s.holdFullNotified = false;
     const label = ITEMS[item].label;
@@ -457,22 +525,35 @@ export class GameServer {
   }
 
   pilotState(s: Session): PilotState {
+    const cls = this.shipStats(s);
+    const hull = s.stored ? Math.round(s.stored.hull * 10) / 10 : null;
     return {
       credits: s.stats.credits,
       cargo: { ...s.cargo },
-      capacity: SHIP_CLASSES[PLAYER_CLASS].cargo,
+      capacity: cls.cargo,
       docked: s.docked,
-      hull: s.stored ? Math.round(s.stored.hull * 10) / 10 : null,
-      hullMax: SHIP_CLASSES[PLAYER_CLASS].hull,
+      hull,
+      hullMax: cls.hull,
+      ship: s.ship,
+      fleet: (Object.entries(s.fleet) as [ShipClassId, NonNullable<PilotSave['fleet'][ShipClassId]>][]).map(([classId, o]) => ({
+        classId,
+        mods: { ...o.mods },
+        hull: classId === s.ship && hull !== null ? hull : o.hull,
+      })),
     };
   }
 
-  /** What an account keeps of this session: wallet, hold, score, station and hull. */
+  /** What an account keeps of this session: wallet, hold, score, station and ships. */
   private pilotSave(s: Session): PilotSave {
-    const max = SHIP_CLASSES[PLAYER_CLASS].hull;
+    const max = this.shipStats(s).hull;
     const ship = s.shipId !== null ? this.world.ships.get(s.shipId) : undefined;
     // Destroyed and waiting to respawn: the next ship comes out of the hangar intact.
     const hull = s.stored ? s.stored.hull : ship ? ship.hull : max;
+    const flownHull = Math.max(1, Math.min(max, Math.round(hull * 10) / 10));
+    const fleet: PilotSave['fleet'] = {};
+    for (const [id, o] of Object.entries(s.fleet) as [ShipClassId, NonNullable<PilotSave['fleet'][ShipClassId]>][]) {
+      fleet[id] = { mods: { ...o.mods }, hull: id === s.ship ? flownHull : o.hull };
+    }
     return {
       v: SAVE_VERSION,
       credits: s.stats.credits,
@@ -480,7 +561,9 @@ export class GameServer {
       kills: s.stats.kills,
       deaths: s.stats.deaths,
       station: s.docked ?? s.home,
-      hull: Math.max(1, Math.min(max, Math.round(hull * 10) / 10)),
+      hull: flownHull,
+      ship: s.ship,
+      fleet,
     };
   }
 
@@ -517,7 +600,7 @@ export class GameServer {
       if (!ship || ship.mining === null || ship.mineProgress < 1) continue;
       const ore = oreOf(w.zone.asteroids[ship.mining].variant);
       const units = Math.floor(ship.mineProgress);
-      const cap = SHIP_CLASSES[PLAYER_CLASS].cargo;
+      const cap = this.shipStats(s).cargo;
       let added = 0;
       for (; added < units; added++) {
         const item: ItemId = ore === 'ironNickel' && this.lootRng() < PLATINUM_CHANCE ? 'platinum' : ore;
@@ -742,7 +825,8 @@ export class GameServer {
     const z = this.world.zone;
     const offset = _v.set((this.rng() - 0.5) * 120, (this.rng() - 0.5) * 40, (this.rng() - 0.5) * 60);
     const ship = this.world.spawnShip({
-      classId: PLAYER_CLASS,
+      classId: s.ship,
+      mods: s.fleet[s.ship]!.mods,
       faction: 'union',
       name: s.name,
       ownerId: s.id,

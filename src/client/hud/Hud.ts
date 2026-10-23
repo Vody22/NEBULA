@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { interceptPoint } from '../../shared/math';
 import { cargoTotal } from '../../shared/economy/items';
 import type { PilotState, PlayerInfo, PlayerStats } from '../../shared/net/protocol';
-import { SHIP_CLASSES } from '../../shared/sim/shipClasses';
+import { statsOfPacked } from '../../shared/sim/upgrades';
 import type { ShipInput } from '../../shared/sim/types';
 import { isHostile } from '../hostility';
 import type { InterpolatedShip } from '../net/SnapshotBuffer';
@@ -404,7 +404,7 @@ export class Hud {
     this.killEl.style.opacity = String(Math.min(1, this.killTimer * 2));
     this.damage = Math.max(0, this.damage - dt * 1.4);
     this.shieldFx = Math.max(0, this.shieldFx - dt * 2.5);
-    this.vignette.style.opacity = String(this.damage + (me && me.snap.hull < SHIP_CLASSES[me.snap.classId].hull * 0.3 ? 0.25 + 0.15 * Math.sin(performance.now() / 150) : 0));
+    this.vignette.style.opacity = String(this.damage + (me && me.snap.hull < statsOfPacked(me.snap.classId, me.snap.u).hull * 0.3 ? 0.25 + 0.15 * Math.sin(performance.now() / 150) : 0));
     this.shieldFlash.style.opacity = String(this.shieldFx);
 
     // Virtual cursor
@@ -423,7 +423,7 @@ export class Hud {
       this.setPrompt('');
       return;
     }
-    const cls = SHIP_CLASSES[me.snap.classId];
+    const cls = statsOfPacked(me.snap.classId, me.snap.u);
 
     // Gun crosshair: where the nose points, 600 m ahead.
     _q.copy(me.rotation);
@@ -536,7 +536,7 @@ export class Hud {
     this.lead.style.display = 'none';
     this.arrow.style.display = 'none';
     if (target) {
-      const tcls = SHIP_CLASSES[target.snap.classId];
+      const tcls = statsOfPacked(target.snap.classId, target.snap.u);
       const dist = target.position.distanceTo(me.position);
       const hostile = isHostile(me.snap, target.snap);
       this.project(target.position, f.camera, pt);

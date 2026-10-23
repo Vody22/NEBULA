@@ -1,7 +1,7 @@
 import { Quaternion, Vector3 } from 'three';
 import { clamp, forwardOf, interceptPoint, segmentSphere } from '../math';
 import type { Rng } from '../rng';
-import { SHIP_CLASSES } from './shipClasses';
+import { statsOf } from './upgrades';
 import type { EntityId, Ship, ShipInput } from './types';
 import { neutralInput } from './types';
 import type { World } from './world';
@@ -68,7 +68,7 @@ export class AIPilot {
    * overrides steering to slide around it and eases off the throttle.
    */
   private avoidObstacles(world: World, ship: Ship) {
-    const r = SHIP_CLASSES[ship.classId].radius;
+    const r = statsOf(ship).radius;
     const speed = ship.velocity.length();
     const lookTime = 2.2;
     forwardOf(ship.rotation, _fwd);
@@ -127,7 +127,7 @@ export class AIPilot {
     inp.strafeX = 0;
     inp.strafeY = 0;
 
-    const cls = SHIP_CLASSES[ship.classId];
+    const cls = statsOf(ship);
 
     if (this.state === 'patrol' || !target) {
       _to.subVectors(this.patrolPoint, ship.position);
@@ -160,7 +160,7 @@ export class AIPilot {
       inp.throttle = dist > 900 ? 1 : dist > 350 ? 0.75 : 0.35;
       inp.boost = dist > 2600 && ship.energy > 40;
 
-      const lowHealth = ship.shield <= 0 && ship.hull < SHIP_CLASSES[ship.classId].hull * 0.45;
+      const lowHealth = ship.shield <= 0 && ship.hull < statsOf(ship).hull * 0.45;
       if (dist < 160 || (this.stateTime > 9 && this.rng() < dt * 0.6) || (lowHealth && this.rng() < dt * 0.5)) {
         this.beginEvade(ship);
       }

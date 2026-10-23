@@ -4,6 +4,7 @@ import { stepShipPhysics } from '../../shared/sim/shipPhysics';
 import { stepShipSystems } from '../../shared/sim/shipSystems';
 import type { StaticGrid } from '../../shared/sim/spatialGrid';
 import { neutralInput, type Ship, type ShipInput } from '../../shared/sim/types';
+import { unpackMods } from '../../shared/sim/upgrades';
 import { TICK_DT } from '../../shared/sim/world';
 
 /** Beyond this the correction is a teleport (respawn, big collision), not smoothed. */
@@ -67,6 +68,7 @@ export class Predictor {
       id: s.id,
       name: s.name,
       classId: s.classId,
+      mods: unpackMods(s.u),
       faction: s.faction,
       ownerId: s.owner,
       position: new Vector3(),
@@ -102,6 +104,8 @@ export class Predictor {
 
   private load(s: ShipSnapshot) {
     const ship = this.ship!;
+    ship.classId = s.classId;
+    ship.mods = unpackMods(s.u);
     ship.position.set(s.p[0], s.p[1], s.p[2]);
     ship.velocity.set(s.v[0], s.v[1], s.v[2]);
     ship.rotation.set(s.q[0], s.q[1], s.q[2], s.q[3]).normalize();

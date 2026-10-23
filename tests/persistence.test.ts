@@ -11,6 +11,9 @@ import type { Ship } from '../src/shared/sim/types';
 
 const HULL = SHIP_CLASSES.falcon.hull;
 const CARGO = SHIP_CLASSES.falcon.cargo;
+const NO_MODS = { guns: 0, shields: 0, armor: 0, engines: 0, hold: 0, mining: 0 };
+/** The fleet of a pilot who only has the Falcon. */
+const falconOnly = (hull: number) => ({ hull, ship: 'falcon' as const, fleet: { falcon: { mods: NO_MODS, hull } } });
 
 /** A GameServer with one account pilot, recording what it asks to save. */
 function game(save?: unknown, now = () => Date.UTC(2026, 9, 23)) {
@@ -36,7 +39,7 @@ describe('pilot saves', () => {
     expect(me()).toBeDefined();
     server.tick();
     expect(saves).toHaveLength(1);
-    expect(saves[0]).toEqual({ id: '7', final: false, save: { v: SAVE_VERSION, credits: STARTING_CREDITS, cargo: {}, kills: 0, deaths: 0, station: 'aurora', hull: HULL } });
+    expect(saves[0]).toEqual({ id: '7', final: false, save: { v: SAVE_VERSION, credits: STARTING_CREDITS, cargo: {}, kills: 0, deaths: 0, station: 'aurora', ...falconOnly(HULL) } });
     server.tick();
     expect(saves).toHaveLength(1); // nothing changed, nothing written
   });
@@ -58,7 +61,7 @@ describe('pilot saves', () => {
     expect(p).toMatchObject({ credits: 0, cargo: { water: CARGO }, docked: 'aurora', hull: HULL });
     expect(last('snapshot')!.stats).toEqual({ kills: 1e7, deaths: 0, credits: 0 });
     // Not a save at all (other version, garbage): a fresh pilot in space.
-    for (const raw of [{ v: 2, credits: 9e5 }, 'texte', 42, []]) {
+    for (const raw of [{ v: 9, credits: 9e5 }, 'texte', 42, []]) {
       const g = game(raw);
       g.server.tick();
       expect(g.me()).toBeDefined();
@@ -66,11 +69,40 @@ describe('pilot saves', () => {
     }
   });
 
-  it('validateSave fits the hold to the capacity, item by item, and keeps the hull between 1 and max', () => {
-    const s = validateSave({ v: 1, credits: 12.9, cargo: { water: 20, parts: 20, medicine: 20, gold: 1 }, kills: 1, deaths: 1, station: 'ferro', hull: 0 }, 260, 30);
-    expect(s).toEqual({ v: 1, credits: 12, cargo: { water: 20, parts: 10 }, kills: 1, deaths: 1, station: 'ferro', hull: 1 });
-    expect(validateSave(null, 260, 30)).toBeNull();
-    expect(validateSave({ v: '1' }, 260, 30)).toBeNull();
+  it('validateSave reads a v0.4 save (no fleet), fits the hold to the capacity item by item, and keeps the hull between 1 and max', () => {
+    const s = validateSave({ v: 1, credits: 12.9, cargo: { water: 20, parts: 20, medicine: 20, gold: 1 }, kills: 1, deaths: 1, station: 'ferro', hull: 0 });
+    expect(s).toEqual({ v: SAVE_VERSION, credits: 12, cargo: { water: 20, parts: 20 }, kills: 1, deaths: 1, station: 'ferro', ...falconOnly(1) });
+    expect(validateSave(null)).toBeNull();
+    expect(validateSave({ v: '1' })).toBeNull();
+    expect(validateSave({ v: 2, credits: 9 })).toBeNull();
+  });
+
+  it('validateSave keeps owned ships and their upgrades, and drops what cannot be owned', () => {
+    const s = validateSave({
+      v: 1,
+      credits: 10,
+      cargo: { water: 70 },
+      kills: 0,
+      deaths: 0,
+      station: 'aurora',
+      ship: 'warden',
+      fleet: { warden: { mods: { hold: 2, guns: 9, armor: -1, shields: 1.7 }, hull: 1e6 }, marauder: { mods: {}, hull: 400 }, __proto__: { hull: 1 } },
+    })!;
+    expect(s.ship).toBe('warden');
+    expect(Object.keys(s.fleet).sort()).toEqual(['falcon', 'warden']);
+    expect(s.fleet.warden!.mods).toEqual({ ...NO_MODS, hold: 2, guns: 3, shields: 1 });
+    expect(s.fleet.warden!.hull).toBe(SHIP_CLASSES.warden.hull);
+    // Warden hold 60, +50 % with two hold levels.
+    expect(s.cargo).toEqual({ water: 70 });
+    // The ship flown must be owned; otherwise back to the Falcon (whose hold then limits the cargo).
+    const t = validateSave({ v: 1, credits: 0, cargo: { water: 70 }, ship: 'marauder', fleet: {} })!;
+    expect(t.ship).toBe('falcon');
+    expect(t.cargo).toEqual({ water: CARGO });
+  });
+
+  it('writes saves a v0.4 server can still read (rollback): same version, hull of the ship flown on top', () => {
+    const s = validateSave({ v: 1, credits: 5, cargo: {}, kills: 0, deaths: 0, station: 'aurora', hull: 10, ship: 'warden', fleet: { warden: { mods: {}, hull: 200 } } })!;
+    expect(s).toMatchObject({ v: 1, hull: 200, ship: 'warden', credits: 5 });
   });
 
   it('reports trades and docking as they happen, the station docked at becomes home, and a leaving pilot is saved last', () => {
@@ -92,7 +124,7 @@ describe('pilot saves', () => {
     expect(saves.at(-1)!.save.station).toBe('ferro'); // in space, home is still Ferro-9
     me()!.hull = 99;
     server.disconnect(session);
-    expect(saves.at(-1)).toMatchObject({ final: true, save: { station: 'ferro', hull: 99, cargo: { water: 5 } } });
+    expect(saves.at(-1)).toMatchObject({ final: true, save: { station: 'ferro', fleet: { falcon: { hull: 99 } }, cargo: { water: 5 } } });
   });
 
   it('kills and deaths are saved; a destroyed pilot keeps its score but its hold is lost and the next ship is whole', () => {
@@ -104,7 +136,7 @@ describe('pilot saves', () => {
     server.world.applyDamage(ship, 1e6, null);
     server.tick();
     expect(ship.alive).toBe(false);
-    expect(saves.at(-1)!.save).toEqual({ v: 1, credits: 1000, cargo: {}, kills: 4, deaths: 1, station: 'aurora', hull: HULL });
+    expect(saves.at(-1)!.save).toEqual({ v: SAVE_VERSION, credits: 1000, cargo: {}, kills: 4, deaths: 1, station: 'aurora', ...falconOnly(HULL) });
   });
 
   it('persistAll reports every account pilot (server shutdown); dropAccount ends a session without saving', () => {
@@ -229,7 +261,7 @@ describe('browser storage', () => {
     temp.update(1 / 60);
     temp.close();
     expect(kv.data.size).toBe(0);
-    saveSolo({ v: 1, credits: 1, cargo: {}, kills: 0, deaths: 0, station: 'aurora', hull: 1 }, { v: 1, savedAt: 0, stocks: {} }, kv);
+    saveSolo({ v: SAVE_VERSION, credits: 1, cargo: {}, kills: 0, deaths: 0, station: 'aurora', ...falconOnly(1) }, { v: 1, savedAt: 0, stocks: {} }, kv);
     expect(loadSolo(kv)!.save).toMatchObject({ credits: 1 });
   });
 });

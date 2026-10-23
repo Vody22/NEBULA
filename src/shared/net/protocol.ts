@@ -1,13 +1,14 @@
 import { isItemId, type Cargo, type ItemId } from '../economy/items';
 import type { StationId } from '../economy/market';
 import type { EntityId, FactionId, Ship, ShipClassId, ShipInput, SimEvent } from '../sim/types';
+import { isUpgradeSlot, offerOf, packMods, type ShipMods, type UpgradeSlot } from '../sim/upgrades';
 
 /**
  * Wire protocol between client and authoritative server. Everything here is
  * plain JSON-serialisable data so it can travel over WebSocket unchanged
  * (a binary encoding can replace JSON later without touching game code).
  */
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 
 export interface ShipSnapshot {
   id: EntityId;
@@ -30,6 +31,8 @@ export interface ShipSnapshot {
   pvp: boolean;
   /** Index of the asteroid this ship is mining (zone.asteroids), absent when not mining. */
   m?: number;
+  /** Upgrade levels packed by packMods (v0.5), absent for a ship without upgrades. */
+  u?: string;
 }
 
 export interface PlayerStats {
@@ -42,12 +45,18 @@ export interface PlayerStats {
 export interface PilotState {
   credits: number;
   cargo: Cargo;
+  /** Hold of the ship flown, upgrades included. */
   capacity: number;
   /** Station the player is docked at, or null in space. */
   docked: StationId | null;
   /** The docked ship's hull, for the repair counter (null in space). */
   hull: number | null;
+  /** Hull of the ship flown, upgrades included. */
   hullMax: number;
+  /** The ship flown. */
+  ship: ShipClassId;
+  /** Every ship owned (v0.5), the one flown included. */
+  fleet: { classId: ShipClassId; mods: ShipMods; hull: number }[];
 }
 
 /** A station's market as the docked player sees it. */
@@ -104,7 +113,13 @@ export type ClientMessage =
   | { t: 'undock' }
   /** qty > 0 buys, qty < 0 sells, at the station the player is docked at. */
   | { t: 'trade'; item: ItemId; qty: number }
-  | { t: 'repair' };
+  | { t: 'repair' }
+  /** Docked at the shipyard: buy a ship (it becomes the ship flown when the hold fits). */
+  | { t: 'buyShip'; ship: ShipClassId }
+  /** Docked: fly another owned ship. */
+  | { t: 'useShip'; ship: ShipClassId }
+  /** Docked: next level of an upgrade on the ship flown. */
+  | { t: 'upgrade'; slot: UpgradeSlot };
 
 export type ServerMessage =
   | { t: 'welcome'; playerId: string; token: string; name: string; zoneSeed: number; tickRate: number; snapshotRate: number; resumed: boolean }
@@ -127,6 +142,7 @@ const r3 = (n: number) => Math.round(n * 1000) / 1000;
 const r4 = (n: number) => Math.round(n * 10000) / 10000;
 
 export function snapshotShip(s: Ship): ShipSnapshot {
+  const u = packMods(s.mods);
   return {
     id: s.id,
     name: s.name,
@@ -146,6 +162,7 @@ export function snapshotShip(s: Ship): ShipSnapshot {
     weaponsLocked: s.weaponsLocked,
     pvp: s.pvp,
     ...(s.mining !== null ? { m: s.mining } : {}),
+    ...(u ? { u } : {}),
   };
 }
 
@@ -258,6 +275,12 @@ export function validateClientMessage(raw: unknown): ClientMessage | null {
     case 'trade':
       if (!isItemId(o.item) || typeof o.qty !== 'number' || !Number.isInteger(o.qty) || o.qty === 0 || Math.abs(o.qty) > 1000) return null;
       return { t: 'trade', item: o.item, qty: o.qty };
+    case 'buyShip':
+    case 'useShip':
+      // Only ships the shipyard sells (never a pirate class).
+      return typeof o.ship === 'string' && offerOf(o.ship as ShipClassId) ? { t: o.t, ship: o.ship as ShipClassId } : null;
+    case 'upgrade':
+      return isUpgradeSlot(o.slot) ? { t: 'upgrade', slot: o.slot } : null;
     default:
       return null;
   }

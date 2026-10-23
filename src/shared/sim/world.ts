@@ -1,12 +1,12 @@
 import { Quaternion, Vector3 } from 'three';
 import { segmentSphere } from '../math';
 import { stepMining } from './mining';
-import { SHIP_CLASSES } from './shipClasses';
 import { stepShipPhysics } from './shipPhysics';
 import { stepShipSystems } from './shipSystems';
 import { StaticGrid } from './spatialGrid';
 import type { EntityId, FactionId, Projectile, Ship, ShipClassId, ShipInput, SimEvent } from './types';
 import { canDamage, neutralInput } from './types';
+import { noMods, statsOf, type ShipMods } from './upgrades';
 import type { ZoneDef } from './zone';
 
 export const TICK_RATE = 60;
@@ -29,6 +29,7 @@ export interface SpawnOptions {
   rotation?: Quaternion;
   velocity?: Vector3;
   ownerId?: string | null;
+  mods?: ShipMods;
 }
 
 /**
@@ -50,11 +51,13 @@ export class World {
   }
 
   spawnShip(o: SpawnOptions): Ship {
-    const cls = SHIP_CLASSES[o.classId];
+    const mods = o.mods ? { ...o.mods } : noMods();
+    const cls = statsOf({ classId: o.classId, mods });
     const ship: Ship = {
       id: this.nextId++,
       name: o.name,
       classId: o.classId,
+      mods,
       faction: o.faction,
       ownerId: o.ownerId ?? null,
       position: o.position.clone(),
@@ -126,7 +129,7 @@ export class World {
   }
 
   private fireWeapons(ship: Ship, dt: number) {
-    const w = SHIP_CLASSES[ship.classId].weapon;
+    const w = statsOf(ship).weapon;
     ship.weaponCooldown = Math.max(0, ship.weaponCooldown - dt);
     if (!ship.input.fire || ship.weaponCooldown > 0 || ship.weaponsLocked) return;
     if (ship.energy < w.energyCost) {
@@ -176,7 +179,7 @@ export class World {
       let hitShip: Ship | null = null;
       for (const ship of this.ships.values()) {
         if (!ship.alive || !canDamage({ id: p.ownerId, faction: p.faction, pvp: p.pvp }, ship)) continue;
-        const r = SHIP_CLASSES[ship.classId].radius;
+        const r = statsOf(ship).radius;
         const t = segmentSphere(_p0, p.position, ship.position, r);
         if (t >= 0 && t < hitT) {
           hitT = t;
@@ -230,11 +233,11 @@ export class World {
     for (let i = 0; i < ships.length; i++) {
       const a = ships[i];
       if (!a.alive) continue;
-      const ra = SHIP_CLASSES[a.classId].radius;
+      const ra = statsOf(a).radius;
       for (let j = i + 1; j < ships.length; j++) {
         const b = ships[j];
         if (!b.alive) continue;
-        const rb = SHIP_CLASSES[b.classId].radius;
+        const rb = statsOf(b).radius;
         _n.subVectors(a.position, b.position);
         const d = _n.length();
         const min = ra + rb;
