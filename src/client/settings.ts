@@ -1,3 +1,4 @@
+import { cleanMix, DEFAULT_MIX, type MixLevels } from './audio/mix';
 import { isQualityLevel, type QualitySetting } from './render/quality';
 /**
  * Player preferences (bindings, sound, mouse) persisted in localStorage.
@@ -40,6 +41,10 @@ export interface Settings {
   layout: KeyboardLayout;
   volume: number;
   muted: boolean;
+  /** Levels of the sound groups (music, effects, ambience, interface, voice), 0..1. */
+  mix: MixLevels;
+  /** Speak the onboard announcements with the browser's voice. */
+  voice: boolean;
   invertY: boolean;
   sensitivity: number;
   /** Pilot name shown to other players. */
@@ -115,6 +120,8 @@ export const DEFAULT_SETTINGS: Settings = {
   layout: 'auto',
   volume: 0.7,
   muted: false,
+  mix: { ...DEFAULT_MIX },
+  voice: false,
   invertY: false,
   sensitivity: 1,
   name: '',
@@ -125,7 +132,7 @@ export const DEFAULT_SETTINGS: Settings = {
 const KEY = 'nebula-frontier.settings';
 
 export function loadSettings(storage: Pick<Storage, 'getItem'> | null = safeStorage()): Settings {
-  const base: Settings = { ...DEFAULT_SETTINGS, bindings: { ...DEFAULT_BINDINGS } };
+  const base: Settings = { ...DEFAULT_SETTINGS, bindings: { ...DEFAULT_BINDINGS }, mix: { ...DEFAULT_MIX } };
   try {
     const raw = storage?.getItem(KEY);
     if (!raw) return base;
@@ -151,6 +158,8 @@ export function loadSettings(storage: Pick<Storage, 'getItem'> | null = safeStor
       layout: s.layout === 'azerty' || s.layout === 'qwerty' ? s.layout : 'auto',
       volume: typeof s.volume === 'number' ? Math.min(1, Math.max(0, s.volume)) : base.volume,
       muted: s.muted === true,
+      mix: cleanMix(s.mix),
+      voice: s.voice === true,
       invertY: s.invertY === true,
       sensitivity: typeof s.sensitivity === 'number' ? Math.min(3, Math.max(0.25, s.sensitivity)) : 1,
       name: typeof s.name === 'string' ? s.name.slice(0, 16) : '',

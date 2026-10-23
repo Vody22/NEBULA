@@ -1,5 +1,6 @@
 import { checkAccountName, checkPassword, PASSWORD_MAX } from '../../shared/accounts';
 import type { AuthRequest } from '../../shared/net/protocol';
+import type { MixLevels } from '../audio/mix';
 import { isTouchDevice } from '../input/Touch';
 import { isQualityLevel, QUALITY, QUALITY_LEVELS } from '../render/quality';
 import {
@@ -14,6 +15,14 @@ import {
 } from '../settings';
 
 export type PlayMode = 'online' | 'solo';
+
+const MIX_ROWS: [keyof MixLevels, string][] = [
+  ['music', 'Musique'],
+  ['effects', 'Effets (moteurs, armes, explosions)'],
+  ['ambience', 'Ambiances'],
+  ['ui', 'Interface'],
+  ['voice', 'Annonces et radio'],
+];
 export type ServerState = 'checking' | 'ok' | 'bad' | 'none' | 'busy';
 type AuthTab = 'login' | 'register';
 
@@ -326,7 +335,7 @@ export class Menu {
     } else {
       html = `
         <h2 id="menuTitle">Options et son</h2>
-        <div class="opts">
+        <div class="opts opts-scroll">
           <label class="opt"><span>Qualité graphique</span>
             <select id="qualitySel" data-setting="quality">
               ${(['auto', ...QUALITY_LEVELS] as const)
@@ -337,6 +346,12 @@ export class Menu {
             <input type="range" min="0" max="100" step="5" value="${Math.round(s.volume * 100)}" data-setting="volume" aria-valuetext="${Math.round(s.volume * 100)} %">
             <output>${Math.round(s.volume * 100)} %</output></label>
           <label class="opt check"><input type="checkbox" data-setting="muted"${s.muted ? ' checked' : ''}><span>Couper le son (${esc(this.label(b.mute))} en jeu)</span></label>
+          ${MIX_ROWS.map(
+            ([k, label]) => `<label class="opt mixrow"><span>${label}</span>
+            <input type="range" min="0" max="100" step="5" value="${Math.round(s.mix[k] * 100)}" data-setting="mix-${k}" aria-valuetext="${Math.round(s.mix[k] * 100)} %">
+            <output>${Math.round(s.mix[k] * 100)} %</output></label>`,
+          ).join('')}
+          <label class="opt check"><input type="checkbox" data-setting="voice"${s.voice ? ' checked' : ''}><span>Annonces de bord parlées (voix de synthèse du navigateur)</span></label>
           <label class="opt"><span>Sensibilité de la souris</span>
             <input type="range" min="25" max="300" step="5" value="${Math.round(s.sensitivity * 100)}" data-setting="sensitivity" aria-valuetext="${Math.round(s.sensitivity * 100)} %">
             <output>${Math.round(s.sensitivity * 100)} %</output></label>
@@ -451,14 +466,21 @@ export class Menu {
     const key = el.dataset.setting;
     if (!key) return;
     const s = this.settings;
-    if (key === 'volume' || key === 'sensitivity') {
+    if (key.startsWith('mix-')) {
+      const k = key.slice(4) as keyof MixLevels;
+      const v = Number((el as HTMLInputElement).value) / 100;
+      s.mix = { ...s.mix, [k]: v };
+      const out = el.parentElement?.querySelector('output');
+      if (out) out.textContent = `${Math.round(v * 100)} %`;
+      el.setAttribute('aria-valuetext', `${Math.round(v * 100)} %`);
+    } else if (key === 'volume' || key === 'sensitivity') {
       const v = Number((el as HTMLInputElement).value) / 100;
       if (key === 'volume') s.volume = v;
       else s.sensitivity = v;
       const out = el.parentElement?.querySelector('output');
       if (out) out.textContent = `${Math.round(v * 100)} %`;
       el.setAttribute('aria-valuetext', `${Math.round(v * 100)} %`);
-    } else if (key === 'muted' || key === 'invertY') {
+    } else if (key === 'muted' || key === 'invertY' || key === 'voice') {
       s[key] = (el as HTMLInputElement).checked;
     } else if (key === 'quality' && e.type === 'change') {
       s.quality = isQualityLevel(el.value) ? el.value : 'auto';

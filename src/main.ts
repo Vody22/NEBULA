@@ -341,7 +341,20 @@ window.addEventListener('keydown', (e) => {
     pause();
   }
 });
+// Sound: browsers only start audio after a user gesture, so every click or key
+// press tries to unlock it (cheap once running). Hidden tab: the sound stops.
+for (const ev of ['pointerdown', 'keydown', 'touchend'] as const) window.addEventListener(ev, () => game.audio.unlock(), { capture: true, passive: true });
+window.addEventListener('blur', () => game.audio.setBlurred(true));
+window.addEventListener('focus', () => game.audio.setBlurred(false));
+// Interface clicks: a tab, or any other button of the menus and the station screen.
+document.addEventListener('click', (e) => {
+  const b = (e.target as HTMLElement | null)?.closest?.('button');
+  // Touch flight controls (.tb) are heard through what they do, not as clicks.
+  if (!b || (b as HTMLButtonElement).disabled || b.classList.contains('tb')) return;
+  game.audio.ui(b.getAttribute('role') === 'tab' ? 'tab' : 'click');
+});
 document.addEventListener('visibilitychange', () => {
+  game.audio.setHidden(document.hidden);
   if (!document.hidden) return;
   pause();
   // Phones may close a background tab without warning: write the solo progress now.

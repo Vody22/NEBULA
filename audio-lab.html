@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NEBULA FRONTIER · Labo audio</title>
+    <link rel="icon" href="data:," />
+    <style>
+      html, body { margin: 0; background: #05090f; color: #cfe6ff; font: 15px/1.5 system-ui, sans-serif; }
+      main { max-width: 720px; margin: 0 auto; padding: 24px 16px; }
+      button { background: #0b1a28; color: #cfe6ff; border: 1px solid #2c4a66; border-radius: 6px; padding: 8px 12px; margin: 4px; font: inherit; cursor: pointer; }
+      button:hover { border-color: #7fe3ff; }
+      pre { font: 12px ui-monospace, monospace; color: #8fb3d0; white-space: pre-wrap; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Labo audio</h1>
+      <p>Outil de développement (non publié sur le site) : joue les scènes sonores du jeu sans le rendu 3D, avec le vrai moteur audio.</p>
+      <div id="scenes"></div>
+      <pre id="stats"></pre>
+    </main>
+    <script type="module" src="/src/audiolab.ts"></script>
+  </body>
+</html>

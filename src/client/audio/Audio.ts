@@ -1,240 +1,298 @@
+import { Ambience } from './Ambience';
+import { Announcer } from './Announcer';
+import { AudioEngine, type Occluder, type Vec3 } from './AudioEngine';
+import { EngineSound, RemoteEngines, type ViewMode } from './EngineSound';
+import { AlertMonitor, DEFAULT_MIX, MusicDirector, type AlertId, type MixLevels } from './mix';
+import { Music } from './Music';
+import type { SoundId } from './recipes';
+
 /**
- * Procedural sound effects with WebAudio: no asset files needed.
- * Sounds are attenuated by distance to the listener.
+ * The game's sound, as the rest of the client sees it: one object fed with
+ * the frame's state (frame) and with gameplay events (shot, hit, explosion…).
+ * Everything is procedural (see recipes.ts): there is no audio file.
  */
+
+export type ShipClass = 'falcon' | 'warden' | 'raider' | 'marauder';
+
+export interface OwnShipAudio {
+  throttle: number;
+  speed: number;
+  boosting: boolean;
+  thrusters: number;
+  energy: number;
+  shield: number;
+  shieldMax: number;
+  hull: number;
+  hullMax: number;
+  weaponsLocked: boolean;
+  mining: number;
+}
+
+export interface AudioFrame {
+  dt: number;
+  listener: { pos: Vec3; fwd: Vec3; up: Vec3 };
+  docked: boolean;
+  /** Our ship in space, null when docked or destroyed. */
+  me: OwnShipAudio | null;
+  view: ViewMode;
+  stationDist: number;
+  asteroidDist: number;
+  speed: number;
+  hostilesFar: number;
+  hostilesNear: number;
+  nearestHostile: number;
+  boss: boolean;
+  others: { id: number; at: Vec3; raider: boolean; throttle: number; boosting: boolean }[];
+}
+
+export type UiSound = 'click' | 'tab' | 'confirm' | 'deny' | 'notify' | 'lock' | 'comms' | 'mission' | 'repair' | 'upgrade' | 'purchase';
+
+const LASER: Record<ShipClass, SoundId> = { falcon: 'laser_falcon', warden: 'laser_warden', raider: 'laser_raider', marauder: 'laser_marauder' };
+const EXPLOSION: Record<ShipClass, SoundId> = { falcon: 'explosion_medium', warden: 'explosion_medium', raider: 'explosion_small', marauder: 'explosion_large' };
+/** Alerts also written on screen (the others already have their own notice). */
+const SHOWN: AlertId[] = ['shieldsLow', 'shieldsDown', 'hullDamaged', 'hullCritical', 'energyLow', 'proximity'];
+
 export class GameAudio {
-  private ctx: AudioContext | null = null;
-  private master!: GainNode;
-  private noise!: AudioBuffer;
-  private engine?: { osc: OscillatorNode; osc2: OscillatorNode; gain: GainNode; filter: BiquadFilterNode };
-  private beam?: { gain: GainNode; filter: BiquadFilterNode; osc: OscillatorNode };
-  private lastLaser = 0;
+  readonly engine = new AudioEngine();
+  private ship: EngineSound | null = null;
+  private remotes: RemoteEngines | null = null;
+  private amb: Ambience | null = null;
+  private music: Music | null = null;
+  readonly announcer: Announcer | null = null;
+  private director = new MusicDirector();
+  private alerts = new AlertMonitor();
+  private sinceCombat = 99;
+  private hadShip = false;
   muted = false;
   volume = 0.7;
-  private paused = false;
+  mix: MixLevels = { ...DEFAULT_MIX };
+  voice = false;
+  /** Where alert lines are written (the HUD). */
+  onAlertText: ((text: string, priority: number) => void) | null = null;
 
+  /** Creates the audio graph (silent until a gesture unlocks it). Safe to call many times. */
   start() {
-    if (this.ctx) return;
-    try {
-      this.ctx = new AudioContext();
-    } catch {
-      return;
+    if (!this.engine.init()) return;
+    this.engine.unlock();
+    this.apply();
+  }
+
+  /** From any click or key press: browsers only let sound start after one. */
+  unlock() {
+    this.start();
+  }
+
+  setOccluders(list: Occluder[]) {
+    this.engine.occluders = list;
+  }
+
+  setVolume(v: number, muted: boolean, mix?: MixLevels, voice?: boolean) {
+    this.volume = v;
+    this.muted = muted;
+    if (mix) this.mix = { ...mix };
+    if (voice !== undefined) this.voice = voice;
+    this.apply();
+  }
+
+  private apply() {
+    this.engine.setLevels(this.volume, this.muted, this.mix);
+    if (this.announcer) {
+      this.announcer.voice = this.voice;
+      this.announcer.volume = this.muted ? 0 : this.volume * this.mix.voice;
     }
-    const ctx = this.ctx;
-    this.master = ctx.createGain();
-    this.master.gain.value = this.effectiveGain();
-    const comp = ctx.createDynamicsCompressor();
-    this.master.connect(comp).connect(ctx.destination);
-    this.noise = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
-    const d = this.noise.getChannelData(0);
-    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
-
-    // Engine drone
-    const osc = ctx.createOscillator();
-    osc.type = 'sawtooth';
-    osc.frequency.value = 45;
-    const osc2 = ctx.createOscillator();
-    osc2.type = 'triangle';
-    osc2.frequency.value = 90.7;
-    const filter = ctx.createBiquadFilter();
-    filter.type = 'lowpass';
-    filter.frequency.value = 300;
-    const gain = ctx.createGain();
-    gain.gain.value = 0;
-    osc.connect(filter);
-    osc2.connect(filter);
-    filter.connect(gain).connect(this.master);
-    osc.start();
-    osc2.start();
-    this.engine = { osc, osc2, gain, filter };
-
-    // Mining beam: a buzzing hum over grinding noise, silent until used.
-    const hum = ctx.createOscillator();
-    hum.type = 'square';
-    hum.frequency.value = 118;
-    const grind = ctx.createBufferSource();
-    grind.buffer = this.noise;
-    grind.loop = true;
-    const bf = ctx.createBiquadFilter();
-    bf.type = 'bandpass';
-    bf.frequency.value = 900;
-    bf.Q.value = 1.2;
-    const humGain = ctx.createGain();
-    humGain.gain.value = 0.12;
-    const bg = ctx.createGain();
-    bg.gain.value = 0;
-    hum.connect(humGain).connect(bf);
-    grind.connect(bf);
-    bf.connect(bg).connect(this.master);
-    hum.start();
-    grind.start();
-    this.beam = { gain: bg, filter: bf, osc: hum };
-  }
-
-  private effectiveGain() {
-    return this.muted || this.paused ? 0 : this.volume * 0.7;
-  }
-
-  private applyGain() {
-    if (this.ctx) this.master.gain.setTargetAtTime(this.effectiveGain(), this.ctx.currentTime, 0.03);
   }
 
   toggleMute() {
     this.muted = !this.muted;
-    this.applyGain();
+    this.apply();
   }
 
-  setVolume(v: number, muted: boolean) {
-    this.volume = v;
-    this.muted = muted;
-    this.applyGain();
-  }
-
-  /** Silences everything while the pause menu is open. */
   setPaused(p: boolean) {
-    this.paused = p;
-    this.applyGain();
+    this.engine.setPaused(p);
+    if (p) this.announcer?.clear();
   }
 
-  private vol(distance: number) {
-    return 1 / (1 + (distance / 250) ** 2);
+  setHidden(h: boolean) {
+    this.engine.setHidden(h);
   }
 
-  engineUpdate(throttle: number, boosting: boolean) {
-    if (!this.ctx || !this.engine) return;
-    const t = this.ctx.currentTime;
+  setBlurred(b: boolean) {
+    this.engine.setBlurred(b);
+  }
+
+  /** Builds the layers once the sounds they use are rendered. */
+  private build() {
     const e = this.engine;
-    const p = Math.max(0, throttle) + (boosting ? 0.8 : 0);
-    e.osc.frequency.setTargetAtTime(40 + p * 35, t, 0.2);
-    e.osc2.frequency.setTargetAtTime(80 + p * 70, t, 0.2);
-    e.filter.frequency.setTargetAtTime(180 + p * 900, t, 0.2);
-    e.gain.gain.setTargetAtTime(0.05 + p * 0.07, t, 0.3);
+    if (!e.ctx || !e.has('loop_union') || !e.has('loop_raider')) return false;
+    this.ship = new EngineSound(e);
+    this.remotes = new RemoteEngines(e);
+    this.amb = new Ambience(e);
+    this.music = new Music(e);
+    (this as { announcer: Announcer | null }).announcer = new Announcer(e, (t, p, id) => {
+      if (SHOWN.includes(id)) this.onAlertText?.(t, p);
+    });
+    this.apply();
+    return true;
   }
 
-  /** `level`: 0 silent, 1 our own beam biting into a rock. */
-  miningUpdate(level: number) {
-    if (!this.ctx || !this.beam) return;
-    const t = this.ctx.currentTime;
-    this.beam.gain.gain.setTargetAtTime(level * 0.09, t, level > 0 ? 0.06 : 0.15);
-    this.beam.filter.frequency.setTargetAtTime(700 + level * 500 + Math.random() * 150, t, 0.1);
+  /** Every frame, also in menus (music) and at the station. */
+  frame(f: AudioFrame) {
+    const e = this.engine;
+    if (!e.ctx) return;
+    if (!this.ship && !this.build()) return;
+    if (e.ctx.state !== 'running') return;
+    e.setListener(f.listener.pos, f.listener.fwd, f.listener.up);
+    this.sinceCombat += f.dt;
+    const me = f.me;
+
+    this.ship!.update({
+      dt: f.dt,
+      present: !!me,
+      throttle: me?.throttle ?? 0,
+      speed: me?.speed ?? 0,
+      boosting: me?.boosting ?? false,
+      thrusters: me?.thrusters ?? 0,
+      energy: me?.energy ?? 1,
+      hull: me ? me.hull / me.hullMax : 1,
+      view: f.view,
+      mining: me?.mining ?? 0,
+    });
+    this.remotes!.update(f.docked ? [] : f.others);
+    this.amb!.update({
+      dt: f.dt,
+      docked: f.docked,
+      flying: !!me,
+      stationDist: f.stationDist,
+      asteroidDist: f.asteroidDist,
+      speed: f.speed,
+      hostiles: f.hostilesFar,
+      nearestHostile: f.nearestHostile,
+    });
+
+    const state = this.director.update({
+      dt: f.dt,
+      docked: f.docked,
+      dead: !me && !f.docked && this.hadShip,
+      hostilesFar: f.hostilesFar,
+      hostilesNear: f.hostilesNear,
+      boss: f.boss,
+      sinceCombat: this.sinceCombat,
+      hull: me ? me.hull / me.hullMax : 1,
+    });
+    this.music!.update(state, this.director.intensity);
+
+    if (me) {
+      for (const id of this.alerts.update(me, e.now)) this.alert(id);
+      if (f.asteroidDist < 60 && f.speed > 80) {
+        const out: AlertId[] = [];
+        if (this.alerts.fire('proximity', e.now, out)) this.alert('proximity');
+      }
+    } else this.alerts.reset();
+    this.hadShip = !!me || (this.hadShip && !f.docked);
+    this.announcer!.update();
+    e.meter();
   }
 
-  laser(distance: number, hostile: boolean) {
-    if (!this.ctx) return;
-    const v = this.vol(distance);
-    if (v < 0.02) return;
-    const ctx = this.ctx;
-    const t = ctx.currentTime;
-    if (t - this.lastLaser < 0.03 && distance > 30) return;
-    this.lastLaser = t;
-    const osc = ctx.createOscillator();
-    osc.type = 'square';
-    const f0 = hostile ? 900 : 1500;
-    osc.frequency.setValueAtTime(f0, t);
-    osc.frequency.exponentialRampToValueAtTime(f0 * 0.18, t + 0.12);
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(0.08 * v, t);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.14);
-    const f = ctx.createBiquadFilter();
-    f.type = 'bandpass';
-    f.frequency.value = 1800;
-    osc.connect(f).connect(g).connect(this.master);
-    osc.start(t);
-    osc.stop(t + 0.15);
+  /** Menus before a flight: only the music, calm. */
+  menuFrame(dt: number) {
+    const e = this.engine;
+    if (!e.ctx) return;
+    if (!this.ship && !this.build()) return;
+    if (e.ctx.state !== 'running') return;
+    this.ship!.update({ dt, present: false, throttle: 0, speed: 0, boosting: false, thrusters: 0, energy: 1, hull: 1, view: 'chase', mining: 0 });
+    this.remotes!.update([]);
+    this.music!.update('calm', 0);
   }
 
-  private noiseBurst(distance: number, dur: number, freq: number, gain: number, q = 0.7) {
-    if (!this.ctx) return;
-    const v = this.vol(distance);
-    if (v < 0.01) return;
-    const ctx = this.ctx;
-    const t = ctx.currentTime;
-    const src = ctx.createBufferSource();
-    src.buffer = this.noise;
-    const f = ctx.createBiquadFilter();
-    f.type = 'lowpass';
-    f.frequency.setValueAtTime(freq, t);
-    f.frequency.exponentialRampToValueAtTime(Math.max(40, freq * 0.1), t + dur);
-    f.Q.value = q;
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(gain * v, t);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    src.connect(f).connect(g).connect(this.master);
-    src.start(t, Math.random());
-    src.stop(t + dur);
+  alert(id: AlertId) {
+    const sys = ({ shieldsDown: 'shieldDown', shieldsBack: 'shieldUp', energyLow: 'weaponsDown', weaponsReady: 'weaponsReady' } as const)[id as string];
+    if (sys) this.systems(sys);
+    this.announcer?.say(id);
   }
 
-  explosion(distance: number, big: boolean) {
-    this.noiseBurst(distance * 0.5, big ? 2.6 : 1.6, big ? 1800 : 1200, big ? 1.0 : 0.7);
-    if (!this.ctx) return;
-    // sub-bass thump
-    const ctx = this.ctx;
-    const t = ctx.currentTime;
-    const v = this.vol(distance * 0.5);
-    const osc = ctx.createOscillator();
-    osc.frequency.setValueAtTime(90, t);
-    osc.frequency.exponentialRampToValueAtTime(28, t + 0.8);
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(0.6 * v, t);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.9);
-    osc.connect(g).connect(this.master);
-    osc.start(t);
-    osc.stop(t + 1);
-  }
+  // ------------------------------------------------------------ gameplay events
 
-  shieldHit(distance: number) {
-    this.noiseBurst(distance, 0.25, 5000, 0.25, 4);
-  }
-
-  hullHit(distance: number) {
-    this.noiseBurst(distance, 0.35, 900, 0.5, 1.5);
-  }
-
-  hitMarker() {
-    if (!this.ctx) return;
-    const ctx = this.ctx;
-    const t = ctx.currentTime;
-    const osc = ctx.createOscillator();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(2400, t);
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(0.03, t);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
-    osc.connect(g).connect(this.master);
-    osc.start(t);
-    osc.stop(t + 0.06);
-  }
-
-  alarm() {
-    if (!this.ctx) return;
-    const ctx = this.ctx;
-    const t = ctx.currentTime;
-    for (let i = 0; i < 2; i++) {
-      const osc = ctx.createOscillator();
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(880, t + i * 0.18);
-      const g = ctx.createGain();
-      g.gain.setValueAtTime(0.0001, t + i * 0.18);
-      g.gain.linearRampToValueAtTime(0.06, t + i * 0.18 + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + i * 0.18 + 0.15);
-      osc.connect(g).connect(this.master);
-      osc.start(t + i * 0.18);
-      osc.stop(t + i * 0.18 + 0.16);
+  /** A bolt fired by a ship of class `cls` at `at`; `own` when it is ours. */
+  shot(at: Vec3, cls: ShipClass, own: boolean) {
+    const e = this.engine;
+    if (own) {
+      this.sinceCombat = 0;
+      // Our guns are bolted to the hull: heard through it, centred and full.
+      e.play(LASER[cls], { bus: 'weapons', gain: 0.55, importance: 3 });
+      return;
     }
+    e.play(LASER[cls], { at, bus: 'weapons', gain: cls === 'marauder' ? 0.9 : 0.7, ref: 90, range: 1600, importance: cls === 'marauder' ? 2 : 1 });
   }
 
-  ui() {
-    if (!this.ctx) return;
-    const ctx = this.ctx;
-    const t = ctx.currentTime;
-    const osc = ctx.createOscillator();
-    osc.frequency.setValueAtTime(660, t);
-    osc.frequency.setValueAtTime(990, t + 0.06);
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(0.04, t);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
-    osc.connect(g).connect(this.master);
-    osc.start(t);
-    osc.stop(t + 0.16);
+  /** A bolt hitting a shield (`shield`) or a hull at `at`; `onMe` when we are the target. */
+  hit(at: Vec3, shield: boolean, onMe: boolean, damage: number) {
+    const e = this.engine;
+    if (onMe) {
+      this.sinceCombat = 0;
+      const g = Math.min(1, 0.5 + damage / 40);
+      e.play(shield ? 'shield_hit' : 'hull_hit_own', { bus: 'impacts', gain: g, importance: 4, rate: shield ? 1 : 0.9 + Math.random() * 0.2 });
+      if (!shield) e.duck('music', 0.7, 0.15, 0.4);
+      return;
+    }
+    e.play(shield ? 'shield_hit' : 'hull_hit', { at, bus: 'impacts', gain: 0.75, ref: 80, range: 1400 });
+  }
+
+  /** Our bolt landed: a short tick, separate from the impact itself. */
+  hitMarker(shield: boolean) {
+    this.sinceCombat = 0;
+    this.engine.play('ui_lock', { bus: 'ui', gain: shield ? 0.25 : 0.4, rate: shield ? 1.25 : 1, category: 'marker', importance: 2 });
+  }
+
+  /** A ship destroyed: size follows its class; our own death is its own sound. */
+  explosion(at: Vec3, cls: ShipClass, own: boolean, byMe: boolean) {
+    const e = this.engine;
+    if (own) {
+      e.play('death_own', { bus: 'explosions', gain: 1, importance: 5 });
+      e.duck('fx', 0.35, 1.2, 2);
+      e.duck('music', 0.25, 1.5, 3);
+      return;
+    }
+    const d = e.distanceTo(at);
+    const big = cls === 'marauder';
+    e.play(EXPLOSION[cls], { at, bus: 'explosions', gain: 1, ref: big ? 260 : 160, range: big ? 4000 : 2600, importance: big ? 4 : 3 });
+    // Close enough to feel: the rest of the mix makes room for a moment.
+    if (d < (big ? 700 : 350)) e.duck('fx', big ? 0.5 : 0.7, 0.25, 0.8);
+    if (byMe) this.alert('targetDestroyed');
+  }
+
+  /** Our ship (or another, at `at`) scraping a rock or a station. */
+  collision(at: Vec3, damage: number, onMe: boolean) {
+    const g = Math.min(1, 0.3 + damage / 25);
+    if (onMe) {
+      this.sinceCombat = Math.min(this.sinceCombat, 4);
+      this.engine.play('collision', { bus: 'impacts', gain: g, importance: 4 });
+    } else this.engine.play('collision', { at, bus: 'impacts', gain: g * 0.8, ref: 60, range: 900 });
+  }
+
+  /** Our shield or weapons changed state (driven by AlertMonitor too, these are the system sounds). */
+  systems(kind: 'shieldDown' | 'shieldUp' | 'weaponsDown' | 'weaponsReady') {
+    const id = ({ shieldDown: 'shield_down', shieldUp: 'shield_up', weaponsDown: 'weapons_down', weaponsReady: 'weapons_ready' } as const)[kind];
+    this.engine.play(id, { bus: 'impacts', gain: 0.7, importance: 3 });
+  }
+
+  /** Interface sound. */
+  ui(kind: UiSound = 'notify') {
+    this.engine.play(`ui_${kind}` as SoundId, { bus: kind === 'comms' ? 'comms' : 'ui', gain: 0.8, importance: 2, category: 'ui' });
+  }
+
+  /** A warning notice (and the repeating hull alarm). */
+  alarm() {
+    this.engine.play('alert_2', { bus: 'voice', gain: 0.6, importance: 3, category: 'voice' });
+  }
+
+  /** Diagnostics for tests and the ?diag overlay. */
+  report() {
+    return {
+      ...this.engine.report(),
+      music: this.music?.current ?? null,
+      musicNodes: this.music?.live ?? 0,
+      remotes: this.remotes?.count ?? 0,
+      director: this.director.state,
+    };
   }
 }

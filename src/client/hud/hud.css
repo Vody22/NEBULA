@@ -321,6 +321,9 @@ body.touch #menu .quickhelp { display: none; }
 #menu .opts { display: grid; gap: 16px; text-align: left; font-size: 17px; }
 #menu .opt { display: grid; grid-template-columns: 1fr minmax(120px, 2fr) 56px; align-items: center; gap: 12px; }
 #menu .opt.check { grid-template-columns: auto 1fr; cursor: pointer; }
+#menu .opt.mixrow { margin-top: -6px; }
+#menu .opt.mixrow > span { padding-left: 16px; opacity: 0.85; font-size: 15px; }
+#menu .opts-scroll { max-height: max(180px, calc(100vh - 270px)); overflow-y: auto; padding-right: 6px; }
 #menu .opt input[type='checkbox'] { width: 20px; height: 20px; accent-color: #5cc8ff; }
 #menu output { font-family: var(--font-display); font-size: 13px; }
 

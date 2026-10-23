@@ -10,7 +10,7 @@ import { StaticGrid } from '../shared/sim/spatialGrid';
 import { neutralInput, type Ship, type ShipClassId, type ShipInput, type SimEvent } from '../shared/sim/types';
 import { TICK_DT, TICK_RATE } from '../shared/sim/world';
 import { buildZone, DOCK_MAX_SPEED, type ZoneDef } from '../shared/sim/zone';
-import { GameAudio } from './audio/Audio';
+import { GameAudio, type AudioFrame } from './audio/Audio';
 import { Benchmark, type BenchCallbacks } from './bench/Benchmark';
 import { ChaseCamera } from './camera/ChaseCamera';
 import { isHostile } from './hostility';
@@ -51,6 +51,8 @@ const _fwd = new THREE.Vector3();
 const _end = new THREE.Vector3();
 const _normal = new THREE.Vector3();
 const _camTarget = new THREE.Vector3();
+const _audioFwd = new THREE.Vector3();
+const _audioUp = new THREE.Vector3();
 /** Image-based light from the baked nebula: reflections and a hint of colour, not a fill light. */
 const ENVIRONMENT_INTENSITY = 0.55;
 export const DEFAULT_SECTOR_SEED = 1337;
@@ -171,6 +173,7 @@ export class Game {
   readonly debug = { frames: 0, ships: 0, bolts: 0, events: 0, explosions: 0, myShots: 0, myHits: 0, myKills: 0, hitsTaken: 0 };
 
   constructor(canvas: HTMLCanvasElement, private opts: GameOptions, settings: Settings) {
+    this.audio.onAlertText = (text, priority) => this.hud.notice(text, priority >= 3 ? 'warn' : 'info');
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
     this.quality = QUALITY[opts.quality];
     this.maxPixelRatio = Math.min(window.devicePixelRatio, this.quality.maxPixelRatio);
@@ -266,7 +269,7 @@ export class Game {
     if (!this.input.touchMode) this.input.requestLock();
   }
 
-  private dockChanged(station: StationId | null) {
+  private dockChanged(station: StationId | null, was: StationId | null = null) {
     if (station) {
       const def = this.zone?.stations.find((s) => s.id === station);
       this.stationPanel.show(def?.name ?? station);
@@ -275,14 +278,27 @@ export class Game {
       if (document.pointerLockElement) document.exitPointerLock();
       this.input.releaseKeys();
       this.input.input.throttle = 0;
-      this.audio.ui();
+      this.audio.alert('docked');
     } else {
       this.stationPanel.hide();
       this.disposeParked();
       this.input.centerCursor();
       // Leave the hangar at a crawl rather than braking to a stop at the mouth.
       this.input.input.throttle = 0.15;
+      if (was !== null) this.audio.ui('confirm');
     }
+  }
+
+  /** What changed in our account, as the station and contract sounds. */
+  private pilotSounds(a: PilotState, b: PilotState) {
+    const done = a.missions.some((m) => !b.missions.some((n) => n.id === m.id)) && b.credits > a.credits;
+    const level = (p: PilotState) => p.fleet.reduce((n, f) => n + Object.values(f.mods).reduce((x, y) => x + y, 0), 0);
+    if (done) this.audio.alert('contractDone');
+    else if (b.missions.length > a.missions.length) this.audio.ui('mission');
+    else if (b.fleet.length > a.fleet.length) this.audio.ui('purchase');
+    else if (level(b) > level(a)) this.audio.ui('upgrade');
+    else if (b.docked && a.docked && b.hull !== null && a.hull !== null && b.hull > a.hull) this.audio.ui('repair');
+    else if (b.docked && a.docked && (b.credits !== a.credits || cargoTotal(b.cargo) !== cargoTotal(a.cargo))) this.audio.ui('confirm');
   }
 
   /** The most recent sell price of every item at the other stations. */
@@ -513,6 +529,8 @@ export class Game {
       this.stationViews.set(def.id, view);
       if (view !== this.station) this.worldRoot.add(view.group);
     }
+    // Stations, planets and the big rocks hide the sounds behind them.
+    this.audio.setOccluders(zone.colliders.filter((c) => c.kind !== 'asteroid' || c.radius > 80));
     this.asteroids = new Asteroids(zone.asteroids, zone.beltCenter);
     this.asteroids.setDetail(this.quality.level !== 'low');
     this.worldRoot.add(this.planets.group, this.station.group, this.asteroids.group);
@@ -553,6 +571,7 @@ export class Game {
         break;
       case 'chat':
         this.callbacks.onChat?.(m.line);
+        if (m.line.from !== this.myName) this.audio.ui('comms');
         if (m.line.from === null) this.hud.notice(m.line.text, 'info');
         break;
       case 'chatHistory':
@@ -570,14 +589,18 @@ export class Game {
       case 'notice':
         this.hud.notice(m.text, m.tone);
         // A refused trade at the station is no alarm.
-        if (m.tone === 'warn' && !this.docked) this.audio.alarm();
+        if (m.tone === 'warn') {
+          if (this.docked) this.audio.ui('deny');
+          else this.audio.alarm();
+        } else if (m.tone === 'good') this.audio.ui('notify');
         break;
       case 'pilot': {
         const was = this.pilot?.docked ?? null;
+        if (this.pilot) this.pilotSounds(this.pilot, m.pilot);
         if (cargoTotal(m.pilot.cargo) > (this.pilot ? cargoTotal(this.pilot.cargo) : 0)) this.mineProgress = 0;
         this.pilot = m.pilot;
         this.stationPanel.setPilot(m.pilot);
-        if (m.pilot.docked !== was) this.dockChanged(m.pilot.docked);
+        if (m.pilot.docked !== was) this.dockChanged(m.pilot.docked, was);
         break;
       }
       case 'market':
@@ -600,7 +623,7 @@ export class Game {
     this.input.bindings = s.bindings;
     this.input.invertY = s.invertY;
     this.input.sensitivity = s.sensitivity;
-    this.audio.setVolume(s.volume, s.muted);
+    this.audio.setVolume(s.volume, s.muted, s.mix, s.voice);
     this.hud.setBindings(s.bindings);
     const dock = keyLabel(s.bindings.dock, s.layout);
     this.hud.setKeyLabels({ dock, mine: keyLabel(s.bindings.mine, s.layout) });
@@ -680,6 +703,8 @@ export class Game {
     transport?.update(dt);
     const latest = this.buffer.latest;
     if (!latest || !this.zone) {
+      // Title menu (nothing to fly yet): only the calm music.
+      this.audio.menuFrame(dt);
       this.attractCamera(dt);
       this.renderScene(0);
       return;
@@ -753,7 +778,6 @@ export class Game {
       }
       this.cam.update(dt, me.position, me.rotation, me.snap.boosting, me.velocity, this.input.cursor, statsOfPacked(me.snap.classId, me.snap.u).radius / 9);
       this.lastMe = me;
-      this.audio.engineUpdate(Math.max(0, me.snap.throttle), me.snap.boosting);
       const hullFrac = me.snap.hull / statsOfPacked(me.snap.classId, me.snap.u).hull;
       this.alarmIn -= dt;
       if (hullFrac < 0.25 && this.alarmIn <= 0) {
@@ -762,10 +786,8 @@ export class Game {
       }
       this.autoTarget(me, ships);
     } else if (this.docked) {
-      this.audio.engineUpdate(0, false);
       this.dockedCamera(dt);
     } else {
-      this.audio.engineUpdate(0, false);
       const c = this.cam.camera;
       if (this.lastMe) {
         // Slow orbit around the destruction site.
@@ -777,7 +799,8 @@ export class Game {
     }
     if (this.targetId !== null && !ships.has(this.targetId)) this.targetId = null;
     const mining = me ? this.miningInfo(me, input, dt) : null;
-    this.audio.miningUpdate(mining?.state === 'active' ? 1 : 0);
+    if (this.running) this.audioFrame(dt, me, ships, input, mining?.state === 'active' ? 1 : 0);
+    else this.audio.menuFrame(dt);
     const dock = me ? this.dockGuide(me) : null;
     this.dockable = !!dock?.inZone;
 
@@ -987,7 +1010,7 @@ export class Game {
           this.hud.fired();
         }
         this.effects.muzzle(_p, new THREE.Vector3(...e.vel).multiplyScalar(0.05), e.faction === 'union' ? UNION_BOLT : RAIDER_BOLT, e.shooter === this.myShipId);
-        this.audio.laser(_p.distanceTo(camPos), e.faction !== 'union');
+        this.audio.shot(_p, this.views.get(e.shooter)?.classId ?? (e.faction === 'union' ? 'falcon' : 'raider'), e.shooter === this.myShipId);
         break;
       }
       case 'hit': {
@@ -997,12 +1020,11 @@ export class Game {
         if (e.shield) {
           view?.shieldHit(_p, this.time);
           this.effects.shieldSparks(_p, view && (view.classId === 'falcon' || view.classId === 'warden') ? new THREE.Color(0.6, 1.6, 4) : new THREE.Color(4, 1.2, 0.5));
-          this.audio.shieldHit(_p.distanceTo(camPos));
         } else {
           this.effects.hullHit(_p);
           view?.hullHit(_p);
-          this.audio.hullHit(_p.distanceTo(camPos));
         }
+        this.audio.hit(_p, e.shield, e.target === this.myShipId, e.damage);
         if (e.target === this.myShipId) {
           this.debug.hitsTaken++;
           this.hud.damageTaken(e.damage, e.shield);
@@ -1012,7 +1034,7 @@ export class Game {
         if (e.attacker === this.myShipId) {
           this.debug.myHits++;
           this.hud.hitConfirm(e.shield);
-          this.audio.hitMarker();
+          this.audio.hitMarker(e.shield);
           if (this.targetId === null) this.targetId = e.target;
         }
         break;
@@ -1027,6 +1049,7 @@ export class Game {
           this.hud.damageTaken(e.damage, false);
         }
         this.effects.hullHit(_p.set(...e.pos));
+        this.audio.collision(_p, e.damage, e.ship === this.myShipId);
         break;
       case 'destroyed': {
         _p.set(...e.pos);
@@ -1035,7 +1058,7 @@ export class Game {
         this.effects.explosion(_p, big ? 1.8 : 1, vel);
         this.debug.explosions++;
         const d = _p.distanceTo(camPos);
-        this.audio.explosion(d, big);
+        this.audio.explosion(_p, e.classId, e.ship === this.myShipId, e.by !== null && e.by === this.myShipId);
         this.cam.addShake(Math.max(0, 1 - d / 900) * (big ? 1.2 : 0.8));
         if (e.by !== null && e.by === this.myShipId) {
           this.debug.myKills++;
@@ -1087,6 +1110,73 @@ export class Game {
   }
 
   /** What the beam does, or would do, for the HUD. */
+  /** Feeds the sound with this frame's state: listener, our ship, the surroundings, the threats. */
+  private audioFrame(dt: number, me: InterpolatedShip | null, ships: Map<number, InterpolatedShip>, input: ShipInput, mining: number) {
+    const cam = this.cam.camera;
+    const pos = cam.position;
+    _audioFwd.set(0, 0, -1).applyQuaternion(cam.quaternion);
+    _audioUp.set(0, 1, 0).applyQuaternion(cam.quaternion);
+    const zone = this.zone!;
+    const from = me ? me.position : pos;
+    let stationDist = Infinity;
+    for (const st of zone.stations) stationDist = Math.min(stationDist, Math.max(0, from.distanceTo(st.position) - Math.max(st.coreRadius, st.ringRadius)));
+    let asteroidDist = Infinity;
+    for (const a of zone.asteroids) {
+      const d = from.distanceTo(a.position) - a.radius;
+      if (d < asteroidDist) asteroidDist = d;
+    }
+    let hostilesFar = 0;
+    let hostilesNear = 0;
+    let nearestHostile = Infinity;
+    let boss = false;
+    const others: AudioFrame['others'] = [];
+    for (const s of ships.values()) {
+      if (s.snap.id === this.myShipId) continue;
+      const d = s.position.distanceTo(from);
+      if (me && isHostile(me.snap, s.snap) && d < 3000) {
+        hostilesFar++;
+        nearestHostile = Math.min(nearestHostile, d);
+        if (d < 1200) {
+          hostilesNear++;
+          if (s.snap.classId === 'marauder') boss = true;
+        }
+      }
+      if (d < 700) others.push({ id: s.snap.id, at: s.position, raider: s.snap.faction === 'raiders', throttle: s.snap.throttle, boosting: s.snap.boosting });
+    }
+    let own: AudioFrame['me'] = null;
+    if (me) {
+      const cls = statsOfPacked(me.snap.classId, me.snap.u);
+      own = {
+        throttle: me.snap.throttle,
+        speed: me.velocity.length() / cls.maxSpeed,
+        boosting: me.snap.boosting,
+        thrusters: Math.min(1, Math.abs(input.strafeX) + Math.abs(input.strafeY) + (Math.abs(input.pitch) + Math.abs(input.yaw) + Math.abs(input.roll)) * 0.5),
+        energy: me.snap.energy / cls.energy,
+        shield: me.snap.shield,
+        shieldMax: cls.shield,
+        hull: me.snap.hull,
+        hullMax: cls.hull,
+        weaponsLocked: me.snap.weaponsLocked,
+        mining,
+      };
+    }
+    this.audio.frame({
+      dt,
+      listener: { pos, fwd: _audioFwd, up: _audioUp },
+      docked: this.docked,
+      me: own,
+      view: this.cam.mode,
+      stationDist,
+      asteroidDist,
+      speed: me ? me.velocity.length() : 0,
+      hostilesFar,
+      hostilesNear,
+      nearestHostile,
+      boss,
+      others,
+    });
+  }
+
   private miningInfo(me: InterpolatedShip, input: ShipInput, dt: number): MiningInfo | null {
     const zone = this.zone!;
     const active = me.snap.m !== undefined;
@@ -1181,7 +1271,7 @@ export class Game {
     if (!hostiles.length) return;
     const i = hostiles.findIndex((h) => h.id === this.targetId);
     this.targetId = hostiles[(i + 1) % hostiles.length].id;
-    this.audio.ui();
+    this.audio.ui('lock');
   }
 
   /** Without a target, lock onto the hostile closest to the gun line. */

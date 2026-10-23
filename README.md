@@ -73,7 +73,7 @@ Amarrage aux stations Aurora-7 et Ferro-9, minage d'astéroïdes, commerce avec 
 - **IA** : poursuite avec visée anticipée imparfaite, manœuvres d'évitement, choix de cible, évitement des obstacles.
 - **Effets** : bloom HDR, explosions (boule de feu, étincelles, onde de choc, débris, fumée), traînées, poussière spatiale qui donne la sensation de vitesse, tremblements de caméra, aberration chromatique.
 - **HUD** : vitesse, poussée, assistance, boucliers, coque, énergie, radar 3D, marqueurs, cible avec barres de vie, flèche hors écran, notifications.
-- **Son** : effets synthétisés en WebAudio (aucun fichier audio).
+- **Son** : moteur en couches, armes par classe, impacts, explosions par taille, ambiances, musique adaptative générative, annonces de bord, réglages par groupe (musique, effets, ambiances, interface, annonces). Tout est synthétisé en Web Audio, sans fichier audio : voir [docs/AUDIO.md](docs/AUDIO.md).
 
 ![Combat](docs/img/combat.png)
 
@@ -101,7 +101,7 @@ Les touches correspondent à des positions physiques : sur un clavier AZERTY, `W
 | `Tab` (maintenir) | Liste des pilotes |
 | `Échap` | Pause : reprendre, commandes, options et son |
 
-Toutes les touches se réaffectent dans **Échap → Commandes** (affichage AZERTY ou QWERTY au choix). Les réglages (touches, volume, sensibilité, inversion verticale) sont enregistrés dans le navigateur.
+Toutes les touches se réaffectent dans **Échap → Commandes** (affichage AZERTY ou QWERTY au choix). Les réglages (touches, volumes, sensibilité, inversion verticale) sont enregistrés dans le navigateur.
 
 ### Téléphone et tablette
 

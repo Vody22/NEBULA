@@ -67,6 +67,7 @@ Possède le `World`, les sessions joueurs, les pilotes IA, le directeur des raid
   - Il peut simuler de la latence (`?lag=120&jitter=20`).
 - `Predictor` : le vaisseau du joueur est simulé tout de suite, avec la même physique et les mêmes collisions que le serveur. À chaque snapshot, on repart de l'état serveur et on rejoue les entrées non encore acquittées. Les petits écarts sont lissés à l'écran au lieu de faire « sauter » le vaisseau.
 - `SnapshotBuffer` affiche les autres vaisseaux légèrement dans le passé et interpole entre deux snapshots : 1,5 tick en solo, 110 ms en ligne pour 20 Hz plus la gigue. Les événements sont joués quand l'horloge de rendu atteint leur tick. Les tirs du joueur partent de la position prédite de son vaisseau.
+- `audio/` : le son, entièrement procédural (Web Audio). `Game.ts` donne à `GameAudio` l'état de chaque image et les événements de jeu. Le son ne lit que ce que le client affiche déjà, sans rien envoyer au serveur. Détails dans [AUDIO.md](AUDIO.md).
 - Le rendu n'a aucun état autoritaire : on peut le remplacer ou le faire tourner dans une application de bureau (Electron ou Tauri) sans toucher à la simulation.
 
 ## Limites connues (v0.4)
