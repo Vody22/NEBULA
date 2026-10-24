@@ -12,7 +12,7 @@ Objectif : ouvrir l'univers au-delà d'Aurora. Un deuxième secteur, Kepler, à 
   - une ceinture plus dense (600 rochers au lieu de 520), dont deux sur cinq sont métalliques ;
   - des raids pirates un cran plus durs dès le premier.
 - **Le saut** (`J`, ou le bouton **SAUT** sur écran tactile) :
-  - sous le nom du secteur, une ligne dit si le saut est possible : « J saut hyperspatial vers Kepler », « à plus de 1,5 km des stations », ou le temps de recharge du réacteur ;
+  - sous le nom du secteur, une ligne dit si le saut est possible : « J saut hyperspatial vers Kepler », « à plus de 1,5 km des stations », ou le temps de recharge du réacteur (sur écran tactile, cette ligne est masquée faute de place : le bouton SAUT n'apparaît que quand le saut est possible) ;
   - pendant la charge (6 s), un compte à rebours au centre de l'écran, les bords de l'écran qui se resserrent en bleu, un sifflement qui monte et un bip de plus en plus rapide ;
   - au saut : un éclair blanc-bleu qui couvre le changement de secteur, puis l'arrivée face à la station du secteur, à 2,6 km ;
   - `J` à nouveau pendant la charge l'annule ;
