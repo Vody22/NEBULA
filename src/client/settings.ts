@@ -31,7 +31,8 @@ export type Action =
   | 'pvp'
   | 'scoreboard'
   | 'dock'
-  | 'mine';
+  | 'mine'
+  | 'jump';
 
 export type KeyboardLayout = 'auto' | 'azerty' | 'qwerty';
 
@@ -81,6 +82,7 @@ export const DEFAULT_BINDINGS: Record<Action, string> = {
   scoreboard: 'Tab',
   dock: 'KeyG',
   mine: 'KeyR',
+  jump: 'KeyJ',
 };
 
 export const ACTION_LABELS: Record<Action, string> = {
@@ -109,6 +111,7 @@ export const ACTION_LABELS: Record<Action, string> = {
   scoreboard: 'Liste des pilotes (maintenir)',
   dock: "S'amarrer / décoller",
   mine: 'Rayon de minage (maintenir, ou clic droit)',
+  jump: 'Saut hyperspatial (charger / annuler)',
 };
 
 /** Keys offered to an action added in an update whose default key the player already gave to another action. */

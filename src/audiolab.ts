@@ -163,6 +163,22 @@ const SCENES: Scene[] = [
       [6, (a) => a.explosion(v(0, 0, 0), 'falcon', true, false)],
     ],
   },
+  {
+    id: '12-saut-hyperspatial',
+    label: 'Saut hyperspatial : charge de 6 s, saut, arrivée, puis un autre vaisseau qui arrive',
+    duration: 14,
+    // As in the game: the charge follows the server countdown; the jump leaves a short gap without a ship.
+    frame: (t) =>
+      t < 1 ? { ship: { throttle: 0.4, speed: 0.4 } }
+      : t < 7 ? { ship: { throttle: 0.4, speed: 0.4 }, jumpCharge: (t - 1) / 6 }
+      : t < 7.6 ? { ship: null, jumping: true }
+      : { ship: { throttle: 0.2, speed: 0.5 } },
+    events: [
+      [7, (a) => a.jump('out')],
+      [7.6, (a) => a.jump('in')],
+      [11, (a) => a.jump('in', v(-260, 40, -700))],
+    ],
+  },
 ];
 
 const BASE_SHIP: OwnShipAudio = { throttle: 0, speed: 0, boosting: false, thrusters: 0, energy: 1, shield: 100, shieldMax: 100, hull: 100, hullMax: 100, weaponsLocked: false, mining: 0 };
@@ -197,6 +213,8 @@ function tick() {
     nearestHostile: o.nearestHostile ?? Infinity,
     boss: o.boss ?? false,
     others: o.others ?? [],
+    jumpCharge: o.jumpCharge ?? null,
+    jumping: o.jumping ?? false,
   };
   audio.frame(frame);
   if (c) {

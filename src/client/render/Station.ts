@@ -60,7 +60,9 @@ export class Station {
     const R = def.coreRadius;
 
     // ── Materials ──────────────────────────────────────────────────────
-    const sheet = makeShipSheet({ seed: 7, base: '#b4b9c0' });
+    // The Kepler sector's hubs: cooler, bluer plating and pale teal signal lines instead of amber.
+    const kepler = def.livery === 'kepler';
+    const sheet = makeShipSheet({ seed: 7, base: kepler ? '#a9b4c2' : '#b4b9c0' });
     const darkSheet = makeShipSheet({ seed: 9, base: '#5a5f67', dark: true, size: 512 });
     const windows = makeWindowTexture(41);
     const hullMat = new THREE.MeshStandardMaterial({
@@ -71,7 +73,7 @@ export class Station {
       metalnessMap: sheet.orm,
       roughness: 1,
       metalness: 1,
-      color: 0xd6d8dc,
+      color: kepler ? 0xcdd6e2 : 0xd6d8dc,
     });
     // Habitat sections: the same plating with lit windows.
     const habMat = hullMat.clone();
@@ -100,7 +102,7 @@ export class Station {
       envMapIntensity: 2,
     });
     // Emissive trims stay thin and dim: signals, not decoration.
-    const amber = new THREE.MeshBasicMaterial({ color: new THREE.Color(1.6, 0.95, 0.42), toneMapped: false });
+    const amber = new THREE.MeshBasicMaterial({ color: kepler ? new THREE.Color(0.5, 1.45, 1.3) : new THREE.Color(1.6, 0.95, 0.42), toneMapped: false });
     const cyan = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.35, 1.2, 2.0), toneMapped: false });
     // Hangar bay: matte deck plating lit by its own strips, no sky reflection.
     const hangarInside = new THREE.MeshStandardMaterial({

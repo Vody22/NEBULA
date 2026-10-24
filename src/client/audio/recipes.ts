@@ -709,6 +709,72 @@ function engineLoop(base: number, grit: number): Recipe {
   };
 }
 
+// ---------------------------------------------------------------- hyperspace (v0.7)
+
+/**
+ * A ship entering hyperspace, at the moment it goes (the rise before it is the
+ * live charge layer, Hyperdrive.ts): a short in-rush of air-like noise, the
+ * breach (a crack and a deep thump through the frame) and a glassy shimmer.
+ */
+const jumpOut: Recipe = {
+  duration: 2,
+  variants: 2,
+  build(c, out, r) {
+    const t = 0.005;
+    const rush = noise(c, t, 0.2, r);
+    const bp = filter(c, 'bandpass', 900, 1.1);
+    sweep(bp.frequency, t, 900, 7000, 0.16);
+    const rg = gain(c);
+    rg.gain.setValueAtTime(0.0001, t);
+    rg.gain.exponentialRampToValueAtTime(0.6, t + 0.14);
+    rg.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
+    rush.connect(bp).connect(rg).connect(out);
+    const at = t + 0.14;
+    const crack = noise(c, at, 0.09, r);
+    const cg = gain(c);
+    perc(cg, at, 0.9, 0.001, 0.08);
+    crack.connect(filter(c, 'highpass', 1400)).connect(cg).connect(out);
+    thump(c, out, at, 95, 24, 1, 1.1);
+    const body = noise(c, at, 1.2, r, true);
+    const lp = filter(c, 'lowpass', 1600, 1.2);
+    sweep(lp.frequency, at, 1600, 140, 1.1);
+    const bg = gain(c);
+    perc(bg, at, 0.55, 0.005, 1.1);
+    body.connect(lp).connect(drive(c, 2)).connect(bg).connect(out);
+    for (const f of [1320, 1980, 2790]) bell(c, out, at + 0.02, f * (0.98 + r() * 0.04), 0.07, 1.6, 1.41, 0.6);
+  },
+};
+
+/** Coming out of hyperspace: a fast reversed swell, the breach, then the drive spooling down. */
+const jumpIn: Recipe = {
+  duration: 2.2,
+  variants: 2,
+  build(c, out, r) {
+    const t = 0.005;
+    const swell = noise(c, t, 0.45, r);
+    const bp = filter(c, 'bandpass', 7000, 0.9);
+    sweep(bp.frequency, t, 7000, 800, 0.4);
+    const sg = gain(c);
+    sg.gain.setValueAtTime(0.0001, t);
+    sg.gain.exponentialRampToValueAtTime(0.55, t + 0.34);
+    sg.gain.exponentialRampToValueAtTime(0.0001, t + 0.45);
+    swell.connect(bp).connect(sg).connect(out);
+    const at = t + 0.36;
+    thump(c, out, at, 75, 28, 0.9, 0.9);
+    const rumble = noise(c, at, 1.6, r, true);
+    const lp = filter(c, 'lowpass', 900);
+    sweep(lp.frequency, at, 900, 110, 1.4);
+    const rg = gain(c);
+    perc(rg, at, 0.6, 0.01, 1.5);
+    rumble.connect(lp).connect(rg).connect(out);
+    const o = osc(c, 'sawtooth', 430, at, 1.5);
+    sweep(o.frequency, at, 430, 70, 1.4);
+    const og = gain(c);
+    perc(og, at, 0.12, 0.02, 1.4);
+    o.connect(filter(c, 'lowpass', 1300)).connect(og).connect(out);
+  },
+};
+
 export const RECIPES = {
   laser_falcon: laser({ f0: 1700, f1: 260, len: 0.14, grit: 0.25, sub: 0.45, fm: 0.12, wave: 'sawtooth' }),
   laser_warden: laser({ f0: 1250, f1: 170, len: 0.18, grit: 0.2, sub: 0.5, fm: 0.08, wave: 'sawtooth' }),
@@ -754,6 +820,8 @@ export const RECIPES = {
   drum_metal: drums.metalHit,
   drum_hat: drums.hat,
   drum_riser: drums.riser,
+  jump_out: jumpOut,
+  jump_in: jumpIn,
   loop_union: engineLoop(55, 0.3),
   loop_raider: engineLoop(68, 0.8),
 } satisfies Record<string, Recipe>;
@@ -805,6 +873,8 @@ const PEAK: Partial<Record<SoundId, number>> = {
   drum_metal: 0.5,
   drum_hat: 0.3,
   drum_riser: 0.4,
+  jump_out: 0.92,
+  jump_in: 0.85,
 };
 
 export function peakOf(id: SoundId): number {

@@ -2,14 +2,15 @@ import * as THREE from 'three';
 import { cargoTotal, ITEMS, type ItemId } from '../shared/economy/items';
 import type { StationId } from '../shared/economy/market';
 import { segmentSphere } from '../shared/math';
-import type { ChatLine, ErrorCode, MarketView, PilotState, PlayerInfo, PlayerStats, ServerMessage } from '../shared/net/protocol';
+import type { ChatLine, ErrorCode, JumpView, MarketView, PilotState, PlayerInfo, PlayerStats, ServerMessage } from '../shared/net/protocol';
+import { JUMP_CHARGE, JUMP_CLEARANCE, nextSector, SECTOR_NAMES, STATION_NAMES, type SectorId } from '../shared/sectors';
 import { MINING_MAX_SPEED, MINING_RANGE, MINING_RATE, miningTarget, oreOf, richness, richnessLabel } from '../shared/sim/mining';
 import { SHIP_CLASSES } from '../shared/sim/shipClasses';
 import { statsOfPacked, unpackMods } from '../shared/sim/upgrades';
 import { StaticGrid } from '../shared/sim/spatialGrid';
 import { neutralInput, type Ship, type ShipClassId, type ShipInput, type SimEvent } from '../shared/sim/types';
 import { TICK_DT, TICK_RATE } from '../shared/sim/world';
-import { buildZone, DOCK_MAX_SPEED, type ZoneDef } from '../shared/sim/zone';
+import { DOCK_MAX_SPEED, zoneOf, type ZoneDef } from '../shared/sim/zone';
 import { GameAudio, type AudioFrame } from './audio/Audio';
 import { Benchmark, type BenchCallbacks } from './bench/Benchmark';
 import { ChaseCamera } from './camera/ChaseCamera';
@@ -141,6 +142,14 @@ export class Game {
   private mineProgress = 0;
   /** In a docking zone (touch screens show the dock button). */
   dockable = false;
+  /** In open space with the drive ready (touch screens show the jump button). */
+  jumpable = false;
+  /** The hyperspace drive, from the last snapshot. */
+  private jumpState: JumpView | null = null;
+  /** A jump happened: the new sector is built on the next frame (after the flash is on screen). */
+  private pendingSector: { sector: SectorId; seed: number } | null = null;
+  /** Game time of the last jump, until our ship shows up in the new sector (-1: not jumping). */
+  private jumpingSince = -1;
   readonly stationPanel = new StationPanel(document.body, {
     trade: (item, qty) => this._transport?.send({ t: 'trade', item, qty }),
     repair: () => this._transport?.send({ t: 'repair' }),
@@ -251,6 +260,53 @@ export class Game {
     this.stationPanel.hide();
     this.disposeParked();
     this.dockable = false;
+    this.jumpable = false;
+    this.jumpState = null;
+    this.pendingSector = null;
+    this.jumpingSince = -1;
+  }
+
+  /** The sector shown (Aurora before any server says otherwise). */
+  get sectorId(): SectorId {
+    return this.zone?.id ?? 'aurora';
+  }
+
+  /** J: charge the drive toward the other sector, or cancel the charge. The server decides and answers. */
+  private toggleJump() {
+    const t = this._transport;
+    if (!t) return;
+    if (this.docked) {
+      this.hud.notice('Décollez d’abord : le saut se fait en vol, loin des stations.', 'info');
+      this.audio.ui('deny');
+      return;
+    }
+    t.send({ t: 'jump', to: this.jumpState?.to ? null : nextSector(this.sectorId) });
+  }
+
+  /**
+   * The server moved us to another sector: forget everything of the old one
+   * (ships, shots, events, prediction), cover the screen with the jump flash,
+   * and build the new sector on the next frame.
+   */
+  private enterSector(sector: SectorId, seed: number) {
+    this.hud.warp('flash');
+    this.audio.jump('out');
+    for (const v of this.views.values()) v.dispose(this.scene);
+    this.views.clear();
+    this.buffer = new SnapshotBuffer(this._transport?.interpolationDelay ?? 1.5 / TICK_RATE);
+    this.eventQueue.length = 0;
+    this.renderTime = -1;
+    this.myShipId = null;
+    this.lastMyShipId = null;
+    this.lastMe = null;
+    this.targetId = null;
+    this.predictor?.reset();
+    this.lasers.clear();
+    this.jumpState = null;
+    this.jumpingSince = this.time;
+    this.pendingSector = { sector, seed };
+    this.playersByShip.clear();
+    for (const p of this.players) if (p.ship !== null && p.sector === sector) this.playersByShip.set(p.ship, p);
   }
 
   /** At a station: the server keeps the ship, the client shows the station screen. */
@@ -272,7 +328,7 @@ export class Game {
   private dockChanged(station: StationId | null, was: StationId | null = null) {
     if (station) {
       const def = this.zone?.stations.find((s) => s.id === station);
-      this.stationPanel.show(def?.name ?? station);
+      this.stationPanel.show(def?.name ?? STATION_NAMES[station] ?? station);
       this.stationPanel.setKnownPrices(this.pricesElsewhere(station));
       // The station screen needs the mouse pointer.
       if (document.pointerLockElement) document.exitPointerLock();
@@ -306,7 +362,8 @@ export class Game {
     const out = new Map<ItemId, KnownPrice>();
     for (const [id, seen] of this.seenMarkets) {
       if (id === here) continue;
-      const name = this.zone?.stations.find((s) => s.id === id)?.name.replace(/^Station\s+/, '') ?? id;
+      // Stations of the other sector too: what was seen there before the jump.
+      const name = (STATION_NAMES[id] ?? id).replace(/^Station\s+/, '');
       for (const line of seen.market.items) {
         const prev = out.get(line.id);
         if (!prev || prev.at < seen.at) out.set(line.id, { station: name, buy: line.buy, sell: line.sell, at: seen.at });
@@ -329,6 +386,9 @@ export class Game {
       status: this._transport ? { ...this._transport.status } : null,
       myShipId: this.myShipId,
       myName: this.myName,
+      sector: this.sectorId,
+      jump: this.jumpState ? { ...this.jumpState } : null,
+      jumpable: this.jumpable,
       sessionId: this.sessionId,
       resumed: this.resumed,
       myPvp: this.myPvp,
@@ -389,7 +449,7 @@ export class Game {
       this.sky.dispose();
     }
     this.skySize = this.quality.skySize;
-    this.sky = buildSky(this.renderer, zone.sunDirection, this.skySize);
+    this.sky = buildSky(this.renderer, zone.sunDirection, this.skySize, zone.sky);
     this.scene.background = this.sky.background;
     this.scene.environment = this.sky.environment;
     this.scene.environmentIntensity = ENVIRONMENT_INTENSITY;
@@ -499,19 +559,20 @@ export class Game {
     return this.quality.level;
   }
 
-  /** Builds the static zone (identical to the server's, from the same seed). */
-  private buildWorld(seed: number) {
-    if (this.zone?.seed === seed) return;
+  /** Builds the static zone of a sector (identical to the server's, from the same seed); the previous one is freed. */
+  private buildWorld(sector: SectorId, seed: number) {
+    if (this.zone?.id === sector && this.zone.seed === seed) return;
     this.scene.remove(this.worldRoot);
+    disposeTree(this.worldRoot);
     this.worldRoot = new THREE.Group();
     this.scene.add(this.worldRoot);
-    const zone = (this.zone = buildZone(seed));
+    const zone = (this.zone = zoneOf(sector, seed));
     this.grid = new StaticGrid(zone.colliders);
     this.predictor = new Predictor(this.grid);
     // Cinematic Realism: one dominant star. Shadows stay nearly black; a faint
     // cool rim from the nebula side and the baked sky reflections keep the
     // silhouettes readable without lifting them (no flat violet fill).
-    const sun = new THREE.DirectionalLight(0xfff0dc, 4.2);
+    const sun = new THREE.DirectionalLight(new THREE.Color().setRGB(...zone.sky.sun, THREE.SRGBColorSpace), 4.2);
     sun.position.copy(zone.sunDirection).multiplyScalar(1000);
     this.worldRoot.add(sun, sun.target);
     const rim = new THREE.DirectionalLight(0x7d9cff, 0.32);
@@ -543,15 +604,20 @@ export class Game {
   private onMessage(m: ServerMessage) {
     switch (m.t) {
       case 'welcome':
-        if (!m.resumed || this.zone?.seed !== m.zoneSeed) this.resetSession();
+        if (!m.resumed || this.zone?.seed !== m.zoneSeed || this.zone?.id !== m.sector) this.resetSession();
         // Resumed session: the server restarts our input sequence, so prediction starts over too.
         else this.predictor?.reset();
-        this.buildWorld(m.zoneSeed);
+        this.buildWorld(m.sector, m.zoneSeed);
         this.myName = m.name;
         this.sessionId = m.playerId;
         this.resumed = m.resumed;
         break;
+      case 'sector':
+        this.enterSector(m.sector, m.zoneSeed);
+        break;
       case 'snapshot': {
+        if (!this.jumpState?.to && m.jump?.to) this.audio.alert('jumpCharge');
+        this.jumpState = m.jump ?? null;
         this.buffer.push(m.snap);
         this.myShipId = m.you;
         this.stats = m.stats;
@@ -567,7 +633,8 @@ export class Game {
         this.players = m.list;
         this.maxPlayers = m.max;
         this.playersByShip.clear();
-        for (const p of m.list) if (p.ship !== null) this.playersByShip.set(p.ship, p);
+        // Ship ids are per sector: only the pilots of ours can be matched to ships we see.
+        for (const p of m.list) if (p.ship !== null && p.sector === (this.pendingSector?.sector ?? this.sectorId)) this.playersByShip.set(p.ship, p);
         break;
       case 'chat':
         this.callbacks.onChat?.(m.line);
@@ -626,7 +693,7 @@ export class Game {
     this.audio.setVolume(s.volume, s.muted, s.mix, s.voice);
     this.hud.setBindings(s.bindings);
     const dock = keyLabel(s.bindings.dock, s.layout);
-    this.hud.setKeyLabels({ dock, mine: keyLabel(s.bindings.mine, s.layout) });
+    this.hud.setKeyLabels({ dock, mine: keyLabel(s.bindings.mine, s.layout), jump: keyLabel(s.bindings.jump, s.layout) });
     this.stationPanel.setUndockKey(dock);
   }
 
@@ -655,7 +722,13 @@ export class Game {
     this.fps += (1 / Math.max(dt, 1e-4) - this.fps) * 0.05;
     this.debug.frames++;
 
-    if (!this.zone) this.buildWorld(DEFAULT_SECTOR_SEED);
+    if (!this.zone) this.buildWorld('aurora', DEFAULT_SECTOR_SEED);
+    // After a jump: the flash has been drawn for a frame, now build the new sector behind it.
+    if (this.pendingSector && this.time - this.jumpingSince > 0.03) {
+      const p = this.pendingSector;
+      this.pendingSector = null;
+      this.buildWorld(p.sector, p.seed);
+    }
     if (this.bench) {
       this.bench.frame(timestamp ?? performance.now());
       return;
@@ -677,6 +750,7 @@ export class Game {
     if (this.input.consume('chatToggle')) this.callbacks.onToggleChat?.();
     if (this.input.consume('pvp')) this.togglePvp();
     if (this.input.consume('dock') && this.running) this.toggleDock();
+    if (this.input.consume('jump') && this.running) this.toggleJump();
     this.input.endFrame();
 
     // 2) Advance the (local) server and receive messages. In solo the pause
@@ -702,7 +776,12 @@ export class Game {
     }
     transport?.update(dt);
     const latest = this.buffer.latest;
-    if (!latest || !this.zone) {
+    if (!latest || !this.zone || this.pendingSector) {
+      if (this.pendingSector) {
+        // Between two sectors: the flash covers the screen; keep it drawn.
+        this.renderScene(0);
+        return;
+      }
       // Title menu (nothing to fly yet): only the calm music.
       this.audio.menuFrame(dt);
       this.attractCamera(dt);
@@ -770,6 +849,12 @@ export class Game {
 
     // 6) Camera follows my ship (or orbits the wreck while respawning)
     const me = this.myShipId !== null ? ships.get(this.myShipId) ?? null : null;
+    if (this.jumpingSince >= 0 && (me || this.time - this.jumpingSince > 4)) {
+      // Our ship is in the new sector: lift the flash.
+      this.jumpingSince = -1;
+      this.hud.warp('reveal');
+      this.audio.jump('in');
+    }
     if (me) {
       if (this.lastMyShipId !== this.myShipId) {
         this.cam.snap();
@@ -803,6 +888,8 @@ export class Game {
     else this.audio.menuFrame(dt);
     const dock = me ? this.dockGuide(me) : null;
     this.dockable = !!dock?.inZone;
+    const jump = me ? this.jumpInfo(me) : null;
+    this.jumpable = !!jump && !this.docked && (jump.left !== null || (jump.clear && jump.cooldown <= 0));
 
     // 7) World animation
     const camPos = this.cam.camera.position;
@@ -837,6 +924,8 @@ export class Game {
         pilot: this.pilot,
         dock,
         mining,
+        jump,
+        jumping: this.jumpingSince >= 0,
       },
       dt,
     );
@@ -914,7 +1003,7 @@ export class Game {
    * game is not connected to any server meanwhile; reload to play again.
    */
   startBenchmark(levels: QualityLevel[], cb: BenchCallbacks) {
-    if (!this.zone) this.buildWorld(DEFAULT_SECTOR_SEED);
+    if (!this.zone) this.buildWorld('aurora', DEFAULT_SECTOR_SEED);
     const zone = this.zone!;
     this.hud.show(false);
     this.bench = new Benchmark(
@@ -1072,6 +1161,14 @@ export class Game {
       }
       case 'spawned':
         break;
+      case 'jumpOut':
+      case 'jumpIn': {
+        _p.set(...e.pos);
+        this.effects.jumpFlash(_p, e.classId === 'marauder' ? 1.6 : 1);
+        // Our own jump has its sounds (Game.enterSector); another ship's is placed where it happens.
+        if (e.ship !== this.myShipId) this.audio.jump(e.type === 'jumpOut' ? 'out' : 'in', _p);
+        break;
+      }
     }
   }
 
@@ -1174,7 +1271,22 @@ export class Game {
       nearestHostile,
       boss,
       others,
+      jumpCharge: this.jumpState?.to ? Math.min(1, Math.max(0, 1 - this.jumpState.left / JUMP_CHARGE)) : null,
+      jumping: this.jumpingSince >= 0,
     });
+  }
+
+  /** The drive, for the HUD: where a jump leads, the countdown, and whether we are clear of the stations. */
+  private jumpInfo(me: InterpolatedShip) {
+    const j = this.jumpState;
+    let clear = true;
+    for (const st of this.zone!.stations) if (me.position.distanceTo(st.position) < JUMP_CLEARANCE) clear = false;
+    return {
+      to: SECTOR_NAMES[j?.to ?? nextSector(this.sectorId)],
+      left: j?.to ? j.left : null,
+      cooldown: j?.cooldown ?? 0,
+      clear,
+    };
   }
 
   private miningInfo(me: InterpolatedShip, input: ShipInput, dt: number): MiningInfo | null {
@@ -1293,4 +1405,28 @@ export class Game {
     }
     this.targetId = best;
   }
+}
+
+/** Frees the GPU side of a discarded part of the scene (geometries, materials, their textures). */
+function disposeTree(root: THREE.Object3D) {
+  const textures = new Set<THREE.Texture>();
+  const take = (v: unknown) => {
+    const t = v as THREE.Texture | null;
+    if (t && t.isTexture && !t.isRenderTargetTexture) textures.add(t);
+  };
+  root.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    mesh.geometry?.dispose();
+    const m = mesh.material as THREE.Material | THREE.Material[] | undefined;
+    for (const mat of m ? (Array.isArray(m) ? m : [m]) : []) {
+      for (const v of Object.values(mat)) take(v);
+      const uniforms = (mat as THREE.ShaderMaterial).uniforms;
+      if (uniforms) for (const u of Object.values(uniforms)) take(u?.value);
+      mat.dispose();
+    }
+    // The lens flare keeps textures and a geometry of its own.
+    const flare = o as THREE.Object3D & { isLensflare?: boolean; dispose?: () => void };
+    if (flare.isLensflare) flare.dispose?.();
+  });
+  for (const t of textures) t.dispose();
 }

@@ -74,7 +74,8 @@ export class Outpost {
       color: 0x9a9890,
     });
     // Hazard-painted structure: the depot's signature colour.
-    const ochreMat = new THREE.MeshStandardMaterial({ color: 0xb5822e, metalness: 0.3, roughness: 0.65 });
+    // Kepler's ice depot wears blue hazard paint where Ferro-9 wears ochre.
+    const ochreMat = new THREE.MeshStandardMaterial({ color: def.livery === 'kepler' ? 0x2f78a8 : 0xb5822e, metalness: 0.3, roughness: 0.65 });
     const strutMat = new THREE.MeshStandardMaterial({ color: 0x6f747a, metalness: 0.85, roughness: 0.5 });
     const radiatorMat = new THREE.MeshStandardMaterial({ color: 0xbfc2c4, metalness: 0.2, roughness: 0.75, side: THREE.DoubleSide });
     const amber = new THREE.MeshBasicMaterial({ color: new THREE.Color(1.7, 0.9, 0.35), toneMapped: false });

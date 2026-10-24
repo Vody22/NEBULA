@@ -1,7 +1,7 @@
 # NEBULA FRONTIER
 
 MMO spatial 3D dans le navigateur (Three.js + TypeScript + Vite).
-Version actuelle : **v0.6, missions**. Plusieurs pilotes partagent le même secteur en temps réel, avec un serveur Node.js autoritaire. On y mine, on commerce entre deux stations, on remplit des contrats, on améliore son vaisseau ou on en achète un autre, et la progression est sauvegardée. Le mode solo hors ligne reste disponible.
+Version actuelle : **v0.7, exploration**. Plusieurs pilotes partagent deux secteurs en temps réel, reliés par saut hyperspatial, avec un serveur Node.js autoritaire. On y mine, on commerce entre quatre stations, on remplit des contrats, on améliore son vaisseau ou on en achète un autre, et la progression est sauvegardée. Le mode solo hors ligne reste disponible.
 
 ![Station Aurora-7](docs/img/station.png)
 
@@ -22,6 +22,13 @@ Options d'URL :
 - `?autostart` : démarrage direct en solo.
 
 Mise en ligne : voir [docs/DEPLOIEMENT.md](docs/DEPLOIEMENT.md). Le client reste sur Vercel, et le serveur WebSocket va sur Render, Fly.io ou un VPS.
+
+## Exploration (v0.7)
+
+- **Secteur Kepler**, à un saut d'Aurora : la station Kepler-4, le dépôt de glace Vesta-2, une ceinture riche en métal et en platine, des raids plus durs.
+- **Saut hyperspatial** (`J`, bouton **SAUT** sur écran tactile) : à plus de 1,5 km des stations, 6 s de charge, la moitié du condensateur, puis 20 s de recharge.
+- **Entre secteurs** : nouvelles routes commerciales, livraisons vers l'autre secteur mieux payées. La liste des pilotes indique le secteur de chacun ; le chat est commun.
+- Détails : [docs/V07_SECTEURS.md](docs/V07_SECTEURS.md).
 
 ## Missions (v0.6)
 
@@ -98,6 +105,9 @@ Les touches correspondent à des positions physiques : sur un clavier AZERTY, `W
 | `M` | Couper le son |
 | `Entrée` / `H` | Chat : écrire / masquer (en ligne) |
 | `P` | PvP on/off (en ligne) |
+| `G` | S'amarrer / décoller |
+| `R`, clic droit | Rayon de minage |
+| `J` | Saut hyperspatial vers l'autre secteur (encore : annuler) |
 | `Tab` (maintenir) | Liste des pilotes |
 | `Échap` | Pause : reprendre, commandes, options et son |
 
@@ -115,6 +125,7 @@ Sur un écran tactile, le jeu affiche ses commandes à l'écran. Il se joue en m
 | **CIBLE**, **STOP**, ⟲ ⟳ | Cible suivante, couper les gaz, roulis |
 | **ASSIST.**, **II** | Assistance de vol, pause |
 | **CHAT**, **PVP**, **PILOTES** | En ligne : écrire, PvP on/off, liste des pilotes |
+| **S'AMARRER**, **SAUT** | Près d'un hangar : s'amarrer. Loin des stations : saut hyperspatial |
 
 Sur mobile, la qualité graphique basse est choisie par défaut (`?q=high` pour la forcer). `?touch` affiche les commandes tactiles sur un ordinateur.
 
@@ -158,6 +169,7 @@ npm run smoke       # lance le jeu dans Chromium headless, pilote, tire et fait 
 npm run ui-check    # HUD à 3 tailles, menu pause, réaffectation, réglages, tirs, amarrage, commerce, minage, sauvegarde solo, chantier, contrats
 node scripts/mp-check.mjs    # navigateurs sur le vrai serveur : inscription, synchro, chat, combat commun, PvP, latence, reconnexion, connexion refusée puis acceptée
 node scripts/mobile-check.mjs   # téléphone et tablette émulés : commandes tactiles, mise en page, chat et PvP en ligne
+node scripts/jump-check.mjs     # saut hyperspatial en solo : HUD, charge, Kepler, retour, mémoire graphique, bouton tactile
 node scripts/load-test.mjs 30 30   # 30 pilotes robots pendant 30 s : coût du tick et bande passante
 ```
 
@@ -169,5 +181,6 @@ Pour `npm run smoke`, définir `CHROMIUM_PATH` si Chromium n'est pas trouvé aut
 - **v0.3 : amarrage, minage et commerce.**
 - **v0.4 : comptes pilotes et sauvegarde.**
 - **v0.5 : vaisseaux et améliorations.**
-- **v0.6 : missions** (cette version).
-- Ensuite : factions, nouveaux secteurs et sauts, version PC installable.
+- **v0.6 : missions.**
+- **v0.7 : exploration, un deuxième secteur et le saut hyperspatial** (cette version).
+- Ensuite : factions et réputation, carte de la galaxie et autres secteurs, version PC installable.

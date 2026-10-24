@@ -199,7 +199,9 @@ export type AlertId =
   | 'targetDestroyed'
   | 'docked'
   | 'contractDone'
-  | 'proximity';
+  | 'proximity'
+  | 'jumpCharge'
+  | 'jumpDone';
 
 /** Onboard announcement lines (text for the HUD and for voice; a recorded file can replace each later). */
 export const ALERT_LINES: Record<AlertId, { text: string; priority: number; cooldown: number }> = {
@@ -214,6 +216,8 @@ export const ALERT_LINES: Record<AlertId, { text: string; priority: number; cool
   docked: { text: 'Amarrage confirmé', priority: 1, cooldown: 5 },
   contractDone: { text: 'Contrat rempli', priority: 2, cooldown: 3 },
   proximity: { text: 'Obstacle à proximité', priority: 2, cooldown: 6 },
+  jumpCharge: { text: 'Réacteur hyperspatial en charge', priority: 1, cooldown: 3 },
+  jumpDone: { text: 'Saut terminé', priority: 1, cooldown: 3 },
 };
 
 export interface ShipVitals {

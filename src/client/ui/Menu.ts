@@ -51,6 +51,7 @@ const GROUPS: { title: string; actions: Action[] }[] = [
   { title: 'Vol', actions: ['throttleUp', 'throttleDown', 'stop', 'boost', 'assist'] },
   { title: 'Manœuvres', actions: ['strafeLeft', 'strafeRight', 'strafeUp', 'strafeDown', 'rollLeft', 'rollRight', 'pitchUp', 'pitchDown', 'yawLeft', 'yawRight'] },
   { title: 'Combat et interface', actions: ['fire', 'target', 'camera', 'mute'] },
+  { title: 'Stations et exploration', actions: ['dock', 'mine', 'jump'] },
   { title: 'En ligne', actions: ['chat', 'chatToggle', 'pvp', 'scoreboard'] },
 ];
 
@@ -284,7 +285,7 @@ export class Menu {
                 <div><span class="k">Souris</span> piloter (le réticule blanc indique la direction du virage)</div>
                 <div><span class="k">Clic gauche</span> ou ${this.kbd(b.fire)} tirer</div>
                 <div>${this.kbd(b.throttleUp)} ${this.kbd(b.throttleDown)} poussée · ${this.kbd(b.boost)} boost · ${this.kbd(b.stop)} arrêt</div>
-                <div>${this.kbd(b.mine)} ou <span class="k">Clic droit</span> miner · ${this.kbd(b.dock)} s'amarrer à une station</div>
+                <div>${this.kbd(b.mine)} ou <span class="k">Clic droit</span> miner · ${this.kbd(b.dock)} s'amarrer à une station · ${this.kbd(b.jump)} saut vers l'autre secteur</div>
                 <div>${this.kbd(b.target)} cible suivante · <kbd>Échap</kbd> pause et aide</div>
                 <div>${this.kbd(b.chat)} chat · ${this.kbd(b.pvp)} PvP · ${this.kbd(b.scoreboard)} pilotes (en ligne)</div>
               </div>

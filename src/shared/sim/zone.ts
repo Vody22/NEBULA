@@ -69,8 +69,10 @@ export interface SkyDef {
   core: Vector3;
   /** Nebula colours: hot core, middle, outer edge. */
   colors: [[number, number, number], [number, number, number], [number, number, number]];
-  /** Colour of the star's light. */
+  /** Colour of the star's light (sRGB). */
   sun: [number, number, number];
+  /** Seed of the bright star field (another sector, other stars). */
+  stars: number;
 }
 
 export interface ZoneDef {
@@ -114,7 +116,9 @@ const AURORA_SKY: SkyDef = {
     [0.58, 0.1, 0.42],
     [0.16, 0.14, 0.5],
   ],
-  sun: [1.0, 0.94, 0.86],
+  // 0xfff0dc, the light Aurora always had.
+  sun: [1, 240 / 255, 220 / 255],
+  stars: 4242,
 };
 
 export function buildZone(seed = 1337): ZoneDef {
@@ -248,6 +252,7 @@ export function buildKepler(seed: number): ZoneDef {
         [0.07, 0.11, 0.36],
       ],
       sun: [0.86, 0.92, 1.0],
+      stars: 9191,
     },
     station,
     stations: [station, vesta],

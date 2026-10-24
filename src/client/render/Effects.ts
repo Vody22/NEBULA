@@ -330,6 +330,21 @@ export class Effects {
     this.smoke.emit(pos, this.v.set(rnd(), rnd(), rnd()).multiplyScalar(5), new THREE.Color(0.15, 0.13, 0.12), new THREE.Color(0.06, 0.06, 0.06), 3, 14, 1.2, 0.5, 0.5);
   }
 
+  /** A ship entering or leaving hyperspace: a blue-white flash, a burst of sparks, a short cold light. */
+  jumpFlash(pos: THREE.Vector3, scale = 1) {
+    const still = this.v.set(0, 0, 0).clone();
+    this.glow.emit(pos, still, new THREE.Color(6, 7, 10), new THREE.Color(0.3, 0.5, 1.6), 25 * scale, 140 * scale, 0.35);
+    this.glow.emit(pos, still, new THREE.Color(1.6, 2.4, 5), new THREE.Color(0, 0.08, 0.4), 70 * scale, 260 * scale, 0.9);
+    const spark = new THREE.Color(3, 4, 8);
+    const end = new THREE.Color(0.1, 0.2, 0.9);
+    for (let i = 0; i < 50 * this.density; i++) {
+      randDir(this.d);
+      this.v.copy(this.d).multiplyScalar(250 + Math.random() * 450);
+      this.glow.emit(pos, this.v, spark, end, 1.6, 0.4, 0.35 + Math.random() * 0.5, 1.5);
+    }
+    this.flashLight(pos, 3e4 * scale, 0.8, new THREE.Color(0.55, 0.7, 1), 1200);
+  }
+
   impact(pos: THREE.Vector3, color: THREE.Color) {
     for (let i = 0; i < 8; i++) {
       randDir(this.d);

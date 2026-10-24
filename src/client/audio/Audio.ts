@@ -2,6 +2,7 @@ import { Ambience } from './Ambience';
 import { Announcer } from './Announcer';
 import { AudioEngine, type Occluder, type Vec3 } from './AudioEngine';
 import { EngineSound, RemoteEngines, type ViewMode } from './EngineSound';
+import { Hyperdrive } from './Hyperdrive';
 import { AlertMonitor, DEFAULT_MIX, MusicDirector, type AlertId, type MixLevels } from './mix';
 import { Music } from './Music';
 import type { SoundId } from './recipes';
@@ -43,6 +44,10 @@ export interface AudioFrame {
   nearestHostile: number;
   boss: boolean;
   others: { id: number; at: Vec3; raider: boolean; throttle: number; boosting: boolean }[];
+  /** Hyperspace drive charge, 0..1, or null when it is not charging (v0.7). */
+  jumpCharge: number | null;
+  /** Between leaving a sector and the first snapshot of the next one: not a destroyed ship. */
+  jumping: boolean;
 }
 
 export type UiSound = 'click' | 'tab' | 'confirm' | 'deny' | 'notify' | 'lock' | 'comms' | 'mission' | 'repair' | 'upgrade' | 'purchase';
@@ -58,6 +63,7 @@ export class GameAudio {
   private remotes: RemoteEngines | null = null;
   private amb: Ambience | null = null;
   private music: Music | null = null;
+  private drive: Hyperdrive | null = null;
   readonly announcer: Announcer | null = null;
   private director = new MusicDirector();
   private alerts = new AlertMonitor();
@@ -128,6 +134,7 @@ export class GameAudio {
     this.remotes = new RemoteEngines(e);
     this.amb = new Ambience(e);
     this.music = new Music(e);
+    this.drive = new Hyperdrive(e);
     (this as { announcer: Announcer | null }).announcer = new Announcer(e, (t, p, id) => {
       if (SHOWN.includes(id)) this.onAlertText?.(t, p);
     });
@@ -158,6 +165,7 @@ export class GameAudio {
       mining: me?.mining ?? 0,
     });
     this.remotes!.update(f.docked ? [] : f.others);
+    this.drive!.update(f.dt, me ? f.jumpCharge : null);
     this.amb!.update({
       dt: f.dt,
       docked: f.docked,
@@ -172,7 +180,7 @@ export class GameAudio {
     const state = this.director.update({
       dt: f.dt,
       docked: f.docked,
-      dead: !me && !f.docked && this.hadShip,
+      dead: !me && !f.docked && !f.jumping && this.hadShip,
       hostilesFar: f.hostilesFar,
       hostilesNear: f.hostilesNear,
       boss: f.boss,
@@ -187,7 +195,7 @@ export class GameAudio {
         const out: AlertId[] = [];
         if (this.alerts.fire('proximity', e.now, out)) this.alert('proximity');
       }
-    } else this.alerts.reset();
+    } else if (!f.jumping) this.alerts.reset();
     this.hadShip = !!me || (this.hadShip && !f.docked);
     this.announcer!.update();
     e.meter();
@@ -278,6 +286,24 @@ export class GameAudio {
   /** Interface sound. */
   ui(kind: UiSound = 'notify') {
     this.engine.play(`ui_${kind}` as SoundId, { bus: kind === 'comms' ? 'comms' : 'ui', gain: 0.8, importance: 2, category: 'ui' });
+  }
+
+  /**
+   * A hyperspace jump. Ours (no `at`): 'out' when the drive fires, 'in' when
+   * the new sector appears. Another ship's: placed where it left or arrived.
+   */
+  jump(kind: 'out' | 'in', at?: Vec3) {
+    const e = this.engine;
+    const id = kind === 'out' ? 'jump_out' : 'jump_in';
+    if (at) {
+      e.play(id, { at, bus: 'explosions', gain: 0.8, ref: 200, range: 3500, importance: 2 });
+      return;
+    }
+    e.play(id, { bus: 'explosions', gain: 0.95, importance: 5 });
+    if (kind === 'out') {
+      e.duck('music', 0.4, 0.2, 2);
+      e.duck('ambience', 0.3, 0.1, 1.5);
+    } else this.alert('jumpDone');
   }
 
   /** A warning notice (and the repeating hull alarm). */

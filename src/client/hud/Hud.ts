@@ -3,6 +3,7 @@ import { interceptPoint } from '../../shared/math';
 import { cargoTotal } from '../../shared/economy/items';
 import { missionStatus, missionTitle } from '../../shared/missions';
 import type { PilotState, PlayerInfo, PlayerStats } from '../../shared/net/protocol';
+import { JUMP_CHARGE, JUMP_CLEARANCE, SECTOR_NAMES } from '../../shared/sectors';
 import { statsOfPacked } from '../../shared/sim/upgrades';
 import type { ShipInput } from '../../shared/sim/types';
 import { isHostile } from '../hostility';
@@ -37,6 +38,21 @@ export interface HudFrame {
   dock: DockGuide | null;
   /** What the mining beam is doing or would do. */
   mining: MiningInfo | null;
+  /** The hyperspace drive (v0.7). */
+  jump: JumpInfo | null;
+  /** Between two sectors: no ship for a moment, and it was not destroyed. */
+  jumping: boolean;
+}
+
+export interface JumpInfo {
+  /** The sector a jump leads to. */
+  to: string;
+  /** Charging: seconds left, else null. */
+  left: number | null;
+  /** Seconds before the drive can charge again. */
+  cooldown: number;
+  /** Far enough from every station to jump. */
+  clear: boolean;
 }
 
 export interface DockGuide {
@@ -138,7 +154,9 @@ export class Hud {
   private holdTxt: HTMLSpanElement;
   private jobsEl: HTMLDivElement;
   private holdBar: HTMLElement;
-  private keys = { dock: 'G', mine: 'R' };
+  private keys = { dock: 'G', mine: 'R', jump: 'J' };
+  private jumpEl: HTMLDivElement;
+  private warpEl: HTMLDivElement;
   private damage = 0;
   private shieldFx = 0;
   private cache = new Map<HTMLElement, string>();
@@ -186,6 +204,7 @@ export class Hud {
     this.netEl.id = 'netStatus';
     this.netEl.setAttribute('role', 'status');
     // Contracts in progress, under the sector name.
+    this.jumpEl = el('div', 'jump', zone) as HTMLDivElement;
     this.jobsEl = el('div', 'jobs', zone) as HTMLDivElement;
     this.fpsEl = el('div', 'abs', this.root) as HTMLDivElement;
     this.fpsEl.id = 'fps';
@@ -258,6 +277,9 @@ export class Hud {
     this.vignette.id = 'vignette';
     this.shieldFlash = el('div', '', document.body) as HTMLDivElement;
     this.shieldFlash.id = 'shieldflash';
+    this.warpEl = el('div', '', document.body) as HTMLDivElement;
+    this.warpEl.id = 'warp';
+    this.warpEl.setAttribute('aria-hidden', 'true');
     this.death = el('div', '', document.body, '<h2>VAISSEAU DÉTRUIT</h2>') as HTMLDivElement;
     this.death.id = 'death';
     this.deathTimer = el('p', '', this.death) as HTMLParagraphElement;
@@ -308,8 +330,19 @@ export class Hud {
   }
 
   /** Key names for the on-screen hints (they follow the player's bindings and layout). */
-  setKeyLabels(keys: { dock: string; mine: string }) {
+  setKeyLabels(keys: { dock: string; mine: string; jump: string }) {
     this.keys = keys;
+  }
+
+  /**
+   * The screen side of a jump: 'flash' when the ship leaves (covers the
+   * change of scene), 'reveal' once the new sector is drawn.
+   */
+  warp(phase: 'flash' | 'reveal') {
+    this.warpEl.classList.remove('charging', 'flash', 'reveal');
+    // Restart the transition from a full flash.
+    void this.warpEl.offsetWidth;
+    this.warpEl.classList.add(phase);
   }
 
   setPaused(p: boolean) {
@@ -339,6 +372,7 @@ export class Hud {
   showScoreboard(show: boolean, list: PlayerInfo[], myName: string, online: boolean, stats?: PlayerStats) {
     this.board.classList.toggle('hidden', !show);
     if (!show) return;
+    const where = (p: PlayerInfo) => SECTOR_NAMES[p.sector]?.replace(/^Secteur\s+/, '') ?? '—';
     const mine = stats ? `<p class="mine">Vos combats : ${stats.kills} élimination${stats.kills > 1 ? 's' : ''} · ${stats.deaths} perte${stats.deaths > 1 ? 's' : ''}</p>` : '';
     if (!online) {
       this.html(this.board, `<h3>Pilotes</h3><p>Mode solo : aucun autre pilote.</p>${mine}`);
@@ -348,13 +382,13 @@ export class Hud {
       .sort((a, b) => b.kills - a.kills || a.deaths - b.deaths)
       .map(
         (p) =>
-          `<tr${p.name === myName ? ' class="me"' : ''}><td>${esc(p.name)}${p.name === myName ? ' (vous)' : ''}</td><td>${p.kills}</td><td>${p.deaths}</td>` +
+          `<tr${p.name === myName ? ' class="me"' : ''}><td>${esc(p.name)}${p.name === myName ? ' (vous)' : ''}</td><td>${where(p)}</td><td>${p.kills}</td><td>${p.deaths}</td>` +
           `<td>${p.ping ? p.ping + ' ms' : '—'}</td><td>${p.pvp ? '⚔ oui' : 'non'}</td><td>${p.online ? 'en ligne' : 'déconnecté'}</td></tr>`,
       )
       .join('');
     this.html(this.board,
-      `<h3>Pilotes du secteur · ${list.filter((p) => p.online).length}</h3>` +
-      `<table><thead><tr><th>Pilote</th><th>Élim.</th><th>Pertes</th><th>Ping</th><th>PvP</th><th>État</th></tr></thead><tbody>${rows}</tbody></table>${mine}`);
+      `<h3>Pilotes en ligne · ${list.filter((p) => p.online).length}</h3>` +
+      `<table><thead><tr><th>Pilote</th><th>Secteur</th><th>Élim.</th><th>Pertes</th><th>Ping</th><th>PvP</th><th>État</th></tr></thead><tbody>${rows}</tbody></table>${mine}`);
   }
 
   private netLine(f: HudFrame) {
@@ -401,8 +435,9 @@ export class Hud {
 
     const docked = !!f.pilot?.docked;
     this.root.classList.toggle('docked', docked);
-    this.death.classList.toggle('show', !me && !docked);
-    if (!me && !docked) {
+    this.jumpLine(f, docked);
+    this.death.classList.toggle('show', !me && !docked && !f.jumping);
+    if (!me && !docked && !f.jumping) {
       this.deathTimer.textContent = `Réapparition à la station dans ${Math.ceil(f.respawnIn)} s`;
     }
 
@@ -541,6 +576,7 @@ export class Hud {
     });
 
     this.dockGuide(f, pt);
+    this.jumpPrompt(f);
     this.miningReadout(f, pt);
 
     // Target
@@ -616,6 +652,44 @@ export class Hud {
     else if (g.inZone) this.setPrompt(`<b>Ralentissez</b> ${g.speed.toFixed(0)} m/s, maximum ${g.maxSpeed} pour s'amarrer`, 'warn');
     else if (g.distance < 900) this.setPrompt(`Entrez lentement dans le hangar pour vous amarrer · ${g.distance.toFixed(0)} m`);
     else this.setPrompt('');
+  }
+
+  /** Under the sector name: whether the drive can jump from here, and how. */
+  private jumpLine(f: HudFrame, docked: boolean) {
+    const j = f.jump;
+    const k = `<kbd>${esc(this.keys.jump)}</kbd>`;
+    let line = '';
+    let ready = false;
+    if (j && f.me && !docked && j.left === null) {
+      const to = esc(j.to.replace(/^Secteur\s+/, ''));
+      if (j.cooldown > 0) line = `Réacteur hyperspatial : recharge ${Math.ceil(j.cooldown)} s`;
+      else if (!j.clear) line = `Saut vers ${to} : à plus de ${String(JUMP_CLEARANCE / 1000).replace('.', ',')} km des stations`;
+      else {
+        line = `${k} saut hyperspatial vers ${to}`;
+        ready = true;
+      }
+    }
+    this.html(this.jumpEl, line);
+    this.jumpEl.classList.toggle('ready', ready);
+    // The edges of the screen close in while the drive charges.
+    const charging = !!j && j.left !== null && !!f.me;
+    if (charging) {
+      this.warpEl.classList.remove('flash', 'reveal');
+      this.warpEl.classList.add('charging');
+      this.warpEl.style.setProperty('--c', (1 - j!.left! / JUMP_CHARGE).toFixed(3));
+    } else this.warpEl.classList.remove('charging');
+  }
+
+  /** While charging: the countdown in the middle of the screen. */
+  private jumpPrompt(f: HudFrame) {
+    const j = f.jump;
+    if (!j || j.left === null || this.prompt.classList.contains('show')) return;
+    const p = Math.min(1, Math.max(0, 1 - j.left / JUMP_CHARGE));
+    this.setPrompt(
+      `<b>Saut hyperspatial</b> vers ${esc(j.to)} · ${j.left.toFixed(1).replace('.', ',')} s` +
+        `<div class="bar j"><i style="transform:scaleX(${p.toFixed(3)})"></i></div><kbd>${esc(this.keys.jump)}</kbd> annuler`,
+      'jump',
+    );
   }
 
   /** Under the reticle: the rock under the beam, its ore and why the beam does nothing. */

@@ -3,6 +3,7 @@ import { Lensflare, LensflareElement } from 'three/examples/jsm/objects/Lensflar
 import { NOISE_GLSL } from './glsl';
 import { makeFlareRing, makeRadialTexture } from './textures';
 import { mulberry32 } from '../../shared/rng';
+import type { SkyDef } from '../../shared/sim/zone';
 
 const GALACTIC_NORTH = new THREE.Vector3(0.25, 0.92, 0.3).normalize();
 /** Direction of the system's luminous nebula core (seen from the station toward +Z). */
@@ -43,8 +44,8 @@ void main(){
  * Bright stars as live points at a fixed distance around the camera: they stay
  * pin-sharp at any resolution, unlike stars baked into the sky cubemap.
  */
-function buildStarField(count: number) {
-  const rand = mulberry32(4242);
+function buildStarField(count: number, seed: number) {
+  const rand = mulberry32(seed);
   const pos = new Float32Array(count * 3);
   const col = new Float32Array(count * 3);
   const size = new Float32Array(count);
@@ -104,6 +105,10 @@ const skyFragment = /* glsl */ `
 uniform vec3 uSunDir;
 uniform vec3 uGalN;
 uniform vec3 uCore;
+uniform vec3 uCCore;
+uniform vec3 uCMid;
+uniform vec3 uCOut;
+uniform vec3 uSunCol;
 varying vec3 vDir;
 ${NOISE_GLSL}
 
@@ -160,9 +165,9 @@ void main(){
   // Natural chromatic gradient away from the core: hot cyan-white,
   // then magenta (H-alpha), then amber dust at the edges.
   float k = 1.0 - coreD;
-  vec3 cCore = vec3(0.3, 0.72, 0.95);
-  vec3 cMid = vec3(0.58, 0.1, 0.42);
-  vec3 cOut = vec3(0.16, 0.14, 0.5);
+  vec3 cCore = uCCore;
+  vec3 cMid = uCMid;
+  vec3 cOut = uCOut;
   vec3 neb = mix(cCore, cMid, smoothstep(0.02, 0.4, k + fbm4(q*2.0)*0.15));
   neb = mix(neb, cOut, smoothstep(0.5, 1.0, k + fbm4(q*2.5 + 9.0)*0.25));
   col += neb * dens * 0.42;
@@ -178,7 +183,7 @@ void main(){
 
   // Sun halo baked into the sky (the disc itself is a live sprite).
   float s = max(dot(dir, uSunDir), 0.0);
-  col += vec3(1.0,0.82,0.6) * (pow(s, 600.0)*2.0 + pow(s, 40.0)*0.1 + pow(s, 6.0)*0.02);
+  col += uSunCol * vec3(1.0,0.82,0.6) * (pow(s, 600.0)*2.0 + pow(s, 40.0)*0.1 + pow(s, 6.0)*0.02);
 
   gl_FragColor = vec4(col, 1.0);
 }`;
@@ -192,8 +197,17 @@ export interface SkyResult {
   dispose(): void;
 }
 
-/** Bakes the procedural nebula sky into a cubemap once, and builds the live sun. */
-export function buildSky(renderer: THREE.WebGLRenderer, sunDir: THREE.Vector3, resolution: number): SkyResult {
+/** Bakes the procedural nebula sky into a cubemap once, and builds the live sun. `sky` sets the sector's palette (Aurora's by default). */
+export function buildSky(renderer: THREE.WebGLRenderer, sunDir: THREE.Vector3, resolution: number, sky?: SkyDef): SkyResult {
+  const palette = sky?.colors ?? [
+    [0.3, 0.72, 0.95],
+    [0.58, 0.1, 0.42],
+    [0.16, 0.14, 0.5],
+  ];
+  // The sun's colour relative to Aurora's (whose halo and sprite colours are the reference).
+  const ref = [1, 240 / 255, 220 / 255];
+  const sunRgb = sky?.sun ?? ref;
+  const tint = new THREE.Vector3(sunRgb[0] / ref[0], sunRgb[1] / ref[1], sunRgb[2] / ref[2]);
   const skyScene = new THREE.Scene();
   const mat = new THREE.ShaderMaterial({
     vertexShader: skyVertex,
@@ -203,7 +217,11 @@ export function buildSky(renderer: THREE.WebGLRenderer, sunDir: THREE.Vector3, r
     uniforms: {
       uSunDir: { value: sunDir.clone() },
       uGalN: { value: GALACTIC_NORTH },
-      uCore: { value: NEBULA_CORE },
+      uCore: { value: sky?.core ?? NEBULA_CORE },
+      uCCore: { value: new THREE.Vector3(...palette[0]) },
+      uCMid: { value: new THREE.Vector3(...palette[1]) },
+      uCOut: { value: new THREE.Vector3(...palette[2]) },
+      uSunCol: { value: tint },
     },
   });
   skyScene.add(new THREE.Mesh(new THREE.SphereGeometry(10, 64, 32), mat));
@@ -222,7 +240,7 @@ export function buildSky(renderer: THREE.WebGLRenderer, sunDir: THREE.Vector3, r
 
   // Everything live follows the camera: stars all around, the sun far away.
   const root = new THREE.Group();
-  const stars = buildStarField(resolution >= 1024 ? 6000 : 3500);
+  const stars = buildStarField(resolution >= 1024 ? 6000 : 3500, sky?.stars ?? 4242);
   root.add(stars);
   const sun = new THREE.Group();
   sun.position.copy(sunDir).multiplyScalar(150000);
@@ -236,7 +254,7 @@ export function buildSky(renderer: THREE.WebGLRenderer, sunDir: THREE.Vector3, r
         [0.3, 'rgba(255,200,140,0.35)'],
         [1, 'rgba(255,160,90,0)'],
       ]),
-      color: new THREE.Color(4, 3.4, 2.8),
+      color: new THREE.Color(4 * tint.x, 3.4 * tint.y, 2.8 * tint.z),
       blending: THREE.AdditiveBlending,
       depthWrite: false,
       toneMapped: false,

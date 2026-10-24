@@ -137,6 +137,7 @@ function loop(timestamp: number) {
     // At a station the station screen takes the place of the flight controls.
     touchControls.setVisible(started && !menu.isOpen && !chat.isOpen && !game.docked);
     touchControls.setDockable(game.dockable);
+    touchControls.setJumpable(game.jumpable);
     touchControls.update();
   }
   requestAnimationFrame(loop);
