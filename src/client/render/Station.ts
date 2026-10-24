@@ -4,6 +4,7 @@ import type { StationDef } from '../../shared/sim/zone';
 import { GlowField, type Glow } from './batches';
 import { mergeByMaterial } from './merge';
 import { makeShipSheet } from './shipTextures';
+import { bayBanner, furnishHangar } from './hangarKit';
 import { beam, makeWindowTexture, plating, truss } from './stationKit';
 import { makeRadialTexture, makeSolarTexture } from './textures';
 
@@ -103,17 +104,6 @@ export class Station {
     });
     // Emissive trims stay thin and dim: signals, not decoration.
     const amber = new THREE.MeshBasicMaterial({ color: kepler ? new THREE.Color(0.5, 1.45, 1.3) : new THREE.Color(1.6, 0.95, 0.42), toneMapped: false });
-    const cyan = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.35, 1.2, 2.0), toneMapped: false });
-    // Hangar bay: matte deck plating lit by its own strips, no sky reflection.
-    const hangarInside = new THREE.MeshStandardMaterial({
-      map: darkSheet.map,
-      color: 0x6a6e75,
-      metalness: 0,
-      roughness: 0.9,
-      envMapIntensity: 0.2,
-      side: THREE.BackSide,
-      emissive: new THREE.Color(0.05, 0.045, 0.04),
-    });
     const field = new THREE.MeshBasicMaterial({
       color: new THREE.Color(0.12, 0.35, 0.7),
       transparent: true,
@@ -295,44 +285,32 @@ export class Station {
       b.translate(x, y, z);
       add(b, hullMat, hangar);
     }
-    // Interior: a dim bay, ceiling light strips and floor guide lines.
-    const bay = new THREE.BoxGeometry(HW - wall * 2 - 2, HH - wall * 2 - 2, HD - wall - 1);
-    bay.translate(0, 0, wall / 2);
-    add(bay, hangarInside, hangar);
-    for (let i = 0; i < 6; i++) {
-      const strip = new THREE.BoxGeometry(HW - wall * 2 - 20, 1, 2);
-      strip.translate(0, HH / 2 - wall - 1, -HD / 2 + wall + 12 + i * 22);
-      add(strip, amber, hangar);
-    }
-    for (const sx of [-1, 1]) {
-      const line = new THREE.BoxGeometry(1.5, 0.6, HD - wall - 10);
-      line.translate(sx * 30, -HH / 2 + wall + 0.5, wall / 2);
-      add(line, cyan, hangar);
-    }
-    // Structural ribs along the walls and ceiling, every 22 m.
-    const innerW = HW - wall * 2;
+    // Interior: painted deck, panelled walls, light troughs, ribs, control room.
     const innerH = HH - wall * 2;
-    for (let i = 0; i < 6; i++) {
-      const z = -HD / 2 + wall + 12 + i * 22 + 11;
-      for (const sx of [-1, 1]) {
-        const rib = new THREE.BoxGeometry(3, innerH - 2, 3);
-        rib.translate(sx * (innerW / 2 - 2.5), 0, z);
-        add(rib, darkMat, hangar);
-      }
-      const top = new THREE.BoxGeometry(innerW - 4, 3, 3);
-      top.translate(0, innerH / 2 - 2.5, z);
-      add(top, darkMat, hangar);
-    }
-    // Two landing pads (cyan rings) and a control room window on the back wall.
-    for (const px of [-40, 40]) {
-      const pad = new THREE.RingGeometry(13, 14.2, 48);
-      pad.rotateX(-Math.PI / 2);
-      pad.translate(px, -innerH / 2 + 0.7, 10);
-      add(pad, cyan, hangar);
-    }
-    const control = new THREE.BoxGeometry(innerW * 0.6, 6, 1);
-    control.translate(0, innerH / 2 - 16, -HD / 2 + wall + 0.6);
-    add(control, amber, hangar);
+    const tag = def.name.replace(/^Station\s+/i, '').toUpperCase();
+    const interior = furnishHangar(
+      {
+        w: HW,
+        h: HH,
+        d: HD,
+        wall,
+        accent: kepler ? '#3fd6c0' : '#d9902a',
+        light: kepler ? new THREE.Color(1.9, 2.3, 2.3) : new THREE.Color(2.4, 2.2, 1.9),
+        name: tag,
+        bay: '01',
+        pads: [
+          [-40, 10],
+          [40, 10],
+        ],
+        ribEvery: 22,
+        seed: kepler ? 47 : 7,
+      },
+      darkMat,
+    );
+    hangar.add(interior);
+    const banner = bayBanner(`${tag} · BAIE 01`, kepler ? '#3fd6c0' : '#d9902a', 120);
+    banner.position.set(0, HH / 2 + 15, HD / 2 + 3.2);
+    hangar.add(banner);
     // Heavy mouth frame with side buttresses.
     for (const sx of [-1, 1]) {
       const side = new THREE.BoxGeometry(10, HH + 16, 10);

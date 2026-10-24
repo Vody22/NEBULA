@@ -118,6 +118,10 @@ await shot('09-thalassa-nyx', () => window.__place({ pos: [1200, 300, 600], targ
 await shot('10-nebula-sky', () => window.__place({ pos: [0, 2000, 3000], target: [0, 4000, 9000], fov: 70 }));
 // Station details (added in step 4, no v0.2 "before").
 await shot('12-hangar-approach', () => window.__place({ pos: [70, -15, 470], target: [0, -5, 300], fov: 60 }));
+await shot('14-hangar-inside', () => window.__place({ pos: [30, -18, 322], target: [-15, -32, 200], fov: 62 }));
+await shot('15-hangar-deck', () => window.__place({ pos: [-70, -34, 300], target: [30, -30, 205], fov: 62 }));
+await shot('16-depot-approach', () => window.__place({ pos: [4834.4, -85, -5546.7], target: [4941.2, -100, -5731.8], fov: 60 }));
+await shot('17-depot-inside', () => window.__place({ pos: [4934.0, -112, -5695.8], target: [4956.0, -122, -5771.9], fov: 62 }));
 await shot('13-cargo-ring', () => window.__place({ pos: [-300, -30, 360], target: [-190, -68, 245], fov: 50 }));
 await shot('11-asteroids', () => {
   const { g } = window.__shot;

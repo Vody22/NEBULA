@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { FERRO_MOUTH_Z, type StationDef } from '../../shared/sim/zone';
 import { GlowField, type Glow } from './batches';
 import { mergeByMaterial } from './merge';
+import { bayBanner, furnishHangar } from './hangarKit';
 import { makeShipSheet } from './shipTextures';
 import { makeWindowTexture, plating, truss } from './stationKit';
 import { makeRadialTexture } from './textures';
@@ -79,15 +80,6 @@ export class Outpost {
     const strutMat = new THREE.MeshStandardMaterial({ color: 0x6f747a, metalness: 0.85, roughness: 0.5 });
     const radiatorMat = new THREE.MeshStandardMaterial({ color: 0xbfc2c4, metalness: 0.2, roughness: 0.75, side: THREE.DoubleSide });
     const amber = new THREE.MeshBasicMaterial({ color: new THREE.Color(1.7, 0.9, 0.35), toneMapped: false });
-    const hangarInside = new THREE.MeshStandardMaterial({
-      map: darkSheet.map,
-      color: 0x6a6760,
-      metalness: 0,
-      roughness: 0.9,
-      envMapIntensity: 0.2,
-      side: THREE.BackSide,
-      emissive: new THREE.Color(0.05, 0.042, 0.03),
-    });
     const field = new THREE.MeshBasicMaterial({
       color: new THREE.Color(0.7, 0.4, 0.1),
       transparent: true,
@@ -143,15 +135,30 @@ export class Outpost {
     }
     const innerW = HW - WALL * 2;
     const innerH = HH - WALL * 2;
-    const bay = new THREE.BoxGeometry(innerW - 2, innerH - 2, HD - WALL - 1);
-    bay.translate(0, 0, WALL / 2);
-    add(bay, hangarInside, hangar);
-    for (let i = 0; i < 4; i++) {
-      const strip = new THREE.BoxGeometry(innerW - 16, 1, 2);
-      strip.translate(0, innerH / 2 - 1, -HD / 2 + WALL + 12 + i * 22);
-      add(strip, amber, hangar);
-    }
-    // Hazard stripes along the mouth and a cyan-free, amber pad ring.
+    const kepler = def.livery === 'kepler';
+    const tag = def.name.replace(/^Dépôt\s+/i, '').toUpperCase();
+    hangar.add(
+      furnishHangar(
+        {
+          w: HW,
+          h: HH,
+          d: HD,
+          wall: WALL,
+          accent: kepler ? '#3fa6d6' : '#d9902a',
+          light: new THREE.Color(2.4, 2.1, 1.7),
+          name: tag,
+          bay: 'D1',
+          pads: [[this.pad.x, 8]],
+          ribEvery: 20,
+          seed: kepler ? 91 : 19,
+        },
+        darkMat,
+      ),
+    );
+    const banner = bayBanner(`DÉPÔT ${tag}`, kepler ? '#3fa6d6' : '#d9902a', 70);
+    banner.position.set(0, HH / 2 + 12, HD / 2 + 2.2);
+    hangar.add(banner);
+    // Ochre mouth frame.
     for (const sx of [-1, 1]) {
       const post = new THREE.BoxGeometry(8, HH + 10, 8);
       post.translate(sx * (HW / 2 + 2), 0, HD / 2 - 2);
@@ -161,10 +168,6 @@ export class Outpost {
     lintel.translate(0, HH / 2 + 2, HD / 2 - 2);
     add(lintel, ochreMat, hangar);
     add(lintel.clone().translate(0, -HH - 4, 0), ochreMat, hangar);
-    const pad = new THREE.RingGeometry(11, 12, 40);
-    pad.rotateX(-Math.PI / 2);
-    pad.translate(this.pad.x, -innerH / 2 + 0.6, 8);
-    add(pad, amber, hangar);
     const fieldPlane = new THREE.PlaneGeometry(innerW, innerH);
     fieldPlane.translate(0, 0, HD / 2 - 1);
     add(fieldPlane, field, hangar);
