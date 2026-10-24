@@ -4,6 +4,7 @@ import type { Mission } from '../missions';
 import { isSectorId, type SectorId } from '../sectors';
 import { allIntact } from '../physics/damage';
 import type { ComponentId } from '../physics/hitboxes';
+import type { BodyState } from '../sim/looseBodies';
 import type { EntityId, FactionId, Ship, ShipClassId, ShipInput, SimEvent } from '../sim/types';
 import { intactParts } from '../sim/types';
 import { isUpgradeSlot, offerOf, packMods, type ShipMods, type UpgradeSlot } from '../sim/upgrades';
@@ -85,6 +86,13 @@ export interface WorldSnapshot {
   tick: number;
   time: number;
   ships: ShipSnapshot[];
+  /**
+   * Loose bodies (v0.8): those that moved or changed since the last
+   * snapshot, absent when none did. Bodies not listed have not moved.
+   */
+  b?: BodyState[];
+  /** `b` lists every body of the sector: any other the client knows is gone. */
+  bf?: boolean;
 }
 
 export interface PlayerInfo {

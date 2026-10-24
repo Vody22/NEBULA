@@ -30,7 +30,7 @@ export const MATERIALS: Record<MaterialId, Material> = {
   metal: { restitution: 0.4, friction: 0.3, hardness: 1.0, density: 3, label: 'métal' },
   // Another ship's hull.
   hull: { restitution: 0.35, friction: 0.35, hardness: 0.85, density: 0.4, label: 'coque' },
-  // Loose wreckage and rock chips: light, they mostly get pushed away.
+  // Torn wreckage: thin plating, it crumples more than it hurts.
   debris: { restitution: 0.3, friction: 0.4, hardness: 0.6, density: 2, label: 'débris' },
 };
 

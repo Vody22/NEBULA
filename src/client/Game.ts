@@ -25,6 +25,7 @@ import { Predictor } from './net/Predictor';
 import { SnapshotBuffer, type InterpolatedShip } from './net/SnapshotBuffer';
 import type { Transport } from './net/Transport';
 import { Asteroids } from './render/Asteroids';
+import { BodyViews } from './render/BodyViews';
 import { Effects } from './render/Effects';
 import { Lasers } from './render/Lasers';
 import { MiningBeams, type BeamSegment } from './render/MiningBeams';
@@ -108,6 +109,8 @@ export class Game {
   private stationViews = new Map<StationId, Station | Outpost>();
   private planets: Planets | null = null;
   private asteroids: Asteroids | null = null;
+  /** Loose bodies: crates, containers, wreckage, boulders (v0.8). */
+  private bodyViews: BodyViews | null = null;
   private lasers = new Lasers();
   private beams = new MiningBeams();
   private beamList: BeamSegment[] = [];
@@ -600,7 +603,8 @@ export class Game {
     this.audio.setOccluders(zone.colliders.filter((c) => c.kind !== 'asteroid' || c.radius > 80));
     this.asteroids = new Asteroids(zone.asteroids, zone.beltCenter);
     this.asteroids.setDetail(this.quality.level !== 'low');
-    this.worldRoot.add(this.planets.group, this.station.group, this.asteroids.group);
+    this.bodyViews = new BodyViews();
+    this.worldRoot.add(this.planets.group, this.station.group, this.asteroids.group, this.bodyViews.group);
     this.hud.setZoneName(zone.name);
     // Compile every shader now rather than stalling on the first shot, the
     // first kill or the first ship of a class.
@@ -628,6 +632,10 @@ export class Game {
         this.myShipId = m.you;
         this.stats = m.stats;
         this.respawnIn = m.respawnIn;
+        const bodies = this.bodyViews;
+        if (bodies && (m.snap.b || m.snap.bf)) bodies.ingest(m.snap.b, !!m.snap.bf, m.snap.time, this.time);
+        else if (bodies && m.snap.time > bodies.latest) bodies.latest = m.snap.time;
+        if (bodies && this.predictor) this.predictor.setRestingBodies([...bodies.bodies.values()].filter((b) => bodies.resting(b)));
         const mine = m.you !== null ? m.snap.ships.find((s) => s.id === m.you) : undefined;
         if (mine) {
           this.myPvp = mine.pvp;
@@ -857,6 +865,7 @@ export class Game {
       }
     }
     this.updateBeams(ships, dt);
+    this.bodyViews?.update(this.renderTime, this.time);
 
     // 5) Events whose time has come
     this.eventQueue.sort((a, b) => a.time - b.time);
@@ -1167,7 +1176,7 @@ export class Game {
         if (!pair || mine || (e.other !== this.myShipId && e.ship < e.other!)) {
           const mat = e.mat ?? 'rock';
           this.effects.collision(_p, _normal, k, mat, hard, shieldColor);
-          const surface = mat === 'metal' ? 'metal' : mat === 'hull' ? 'hull' : mat === 'ice' ? 'ice' : 'rock';
+          const surface = mat === 'metal' ? 'metal' : mat === 'hull' || mat === 'debris' ? 'hull' : mat === 'ice' ? 'ice' : 'rock';
           this.audio.collision(_p, { damage: e.damage, speed, surface, shield: !!e.shield, onMe: mine || e.other === this.myShipId });
         }
         if (mine) {
@@ -1183,6 +1192,34 @@ export class Game {
         }
         break;
       }
+      case 'bodyHit': {
+        // A loose body struck the world or another body: sparks if either side is metal, dust if rock.
+        _p.set(...e.pos);
+        _normal.set(...e.n);
+        const k = impactScale(e.speed);
+        const hard = e.damage > 0;
+        const metal = (m: string) => m === 'metal' || m === 'hull' || m === 'debris';
+        this.effects.collision(_p, _normal, k, e.mat, hard);
+        if (metal(e.own) && !metal(e.mat)) this.effects.collision(_p, _normal, k * 0.6, 'metal', false);
+        const surface = e.mat === 'ice' ? 'ice' : metal(e.mat) && metal(e.own) ? 'metal' : 'rock';
+        this.audio.collision(_p, { damage: e.damage, speed: e.speed, surface, shield: false, onMe: false });
+        break;
+      }
+      case 'bodyBroken': {
+        _p.set(...e.pos);
+        this.bodyViews?.remove(e.body);
+        const rock = e.kind === 'boulder';
+        const big = e.kind === 'container' || (rock && e.scale > 2);
+        for (let i = 0; i < (big ? 3 : 2); i++) {
+          _normal.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize();
+          this.effects.collision(_p, _normal, big ? 1 : 0.8, rock ? 'rock' : 'metal', true);
+        }
+        this.audio.collision(_p, { damage: 60, speed: big ? 150 : 90, surface: rock ? 'rock' : 'metal', shield: false, onMe: false });
+        break;
+      }
+      case 'bodyGone':
+        this.bodyViews?.remove(e.body, this.time);
+        break;
       case 'partDamaged':
         if (e.ship === this.myShipId) {
           const id = componentAlert(e.part, e.state);
@@ -1468,6 +1505,8 @@ function disposeTree(root: THREE.Object3D) {
   root.traverse((o) => {
     const mesh = o as THREE.Mesh;
     mesh.geometry?.dispose();
+    // Instance buffers live outside the geometry.
+    if ((o as THREE.InstancedMesh).isInstancedMesh) (o as THREE.InstancedMesh).dispose();
     const m = mesh.material as THREE.Material | THREE.Material[] | undefined;
     for (const mat of m ? (Array.isArray(m) ? m : [m]) : []) {
       for (const v of Object.values(mat)) take(v);

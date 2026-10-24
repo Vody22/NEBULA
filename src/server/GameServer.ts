@@ -12,7 +12,7 @@ import type { EntityId, ShipClassId, SimEvent } from '../shared/sim/types';
 import { TICK_DT, TICK_RATE, World } from '../shared/sim/world';
 import { buildSector, DOCK_MAX_SPEED, UNDOCK_DISTANCE, UNDOCK_SPEED, type StationDef } from '../shared/sim/zone';
 import { isSectorId, JUMP_CHARGE, JUMP_CLEARANCE, JUMP_COOLDOWN, JUMP_ENERGY, SECTOR_HUB, SECTOR_NAMES, STATION_SECTOR, type SectorId } from '../shared/sectors';
-import type { ChatLine, ClientMessage, JumpView, MarketView, PilotState, PlayerInfo, PlayerStats, ServerMessage } from '../shared/net/protocol';
+import type { ChatLine, ClientMessage, JumpView, MarketView, PilotState, PlayerInfo, PlayerStats, ServerMessage, WorldSnapshot } from '../shared/net/protocol';
 import { PROTOCOL_VERSION, sanitizeChat, sanitizeInput, sanitizeName, snapshotShip } from '../shared/net/protocol';
 import type { ShipInput } from '../shared/sim/types';
 import { intactParts, neutralInput } from '../shared/sim/types';
@@ -39,6 +39,9 @@ export interface PilotProfile {
    */
   save?: unknown;
 }
+
+/** The moved bodies of a snapshot, left out when there are none. */
+const bodiesPart = (b: WorldSnapshot['b'] & {}) => (b.length ? { b } : {});
 
 interface Session {
   id: string;
@@ -86,6 +89,8 @@ interface Session {
   jump: { to: SectorId; at: number } | null;
   /** Sim time from which the drive may charge again. */
   jumpReadyAt: number;
+  /** The link and sector this session last got the full list of loose bodies on (v0.8). */
+  bodySync?: { link: ClientLink; sector: Sector };
 }
 
 /**
@@ -1037,12 +1042,26 @@ export class GameServer {
 
   private sendSnapshots(sector: Sector) {
     const w = sector.world;
-    let snap: { tick: number; time: number; ships: ReturnType<typeof snapshotShip>[] } | null = null;
-    // The world part is identical for everyone in the sector: serialise it once for network links.
-    let snapJson: string | null = null;
+    // The world part is identical for everyone in the sector: built and serialised once for
+    // network links, in two forms: with the loose bodies that moved or changed, and with all
+    // of them (for a pilot who just arrived, and every two seconds as a refresh).
+    let ships: ReturnType<typeof snapshotShip>[] | null = null;
+    let snap: WorldSnapshot | null = null;
+    let full: WorldSnapshot | null = null;
+    const json = new Map<WorldSnapshot, string>();
+    const refresh = w.tick % (TICK_RATE * 2) < this.snapshotEvery;
     for (const s of this.sessions.values()) {
       if (!s.link || s.sector !== sector) continue;
-      snap ??= { tick: w.tick, time: w.time, ships: [...w.ships.values()].map(snapshotShip) };
+      ships ??= [...w.ships.values()].map(snapshotShip);
+      const needsFull = refresh || s.bodySync?.link !== s.link || s.bodySync.sector !== sector;
+      let body: WorldSnapshot;
+      if (needsFull) {
+        body = full ??= { tick: w.tick, time: w.time, ships, b: w.bodySnapshot(true), bf: true };
+        s.bodySync = { link: s.link, sector };
+      } else {
+        snap ??= { tick: w.tick, time: w.time, ships, ...bodiesPart(w.bodySnapshot(false)) };
+        body = snap;
+      }
       const personal = {
         ackSeq: s.ackSeq,
         you: s.shipId,
@@ -1052,12 +1071,15 @@ export class GameServer {
         jump: this.jumpView(s),
       };
       if (s.link.sendRaw) {
-        snapJson ??= JSON.stringify(snap);
-        s.link.sendRaw(`{"t":"snapshot","snap":${snapJson},${JSON.stringify(personal).slice(1)}`);
+        let j = json.get(body);
+        if (j === undefined) json.set(body, (j = JSON.stringify(body)));
+        s.link.sendRaw(`{"t":"snapshot","snap":${j},${JSON.stringify(personal).slice(1)}`);
       } else {
-        s.link.send({ t: 'snapshot', snap, ...personal });
+        s.link.send({ t: 'snapshot', snap: body, ...personal });
       }
     }
+    // Nobody here this time: the bodies' changes still count as sent.
+    if (!snap && !full) w.bodySnapshot(false);
   }
 
   private broadcast(msg: ServerMessage) {

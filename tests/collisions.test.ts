@@ -22,12 +22,12 @@ const X = new Vector3(1, 0, 0);
 /** Facing −Y. */
 const FACE_DOWN = new Quaternion().setFromAxisAngle(X, -Math.PI / 2);
 
-/** A world with only the given colliders. */
+/** A world with only the given colliders (and no loose bodies). */
 function worldWith(colliders: StaticCollider[]) {
   const zone = buildZone(1);
   zone.colliders.length = 0;
   zone.colliders.push(...colliders);
-  return new World(zone);
+  return new World(zone, { bodies: false });
 }
 const aurora = () => new World(buildSector('aurora', 1337));
 

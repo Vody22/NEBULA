@@ -8,12 +8,37 @@ import { contactOf, SHIP_MATERIAL, type MaterialId } from './materials';
 import { distanceTo, sphereCast, surfaceVelocity } from './shapes';
 
 /**
- * Rigid-body collision response for ships (v0.8), shared by the server and
- * client-side prediction. A ship is a cluster of spheres (hitboxes.ts) with a
- * mass and an inertia; a contact applies an impulse at the contact point, so
- * the ship bounces according to the angle and the material, slides with
- * friction, and starts to spin when the blow is off its centre of mass.
+ * Rigid-body collision response (v0.8), shared by the server and client-side
+ * prediction. A solid (a ship, or a loose body: a crate, a wreck, a boulder)
+ * is a cluster of spheres with a mass and an inertia; a contact applies an
+ * impulse at the contact point, so it bounces according to the angle and the
+ * materials, slides with friction, and starts to spin when the blow is off
+ * its centre of mass.
  */
+
+/** The state of a moving solid that collisions read and change. */
+export interface Solid {
+  position: Vector3;
+  velocity: Vector3;
+  rotation: Quaternion;
+  /** Commanded turn rate, local frame (ships; zero for loose bodies). */
+  angularVelocity: Vector3;
+  /** Free spin from impacts, local frame. */
+  spin: Vector3;
+}
+
+/** A solid's collision and mass properties. */
+export interface SolidProps {
+  mass: number;
+  /** Principal moments of inertia, local frame (t·m²). */
+  inertia: Vector3;
+  /** Radius around the origin that holds every sphere (m). */
+  reach: number;
+  spheres: HitSphere[];
+  material: MaterialId;
+  /** Spin from impacts never exceeds this (rad/s). */
+  maxSpin: number;
+}
 
 /** What one contact did to a ship, for damage (server) and feedback (client). */
 export interface Impact {
@@ -67,16 +92,16 @@ const _inv = new Quaternion();
 const _J = new Vector3();
 const _fwd = new Vector3();
 
-/** World velocity of the point of `ship` at world offset `r` from its centre. */
-export function pointVelocity(ship: Ship, r: Vector3, out: Vector3): Vector3 {
-  _w.copy(ship.angularVelocity).add(ship.spin).applyQuaternion(ship.rotation);
-  return out.crossVectors(_w, r).add(ship.velocity);
+/** World velocity of the point of `s` at world offset `r` from its centre. */
+export function pointVelocity(s: Solid, r: Vector3, out: Vector3): Vector3 {
+  _w.copy(s.angularVelocity).add(s.spin).applyQuaternion(s.rotation);
+  return out.crossVectors(_w, r).add(s.velocity);
 }
 
-/** 1 / effective mass of `ship` for an impulse along unit `n` applied at world offset `r`. */
-export function inverseMassAlong(ship: Ship, r: Vector3, n: Vector3): number {
-  const { mass, inertia } = massOf(ship.classId);
-  _inv.copy(ship.rotation).invert();
+/** 1 / effective mass of `s` for an impulse along unit `n` applied at world offset `r`. */
+export function inverseMassAlong(s: Solid, props: SolidProps, r: Vector3, n: Vector3): number {
+  const { mass, inertia } = props;
+  _inv.copy(s.rotation).invert();
   _rl.copy(r).applyQuaternion(_inv);
   _nl.copy(n).applyQuaternion(_inv);
   _tmp.crossVectors(_rl, _nl);
@@ -85,58 +110,72 @@ export function inverseMassAlong(ship: Ship, r: Vector3, n: Vector3): number {
 }
 
 /** Applies world impulse `J` (t·m/s) at world offset `r`: linear and angular velocity change. */
-export function applyImpulse(ship: Ship, J: Vector3, r: Vector3) {
-  const { mass, inertia } = massOf(ship.classId);
-  ship.velocity.addScaledVector(J, 1 / mass);
-  _inv.copy(ship.rotation).invert();
+export function applyImpulse(s: Solid, props: SolidProps, J: Vector3, r: Vector3) {
+  const { mass, inertia } = props;
+  s.velocity.addScaledVector(J, 1 / mass);
+  _inv.copy(s.rotation).invert();
   _tmp.crossVectors(r, J).applyQuaternion(_inv);
-  ship.spin.x += _tmp.x / inertia.x;
-  ship.spin.y += _tmp.y / inertia.y;
-  ship.spin.z += _tmp.z / inertia.z;
-  const s = ship.spin.length();
-  if (s > MAX_SPIN) ship.spin.multiplyScalar(MAX_SPIN / s);
+  s.spin.x += _tmp.x / inertia.x;
+  s.spin.y += _tmp.y / inertia.y;
+  s.spin.z += _tmp.z / inertia.z;
+  const w = s.spin.length();
+  if (w > props.maxSpin) s.spin.multiplyScalar(props.maxSpin / w);
 }
 
 /**
- * Impulse response of a contact between `ship` and an immovable obstacle
+ * Impulse response of a contact between `s` and an immovable obstacle
  * whose surface moves at `surfaceVel`. Returns the closing speed and the
  * velocity change, or null when the point is already separating.
  */
-function resolveAgainstStatic(ship: Ship, point: Vector3, n: Vector3, surfaceVel: Vector3, material: MaterialId) {
-  _r.subVectors(point, ship.position);
-  pointVelocity(ship, _r, _vp);
+function resolveAgainstStatic(s: Solid, props: SolidProps, point: Vector3, n: Vector3, surfaceVel: Vector3, material: MaterialId) {
+  _r.subVectors(point, s.position);
+  pointVelocity(s, _r, _vp);
   _rel.subVectors(_vp, surfaceVel);
   const vn = _rel.dot(n);
   if (vn >= 0) return null;
-  const c = contactOf(SHIP_MATERIAL, material);
+  const c = contactOf(props.material, material);
   const e = -vn < REST_SPEED ? 0 : c.restitution;
-  const k = inverseMassAlong(ship, _r, n);
+  const k = inverseMassAlong(s, props, _r, n);
   const j = (-(1 + e) * vn) / k;
-  applyImpulse(ship, _J.copy(n).multiplyScalar(j), _r);
+  applyImpulse(s, props, _J.copy(n).multiplyScalar(j), _r);
   // Friction: oppose the sliding velocity, at most μ times the normal impulse.
-  pointVelocity(ship, _r, _vp);
+  pointVelocity(s, _r, _vp);
   _rel.subVectors(_vp, surfaceVel);
   _t.copy(_rel).addScaledVector(n, -_rel.dot(n));
   const vt = _t.length();
   if (vt > 1e-4) {
     _t.divideScalar(vt);
-    const kt = inverseMassAlong(ship, _r, _t);
+    const kt = inverseMassAlong(s, props, _r, _t);
     const jt = Math.min(vt / kt, c.friction * j);
-    applyImpulse(ship, _J.copy(_t).multiplyScalar(-jt), _r);
+    applyImpulse(s, props, _J.copy(_t).multiplyScalar(-jt), _r);
   }
-  return { speed: -vn, dv: j / massOf(ship.classId).mass, hardness: c.hardness };
+  return { speed: -vn, dv: j / props.mass, hardness: c.hardness };
 }
 
-const LOD_SPHERE: HitSphere[] = [{ part: 'hull', at: new Vector3(), r: 1 }];
+const fineProps = new Map<string, SolidProps>();
 
 /**
- * The collision spheres of `ship`. `coarse`: one sphere of the class radius
- * (ships far from every player, see World.physicsLod).
+ * Collision and mass properties of `ship`. `coarse`: one sphere of the class
+ * radius (ships far from every player, see World.physicsLod).
  */
+export function shipProps(ship: Ship, coarse = false): SolidProps {
+  if (coarse) {
+    const radius = statsOf(ship).radius;
+    const m = massOf(ship.classId);
+    return { mass: m.mass, inertia: m.inertia, reach: radius, spheres: [{ part: 'hull', at: new Vector3(), r: radius * 0.8 }], material: SHIP_MATERIAL, maxSpin: MAX_SPIN };
+  }
+  let p = fineProps.get(ship.classId);
+  if (!p) {
+    const m = massOf(ship.classId);
+    p = { mass: m.mass, inertia: m.inertia, reach: m.reach, spheres: HITBOXES[ship.classId], material: SHIP_MATERIAL, maxSpin: MAX_SPIN };
+    fineProps.set(ship.classId, p);
+  }
+  return p;
+}
+
+/** The collision spheres of `ship` (`coarse`: see shipProps). */
 export function hitSpheres(ship: Ship, coarse = false): HitSphere[] {
-  if (!coarse) return HITBOXES[ship.classId];
-  LOD_SPHERE[0].r = statsOf(ship).radius * 0.8;
-  return LOD_SPHERE;
+  return shipProps(ship, coarse).spheres;
 }
 
 export interface StaticContactReport extends Impact {
@@ -166,8 +205,12 @@ const _c = new Vector3();
  * A final pass pushes out of any overlap left by the ship's rotation.
  */
 export function collideStatic(ship: Ship, from: Vector3, dt: number, grid: StaticGrid, onImpact?: (i: StaticContactReport) => void, coarse = false) {
-  const reach = coarse ? statsOf(ship).radius : massOf(ship.classId).reach;
-  const spheres = hitSpheres(ship, coarse);
+  sweepStatic(ship, shipProps(ship, coarse), from, dt, grid, onImpact);
+}
+
+/** collideStatic for any solid. */
+export function sweepStatic(ship: Solid, props: SolidProps, from: Vector3, dt: number, grid: StaticGrid, onImpact?: (i: StaticContactReport) => void) {
+  const { reach, spheres } = props;
   const time = grid.time;
   _start.copy(from);
   _end.copy(ship.position);
@@ -206,18 +249,18 @@ export function collideStatic(ship: Ship, from: Vector3, dt: number, grid: Stati
     }
     ship.position.copy(_start).addScaledVector(_move, bestT);
     _point.copy(_bestP).addScaledVector(_bestN, -bestH.r);
-    contact(ship, best, bestH.part, _point, _bestN, onImpact);
+    contact(ship, props, best, bestH.part, _point, _bestN, onImpact);
     left *= 1 - bestT;
     _start.copy(ship.position);
     _end.copy(ship.position).addScaledVector(ship.velocity, left);
     if (iter === 2) ship.position.copy(_start);
   }
-  depenetrate(ship, grid, spheres, reach, onImpact);
+  depenetrate(ship, props, grid, onImpact);
 }
 
-function contact(ship: Ship, c: StaticCollider, part: PartId, point: Vector3, n: Vector3, onImpact?: (i: StaticContactReport) => void) {
+function contact(ship: Solid, props: SolidProps, c: StaticCollider, part: PartId, point: Vector3, n: Vector3, onImpact?: (i: StaticContactReport) => void) {
   surfaceVelocity(c, point, _vs);
-  const r = resolveAgainstStatic(ship, point, n, _vs, c.material);
+  const r = resolveAgainstStatic(ship, props, point, n, _vs, c.material);
   if (!r || !onImpact) return;
   forwardOf(ship.rotation, _fwd);
   onImpact({
@@ -233,8 +276,9 @@ function contact(ship: Ship, c: StaticCollider, part: PartId, point: Vector3, n:
   });
 }
 
-/** Pushes the ship out of any overlap (rotation into a wall, a spinning spoke sweeping into it). */
-function depenetrate(ship: Ship, grid: StaticGrid, spheres: HitSphere[], reach: number, onImpact?: (i: StaticContactReport) => void) {
+/** Pushes the solid out of any overlap (rotation into a wall, a spinning spoke sweeping into it). */
+function depenetrate(ship: Solid, props: SolidProps, grid: StaticGrid, onImpact?: (i: StaticContactReport) => void) {
+  const { reach, spheres } = props;
   const time = grid.time;
   for (let pass = 0; pass < 2; pass++) {
     let moved = false;
@@ -246,7 +290,7 @@ function depenetrate(ship: Ship, grid: StaticGrid, spheres: HitSphere[], reach: 
         if (d >= 0) continue;
         ship.position.addScaledVector(_n, -d + 0.01);
         _point.copy(_pc).addScaledVector(_n, -h.r - d);
-        contact(ship, c, h.part, _point, _n, onImpact);
+        contact(ship, props, c, h.part, _point, _n, onImpact);
         moved = true;
       }
     }
@@ -254,9 +298,9 @@ function depenetrate(ship: Ship, grid: StaticGrid, spheres: HitSphere[], reach: 
   }
 }
 
-export interface ShipContactReport {
-  a: Ship;
-  b: Ship;
+export interface PairContact<A extends Solid = Solid, B extends Solid = Solid> {
+  a: A;
+  b: B;
   partA: PartId;
   partB: PartId;
   point: Vector3;
@@ -266,6 +310,7 @@ export interface ShipContactReport {
   dvA: number;
   dvB: number;
 }
+export type ShipContactReport = PairContact<Ship, Ship>;
 
 const _ra = new Vector3();
 const _rb = new Vector3();
@@ -289,16 +334,21 @@ const _zero = new Vector3();
  * already separating), or null when they did not touch.
  */
 export function collideShips(a: Ship, b: Ship, fromA: Vector3, fromB: Vector3, dt: number, coarse = false): ShipContactReport | null {
-  const ra = coarse ? statsOf(a).radius : massOf(a.classId).reach;
-  const rb = coarse ? statsOf(b).radius : massOf(b.classId).reach;
+  return collidePair(a, shipProps(a, coarse), b, shipProps(b, coarse), fromA, fromB, dt);
+}
+
+/** collideShips for any two solids (a ship and a crate, two wrecks…). */
+export function collidePair<A extends Solid, B extends Solid>(a: A, propsA: SolidProps, b: B, propsB: SolidProps, fromA: Vector3, fromB: Vector3, dt: number): PairContact<A, B> | null {
+  const ra = propsA.reach;
+  const rb = propsB.reach;
   _da.subVectors(a.position, fromA);
   _db.subVectors(b.position, fromB);
   _rel0.subVectors(fromA, fromB);
   _rel1.subVectors(a.position, b.position);
   // Broad test: bounding spheres in relative motion.
   if (segmentSphere(_rel0, _rel1, _zero, ra + rb) < 0) return null;
-  const sa = hitSpheres(a, coarse);
-  const sb = coarse ? [{ part: 'hull' as PartId, at: new Vector3(), r: rb * 0.8 }] : HITBOXES[b.classId];
+  const sa = propsA.spheres;
+  const sb = propsB.spheres;
   let bestT = 2;
   let pa: HitSphere | null = null;
   let pb: HitSphere | null = null;
@@ -327,8 +377,8 @@ export function collideShips(a: Ship, b: Ship, fromA: Vector3, fromB: Vector3, d
   else n.subVectors(a.position, b.position).normalize();
   // Spheres already overlapping (t = 0): separate them, half each by mass.
   const overlap = pa.r + pb.r - dist;
-  const ma = massOf(a.classId).mass;
-  const mb = massOf(b.classId).mass;
+  const ma = propsA.mass;
+  const mb = propsB.mass;
   if (overlap > 0) {
     a.position.addScaledVector(n, (overlap + 0.02) * (mb / (ma + mb)));
     b.position.addScaledVector(n, -(overlap + 0.02) * (ma / (ma + mb)));
@@ -341,15 +391,15 @@ export function collideShips(a: Ship, b: Ship, fromA: Vector3, fromB: Vector3, d
   _rel.subVectors(_va, _vb);
   const vn = _rel.dot(n);
   // Touching but already separating: no impulse, still a contact (the ships moved back to it).
-  let report: ShipContactReport = { a, b, partA: pa.part, partB: pb.part, point, normal: n, speed: 0, dvA: 0, dvB: 0 };
+  let report: PairContact<A, B> = { a, b, partA: pa.part, partB: pb.part, point, normal: n, speed: 0, dvA: 0, dvB: 0 };
   if (vn < 0) {
-    const c = contactOf(SHIP_MATERIAL, SHIP_MATERIAL);
+    const c = contactOf(propsA.material, propsB.material);
     const e = -vn < REST_SPEED ? 0 : c.restitution;
-    const k = inverseMassAlong(a, _ra, n) + inverseMassAlong(b, _rb, n);
+    const k = inverseMassAlong(a, propsA, _ra, n) + inverseMassAlong(b, propsB, _rb, n);
     const j = (-(1 + e) * vn) / k;
-    applyImpulse(a, _J.copy(n).multiplyScalar(j), _ra);
-    applyImpulse(b, _J.copy(n).multiplyScalar(-j), _rb);
-    // Friction between the hulls.
+    applyImpulse(a, propsA, _J.copy(n).multiplyScalar(j), _ra);
+    applyImpulse(b, propsB, _J.copy(n).multiplyScalar(-j), _rb);
+    // Friction between the two surfaces.
     pointVelocity(a, _ra, _va);
     pointVelocity(b, _rb, _vb);
     _rel.subVectors(_va, _vb);
@@ -357,10 +407,10 @@ export function collideShips(a: Ship, b: Ship, fromA: Vector3, fromB: Vector3, d
     const vt = _t.length();
     if (vt > 1e-4) {
       _t.divideScalar(vt);
-      const kt = inverseMassAlong(a, _ra, _t) + inverseMassAlong(b, _rb, _t);
+      const kt = inverseMassAlong(a, propsA, _ra, _t) + inverseMassAlong(b, propsB, _rb, _t);
       const jt = Math.min(vt / kt, c.friction * j);
-      applyImpulse(a, _J.copy(_t).multiplyScalar(-jt), _ra);
-      applyImpulse(b, _J.copy(_t).multiplyScalar(jt), _rb);
+      applyImpulse(a, propsA, _J.copy(_t).multiplyScalar(-jt), _ra);
+      applyImpulse(b, propsB, _J.copy(_t).multiplyScalar(jt), _rb);
     }
     report = { a, b, partA: pa.part, partB: pb.part, point, normal: n, speed: -vn, dvA: j / ma, dvB: j / mb };
   }

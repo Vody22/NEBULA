@@ -397,8 +397,8 @@ export class Effects {
 
   /**
    * A ship striking something (v0.8), by what it struck: sparks off station
-   * plating and hulls, dust and chips off rock (and a few sparks off
-   * iron-nickel), glinting crystals and mist off ice. `k` (0..1) is how
+   * plating, hulls and wreckage, dust and chips off rock (and a few sparks
+   * off iron-nickel), glinting crystals and mist off ice. `k` (0..1) is how
    * violent the blow was (closing speed, on a log scale), so a 5 m/s bump
    * throws a few sparks and a 200 m/s crash a storm of them. `hard` when it
    * did damage: the worst tear plates off the hull. `normal` points out of
@@ -406,8 +406,8 @@ export class Effects {
    */
   collision(pos: THREE.Vector3, normal: THREE.Vector3, k: number, mat: MaterialId, hard: boolean, shield: THREE.Color | null = null) {
     const n = this.density;
-    const metallic = mat === 'metal' || mat === 'hull' || mat === 'metalRock';
-    const rocky = mat === 'rock' || mat === 'metalRock' || mat === 'debris';
+    const metallic = mat === 'metal' || mat === 'hull' || mat === 'metalRock' || mat === 'debris';
+    const rocky = mat === 'rock' || mat === 'metalRock';
     // A shield in the way keeps part of the grinding off the hull.
     const through = shield ? 0.45 : 1;
     if (shield) this.shieldSparks(pos, shield);

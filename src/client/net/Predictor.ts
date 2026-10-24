@@ -1,4 +1,6 @@
 import { Quaternion, Vector3 } from 'three';
+import { bodyProps, type BodyKind } from '../../shared/physics/bodies';
+import { collidePair, shipProps, type Solid, type SolidProps } from '../../shared/physics/collide';
 import { unpackParts, type ShipSnapshot } from '../../shared/net/protocol';
 import { stepShipPhysics } from '../../shared/sim/shipPhysics';
 import { stepShipSystems } from '../../shared/sim/shipSystems';
@@ -21,6 +23,21 @@ const _oldPos = new Vector3();
 const _oldRot = new Quaternion();
 const _oldVel = new Vector3();
 const _from = new Vector3();
+const _bodyFrom = new Vector3();
+const _spinQ = new Quaternion();
+const _axis = new Vector3();
+
+/** A resting loose body as prediction sees it: where the server last left it, and a working copy. */
+interface RestingBody extends Solid {
+  id: number;
+  props: SolidProps;
+  rest: { p: Vector3; q: Quaternion };
+  /** Struck by our predicted ship: it drifts in the copy until the next reconciliation. */
+  moving: boolean;
+}
+
+/** Only resting bodies this close to the ship are tested (m). */
+const BODY_RANGE = 120;
 
 /**
  * Client-side prediction for the local player's ship. Every input tick the
@@ -50,8 +67,46 @@ export class Predictor {
   /** Size of the last correction, for diagnostics (m). */
   lastCorrection = 0;
   corrections = 0;
+  /**
+   * Loose bodies at rest (v0.8): bumping into one is predicted with the
+   * same impulse as on the server; moving bodies, like other ships, come
+   * from the server alone.
+   */
+  private bodies: RestingBody[] = [];
 
   constructor(private grid: StaticGrid) {}
+
+  /** The loose bodies the last snapshot left at rest. */
+  setRestingBodies(list: { id: number; kind: BodyKind; scale: number; position: Vector3; rotation: Quaternion }[]) {
+    const old = new Map(this.bodies.map((b) => [b.id, b]));
+    this.bodies = list.map((b) => {
+      const r = old.get(b.id) ?? {
+        id: b.id,
+        props: bodyProps(b.kind, b.scale),
+        rest: { p: new Vector3(), q: new Quaternion() },
+        position: new Vector3(),
+        velocity: new Vector3(),
+        rotation: new Quaternion(),
+        angularVelocity: new Vector3(),
+        spin: new Vector3(),
+        moving: false,
+      };
+      r.rest.p.copy(b.position);
+      r.rest.q.copy(b.rotation);
+      return r;
+    });
+    this.resetBodies();
+  }
+
+  private resetBodies() {
+    for (const b of this.bodies) {
+      b.position.copy(b.rest.p);
+      b.rotation.copy(b.rest.q);
+      b.velocity.set(0, 0, 0);
+      b.spin.set(0, 0, 0);
+      b.moving = false;
+    }
+  }
 
   get active() {
     return this.ship !== null;
@@ -144,7 +199,25 @@ export class Predictor {
     stepShipPhysics(ship, TICK_DT);
     // Collisions with the static world are predicted (the server decides the damage).
     stepShipSystems(ship, TICK_DT, this.grid, _from);
+    this.collideBodies(ship);
     if (input.fire) ship.sinceFire = 0;
+  }
+
+  /** Our ship against the resting bodies nearby, as the server does it (collidePair, both masses). */
+  private collideBodies(ship: Ship) {
+    if (!this.bodies.length) return;
+    const props = shipProps(ship);
+    for (const b of this.bodies) {
+      _bodyFrom.copy(b.position);
+      if (b.moving) {
+        b.position.addScaledVector(b.velocity, TICK_DT);
+        const w = b.spin.length();
+        if (w > 1e-6) b.rotation.multiply(_spinQ.setFromAxisAngle(_axis.copy(b.spin).divideScalar(w), w * TICK_DT)).normalize();
+      }
+      if (b.position.distanceToSquared(ship.position) > BODY_RANGE * BODY_RANGE) continue;
+      const c = collidePair(ship, props, b, b.props, _from, _bodyFrom, TICK_DT);
+      if (c && c.speed > 0) b.moving = true;
+    }
   }
 
   /** Server state for our ship (acknowledging inputs up to `ackSeq`). */
@@ -169,6 +242,8 @@ export class Predictor {
     let i = 0;
     while (i < this.history.length && this.history[i].seq <= ackSeq) i++;
     if (i) this.history.splice(0, i);
+    // The replay starts from the server's state: the resting bodies too.
+    this.resetBodies();
     for (const h of this.history) this.simulate(h.input);
 
     // The previous tick moves with the correction, so interpolation stays continuous.

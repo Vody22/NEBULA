@@ -1,4 +1,5 @@
 import type { Quaternion, Vector3 } from 'three';
+import type { BodyKind } from '../physics/bodies';
 import type { ComponentId, PartId } from '../physics/hitboxes';
 import type { MaterialId } from '../physics/materials';
 import type { Shape } from '../physics/shapes';
@@ -101,6 +102,39 @@ export interface Projectile {
   pvp: boolean;
 }
 
+/**
+ * A loose body (v0.8, see physics/bodies.ts): a crate, a container, a wreck,
+ * a boulder. Moves only when struck; sleeps at rest; frozen far from players.
+ */
+export interface Body {
+  id: EntityId;
+  kind: BodyKind;
+  /** Size multiplier of its model and collision spheres. */
+  scale: number;
+  position: Vector3;
+  velocity: Vector3;
+  rotation: Quaternion;
+  /** Always zero: nothing steers a loose body (the collision code reads it). */
+  angularVelocity: Vector3;
+  /** Angular velocity, local frame (rad/s). */
+  spin: Vector3;
+  hp: number;
+  /** At rest: not simulated until something touches it. */
+  asleep: boolean;
+  /** Near a player: simulated. Far from all of them: frozen where it is. */
+  active: boolean;
+  /** Ticks spent nearly still (it falls asleep after a second). */
+  still: number;
+  /** Changed in a way clients must see since the last snapshot (fell asleep, put back). */
+  dirty: boolean;
+  /** Moored cargo and belt boulders: where they belong, to be put back once they drift away unwatched. */
+  home: { position: Vector3; rotation: Quaternion } | null;
+  /** Wreckage is cleared away at this world time (Infinity: never). */
+  expires: number;
+  /** Last time anything touched it (world time). */
+  touched: number;
+}
+
 /** Who may damage whom. NPC factions fight each other; players only fight players who both opted into PvP. */
 export function canDamage(attacker: { id: EntityId; faction: FactionId; pvp: boolean; ownerId?: string | null }, target: Ship): boolean {
   if (attacker.id === target.id) return false;
@@ -147,7 +181,15 @@ export type SimEvent =
       speed?: number;
       shield?: boolean;
       other?: EntityId;
+      /** The loose body it hit, if any (v0.8). */
+      body?: EntityId;
     }
+  /** A loose body struck the static world or another body (v0.8): `mat` what it hit, `own` its own material. */
+  | { type: 'bodyHit'; body: EntityId; pos: [number, number, number]; n: [number, number, number]; speed: number; mat: MaterialId; own: MaterialId; damage: number }
+  /** A loose body broke apart. */
+  | { type: 'bodyBroken'; body: EntityId; kind: BodyKind; scale: number; pos: [number, number, number] }
+  /** A loose body was cleared away (old wreckage): drop it, it fades out. */
+  | { type: 'bodyGone'; body: EntityId }
   /** A component fell below a damage threshold (v0.8): 'damaged' under 50 %, 'destroyed' at 0. */
   | { type: 'partDamaged'; ship: EntityId; part: ComponentId; state: 'damaged' | 'destroyed' }
   | { type: 'destroyed'; ship: EntityId; by: EntityId | null; pos: [number, number, number]; classId: ShipClassId; faction: FactionId; name: string }
