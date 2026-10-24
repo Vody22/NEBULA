@@ -95,6 +95,11 @@ export class World {
     if (ship) Object.assign(ship.input, input);
   }
 
+  /** An event produced outside the simulation step (a hyperspace jump, decided by the server). */
+  emit(e: SimEvent) {
+    this.events.push(e);
+  }
+
   /** Returns and clears the events produced since the last call. */
   drainEvents(): SimEvent[] {
     const e = this.events;

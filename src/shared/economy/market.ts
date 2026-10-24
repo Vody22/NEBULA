@@ -1,8 +1,9 @@
 import { ITEMS, ITEM_IDS, addCargo, cargoTotal, removeCargo, type Cargo, type ItemId } from './items';
 
-export type StationId = 'aurora' | 'ferro';
+/** Aurora-7 and the Ferro-9 depot (Aurora sector), Kepler-4 and the Vesta-2 depot (Kepler sector, v0.7). */
+export type StationId = 'aurora' | 'ferro' | 'kepler' | 'vesta';
 
-export const STATION_IDS: readonly StationId[] = ['aurora', 'ferro'];
+export const STATION_IDS: readonly StationId[] = ['aurora', 'ferro', 'kepler', 'vesta'];
 
 export function isStationId(v: unknown): v is StationId {
   return typeof v === 'string' && (STATION_IDS as readonly string[]).includes(v);
@@ -56,8 +57,41 @@ export function quote(item: ItemId, line: MarketLine): { buy: number; sell: numb
 
 const line = (ref: number, eq: number, rate = 0.12): MarketLine => ({ stock: eq, ref, eq, rate });
 
-/** Starting markets. Aurora-7 makes goods and needs ore; the Ferro-9 depot digs ore and needs supplies. */
+/**
+ * Starting markets. Aurora-7 makes goods and needs ore; the Ferro-9 depot digs
+ * ore and needs supplies. In the Kepler sector, the Kepler-4 hub builds parts
+ * and medicine and pays for metals (platinum above all); the Vesta-2 ice
+ * depot has water and carbon to spare and lacks everything else. The best
+ * margins cross sectors: Vesta's water to the Ferro-9 depot, Kepler's
+ * medicine to the depots, Aurora's ore and platinum to Kepler-4.
+ */
 export function createMarket(station: StationId): MarketState {
+  if (station === 'kepler') {
+    return {
+      carbon: line(300, 160),
+      regolith: line(300, 260),
+      silicates: line(300, 70),
+      ironNickel: line(300, 60),
+      platinum: line(40, 5),
+      rations: line(400, 220),
+      water: line(400, 170),
+      parts: line(200, 330),
+      medicine: line(120, 230),
+    };
+  }
+  if (station === 'vesta') {
+    return {
+      carbon: line(400, 700),
+      regolith: line(400, 520),
+      silicates: line(400, 380),
+      ironNickel: line(400, 300),
+      platinum: line(40, 18),
+      rations: line(300, 50),
+      water: line(300, 640),
+      parts: line(150, 30),
+      medicine: line(100, 20),
+    };
+  }
   if (station === 'aurora') {
     return {
       carbon: line(300, 100),

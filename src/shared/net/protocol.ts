@@ -1,6 +1,7 @@
 import { isItemId, type Cargo, type ItemId } from '../economy/items';
 import type { StationId } from '../economy/market';
 import type { Mission } from '../missions';
+import { isSectorId, type SectorId } from '../sectors';
 import type { EntityId, FactionId, Ship, ShipClassId, ShipInput, SimEvent } from '../sim/types';
 import { isUpgradeSlot, offerOf, packMods, type ShipMods, type UpgradeSlot } from '../sim/upgrades';
 
@@ -9,7 +10,7 @@ import { isUpgradeSlot, offerOf, packMods, type ShipMods, type UpgradeSlot } fro
  * plain JSON-serialisable data so it can travel over WebSocket unchanged
  * (a binary encoding can replace JSON later without touching game code).
  */
-export const PROTOCOL_VERSION = 6;
+export const PROTOCOL_VERSION = 7;
 
 export interface ShipSnapshot {
   id: EntityId;
@@ -87,6 +88,18 @@ export interface PlayerInfo {
   /** Round-trip time reported by the client (ms), 0 when unknown. */
   ping: number;
   online: boolean;
+  /** The sector the pilot is in (v0.7). */
+  sector: SectorId;
+}
+
+/** The pilot's hyperspace drive, in every snapshot (v0.7). */
+export interface JumpView {
+  /** Charging toward this sector, or null. */
+  to: SectorId | null;
+  /** Seconds of charge left (0 when not charging). */
+  left: number;
+  /** Seconds before the drive can charge again (after an arrival). */
+  cooldown: number;
 }
 
 export interface ChatLine {
@@ -126,11 +139,16 @@ export type ClientMessage =
   /** Docked: next level of an upgrade on the ship flown. */
   | { t: 'upgrade'; slot: UpgradeSlot }
   /** Take a contract from the board of the station docked at, or drop one in progress (anywhere). */
-  | { t: 'mission'; op: 'accept' | 'abandon'; id: number };
+  | { t: 'mission'; op: 'accept' | 'abandon'; id: number }
+  /** Charge the hyperspace drive toward a sector (v0.7); null cancels the charge. */
+  | { t: 'jump'; to: SectorId | null };
 
 export type ServerMessage =
-  | { t: 'welcome'; playerId: string; token: string; name: string; zoneSeed: number; tickRate: number; snapshotRate: number; resumed: boolean }
-  | { t: 'snapshot'; snap: WorldSnapshot; ackSeq: number; you: EntityId | null; stats: PlayerStats; wave: number; respawnIn: number }
+  /** `zoneSeed` is the seed of the sector's own zone (build it with zoneOf). */
+  | { t: 'welcome'; playerId: string; token: string; name: string; sector: SectorId; zoneSeed: number; tickRate: number; snapshotRate: number; resumed: boolean }
+  | { t: 'snapshot'; snap: WorldSnapshot; ackSeq: number; you: EntityId | null; stats: PlayerStats; wave: number; respawnIn: number; jump: JumpView }
+  /** The pilot jumped: from now on, snapshots and events come from this sector (v0.7). */
+  | { t: 'sector'; sector: SectorId; zoneSeed: number }
   | { t: 'events'; tick: number; events: SimEvent[] }
   | { t: 'notice'; text: string; tone: 'info' | 'warn' | 'good' }
   | { t: 'chat'; line: ChatLine }
@@ -293,6 +311,8 @@ export function validateClientMessage(raw: unknown): ClientMessage | null {
     case 'mission':
       if ((o.op !== 'accept' && o.op !== 'abandon') || typeof o.id !== 'number' || !Number.isInteger(o.id) || o.id < 1) return null;
       return { t: 'mission', op: o.op, id: o.id };
+    case 'jump':
+      return o.to === null || isSectorId(o.to) ? { t: 'jump', to: o.to } : null;
     default:
       return null;
   }

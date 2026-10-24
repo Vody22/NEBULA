@@ -115,4 +115,8 @@ export type SimEvent =
   | { type: 'impact'; projectile: EntityId; pos: [number, number, number] }
   | { type: 'collision'; ship: EntityId; pos: [number, number, number]; damage: number }
   | { type: 'destroyed'; ship: EntityId; by: EntityId | null; pos: [number, number, number]; classId: ShipClassId; faction: FactionId; name: string }
-  | { type: 'spawned'; ship: EntityId };
+  | { type: 'spawned'; ship: EntityId }
+  /** A ship left the sector by hyperspace jump (v0.7): it is gone from the next snapshot. */
+  | { type: 'jumpOut'; ship: EntityId; pos: [number, number, number]; classId: ShipClassId }
+  /** A ship arrived by hyperspace jump. */
+  | { type: 'jumpIn'; ship: EntityId; pos: [number, number, number]; classId: ShipClassId };

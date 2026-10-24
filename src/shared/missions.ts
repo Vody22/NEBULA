@@ -1,5 +1,6 @@
 import { ITEMS, type ItemId } from './economy/items';
-import { isStationId, type StationId } from './economy/market';
+import { isStationId, STATION_IDS, type StationId } from './economy/market';
+import { SECTOR_NAMES, STATION_SECTOR } from './sectors';
 
 /**
  * Station contracts (v0.6). Each station posts a few offers on its board; a
@@ -18,7 +19,7 @@ export interface Mission {
   kind: MissionKind;
   /** Station that posted it. */
   station: StationId;
-  /** Where to complete it (courier: the other station; mining: the issuer; hunt: unused, the issuer). */
+  /** Where to complete it (courier: another station, maybe in another sector; mining: the issuer; hunt: unused, the issuer). */
   target: StationId;
   /** Ore asked for (mining only). */
   item?: ItemId;
@@ -36,7 +37,18 @@ export const OFFER_REFILL = 30;
 export const BOARD_RENEW = 600;
 
 /** Short station names for contract texts (the full names are in zone.ts). */
-export const STATION_SHORT: Record<StationId, string> = { aurora: 'Aurora-7', ferro: 'Ferro-9' };
+export const STATION_SHORT: Record<StationId, string> = { aurora: 'Aurora-7', ferro: 'Ferro-9', kepler: 'Kepler-4', vesta: 'Vesta-2' };
+
+/** "secteur Kepler", for contract texts. */
+const sectorOf = (id: StationId) => SECTOR_NAMES[STATION_SECTOR[id]].replace(/^Secteur/, 'secteur');
+
+/** Share of courier contracts that go to the other sector (v0.7). */
+export const CROSS_SECTOR_SHARE = 0.35;
+
+/** The courier destination is in another sector than the pilot's: a hyperspace jump is part of the job. */
+export function crossSector(m: Mission): boolean {
+  return STATION_SECTOR[m.target] !== STATION_SECTOR[m.station];
+}
 
 const MINING_ORES: ItemId[] = ['carbon', 'regolith', 'silicates', 'ironNickel'];
 const round10 = (n: number) => Math.round(n / 10) * 10;
@@ -45,11 +57,17 @@ const KINDS: MissionKind[] = ['courier', 'mining', 'hunt'];
 
 /** A new offer for a station's board (of the given kind, or a random one). `rng` returns [0, 1). */
 export function makeOffer(rng: () => number, station: StationId, id: number, kind?: MissionKind): Mission {
-  const other: StationId = station === 'aurora' ? 'ferro' : 'aurora';
   kind ??= KINDS[Math.floor(rng() * KINDS.length)];
   if (kind === 'courier') {
     const count = 4 + Math.floor(rng() * 7);
-    return { id, kind: 'courier', station, target: other, count, progress: 0, reward: round10(120 + count * 45) };
+    // Mostly the other station of the sector; now and then one beyond a jump, paid for the trip.
+    const here = STATION_IDS.filter((x) => x !== station && STATION_SECTOR[x] === STATION_SECTOR[station]);
+    const away = STATION_IDS.filter((x) => STATION_SECTOR[x] !== STATION_SECTOR[station]);
+    const far = away.length > 0 && rng() < CROSS_SECTOR_SHARE;
+    const pool = far || !here.length ? away : here;
+    const target = pool[Math.floor(rng() * pool.length)];
+    const reward = 120 + count * 45;
+    return { id, kind: 'courier', station, target, count, progress: 0, reward: round10(far ? reward * 1.8 + 150 : reward) };
   }
   if (kind === 'mining') {
     const item = MINING_ORES[Math.floor(rng() * MINING_ORES.length)];
@@ -83,7 +101,9 @@ export function missionStatus(m: Mission): string {
   const stationName = (id: StationId) => STATION_SHORT[id];
   switch (m.kind) {
     case 'courier':
-      return `Caisses en soute : amarrez-vous à ${stationName(m.target)}`;
+      return crossSector(m)
+        ? `Caisses en soute : ${stationName(m.target)}, dans le ${sectorOf(m.target)} (saut hyperspatial)`
+        : `Caisses en soute : amarrez-vous à ${stationName(m.target)}`;
     case 'mining':
       return m.progress >= m.count ? `Minerai prêt : amarrez-vous à ${stationName(m.target)}` : `Extrait : ${m.progress} / ${m.count}`;
     case 'hunt':
@@ -95,7 +115,9 @@ export function missionStatus(m: Mission): string {
 export function missionBrief(m: Mission): string {
   switch (m.kind) {
     case 'courier':
-      return `Prend ${m.count} places en soute ; perdu si le vaisseau est détruit`;
+      return crossSector(m)
+        ? `Prend ${m.count} places en soute ; livraison dans le ${sectorOf(m.target)}, après un saut hyperspatial`
+        : `Prend ${m.count} places en soute ; perdu si le vaisseau est détruit`;
     case 'mining':
       return 'Seul le minerai extrait après avoir accepté compte';
     case 'hunt':

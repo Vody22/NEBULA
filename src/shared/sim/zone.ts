@@ -1,6 +1,8 @@
 import { Line3, Vector3 } from 'three';
 import type { StationId } from '../economy/market';
 import { mulberry32 } from '../rng';
+import { sectorSeed, type SectorId } from '../sectors';
+import { PLATINUM_CHANCE } from './mining';
 import type { StaticCollider } from './types';
 
 /**
@@ -35,6 +37,8 @@ export interface StationDef {
   name: string;
   /** 'hub': the Aurora-7 model; 'outpost': the Ferro-9 mining depot. */
   kind: 'hub' | 'outpost';
+  /** Paint scheme of the model: Aurora's and Ferro's ('standard'), or the Kepler sector's ('kepler'). */
+  livery: 'standard' | 'kepler';
   /** Turn of the model about +Y (rad); its hangar opens on local +Z. */
   yaw: number;
   position: Vector3;
@@ -59,11 +63,22 @@ export const DOCK_MAX_SPEED = 50;
 export const UNDOCK_DISTANCE = 70;
 export const UNDOCK_SPEED = 30;
 
+/** How a sector's sky looks (baked by the client's Sky.ts). */
+export interface SkyDef {
+  /** Direction of the luminous nebula core. */
+  core: Vector3;
+  /** Nebula colours: hot core, middle, outer edge. */
+  colors: [[number, number, number], [number, number, number], [number, number, number]];
+  /** Colour of the star's light. */
+  sun: [number, number, number];
+}
+
 export interface ZoneDef {
-  id: string;
+  id: SectorId;
   name: string;
   seed: number;
   sunDirection: Vector3; // direction *towards* the sun
+  sky: SkyDef;
   /** The main station (Aurora-7). */
   station: StationDef;
   /** Every station a ship can dock at, the main one first. */
@@ -73,24 +88,40 @@ export interface ZoneDef {
   beltCenter: Vector3;
   colliders: StaticCollider[];
   playerSpawn: Vector3;
+  /** Where ships arrive from a hyperspace jump (well clear of the stations, facing the hub). */
+  jumpPoint: Vector3;
+  /** Pirate raids here start this many steps more dangerous (v0.7). */
+  danger: number;
+  /** Share of the ore mined on metallic rocks that comes out as platinum. */
+  platinum: number;
 }
+
+/** The zone of a sector, from the server's base seed. */
+export function buildSector(id: SectorId, base = 1337): ZoneDef {
+  return id === 'kepler' ? buildKepler(sectorSeed('kepler', base)) : buildZone(sectorSeed('aurora', base));
+}
+
+/** The zone a client builds from a welcome or sector message (seed already the zone's own). */
+export function zoneOf(id: SectorId, seed: number): ZoneDef {
+  return id === 'kepler' ? buildKepler(seed) : buildZone(seed);
+}
+
+/** Aurora's sky: the system's first look (Visual direction, step 2). */
+const AURORA_SKY: SkyDef = {
+  core: new Vector3(0.32, 0.38, 0.87).normalize(),
+  colors: [
+    [0.3, 0.72, 0.95],
+    [0.58, 0.1, 0.42],
+    [0.16, 0.14, 0.5],
+  ],
+  sun: [1.0, 0.94, 0.86],
+};
 
 export function buildZone(seed = 1337): ZoneDef {
   const rand = mulberry32(seed);
   // The hangar of the station model (Station.ts) opens on +Z, its mouth at
   // coreRadius × 1.08 + depth 160 − wall 14 + 4 ≈ 334 m from the centre.
-  const station: StationDef = {
-    id: 'aurora',
-    name: 'Station Aurora-7',
-    kind: 'hub',
-    yaw: 0,
-    position: new Vector3(0, 0, 0),
-    ringRadius: 560,
-    ringTube: 46,
-    coreRadius: 170,
-    spineLength: 1100,
-    dock: { mouth: new Vector3(0, 0, 334), radius: 220, out: new Vector3(0, 0, 1) },
-  };
+  const station = hubStation('aurora', 'Station Aurora-7', 'standard');
 
   const planets: PlanetDef[] = [
     {
@@ -129,15 +160,138 @@ export function buildZone(seed = 1337): ZoneDef {
   ];
 
   const beltCenter = new Vector3(2600, -250, -3800);
+  const asteroids = belt(rand, beltCenter, 520, 0.04, () => Math.floor(rand() * 4));
+  const ferro = outpostStation('ferro', 'Dépôt Ferro-9', 'standard', beltCenter.clone().add(new Vector3(2400, 150, -2000)), station.position);
+  const jumpPoint = new Vector3(0, 150, 2600);
+  const clear = clearApproaches(asteroids, station, ferro, jumpPoint);
+
+  return {
+    id: 'aurora',
+    name: 'Secteur Aurora',
+    seed,
+    sunDirection: new Vector3(-0.8, 0.35, 0.12).normalize(),
+    sky: AURORA_SKY,
+    station,
+    stations: [station, ferro],
+    planets,
+    asteroids: clear,
+    beltCenter,
+    colliders: zoneColliders(clear, station, ferro, planets),
+    playerSpawn: new Vector3(0, 60, 1100),
+    jumpPoint,
+    danger: 0,
+    platinum: PLATINUM_CHANCE,
+  };
+}
+
+/**
+ * Secteur Kepler (v0.7), one hyperspace jump from Aurora: a younger system
+ * under a blue-white star, in a gold and teal nebula. The Kepler-4 hub (the
+ * same class of station as Aurora-7) at the centre, the Vesta-2 ice depot at
+ * the far edge of a denser belt, rich in metallic rocks and platinum. Pirate
+ * raids here are a step harder than in Aurora.
+ */
+export function buildKepler(seed: number): ZoneDef {
+  const rand = mulberry32(seed);
+  const station = hubStation('kepler', 'Station Kepler-4', 'kepler');
+  const planets: PlanetDef[] = [
+    {
+      name: 'Hespéra',
+      position: new Vector3(38000, -9000, 46000),
+      radius: 16000,
+      kind: 'gas',
+      colorA: [0.36, 0.66, 0.64],
+      colorB: [0.1, 0.2, 0.3],
+      atmosphere: [0.45, 0.85, 0.95],
+      rings: true,
+      seed: 53,
+    },
+    {
+      name: 'Cendre',
+      position: new Vector3(-30000, 5500, 21000),
+      radius: 4400,
+      kind: 'rocky',
+      colorA: [0.55, 0.32, 0.2],
+      colorB: [0.26, 0.2, 0.17],
+      atmosphere: [1.0, 0.62, 0.4],
+      rings: false,
+      seed: 61,
+    },
+    {
+      name: 'Opale',
+      position: new Vector3(-25500, 8200, 17000),
+      radius: 950,
+      kind: 'ice',
+      colorA: [0.82, 0.86, 0.9],
+      colorB: [0.5, 0.56, 0.62],
+      atmosphere: [0.7, 0.85, 1.0],
+      rings: false,
+      seed: 67,
+    },
+  ];
+  const beltCenter = new Vector3(-3300, 300, 3600);
+  // Denser, with more big rocks, and two in five metallic (iron-nickel, platinum).
+  const asteroids = belt(rand, beltCenter, 600, 0.05, () => (rand() < 0.4 ? 3 : Math.floor(rand() * 4)));
+  const vesta = outpostStation('vesta', 'Dépôt Vesta-2', 'kepler', beltCenter.clone().add(new Vector3(-2500, -120, 2100)), station.position);
+  const jumpPoint = new Vector3(0, 150, 2600);
+  const clear = clearApproaches(asteroids, station, vesta, jumpPoint);
+  return {
+    id: 'kepler',
+    name: 'Secteur Kepler',
+    seed,
+    sunDirection: new Vector3(0.62, 0.3, -0.72).normalize(),
+    sky: {
+      core: new Vector3(-0.55, 0.2, -0.81).normalize(),
+      colors: [
+        [0.95, 0.76, 0.42],
+        [0.08, 0.42, 0.4],
+        [0.07, 0.11, 0.36],
+      ],
+      sun: [0.86, 0.92, 1.0],
+    },
+    station,
+    stations: [station, vesta],
+    planets,
+    asteroids: clear,
+    beltCenter,
+    colliders: zoneColliders(clear, station, vesta, planets),
+    playerSpawn: new Vector3(0, 60, 1100),
+    jumpPoint,
+    danger: 1,
+    platinum: PLATINUM_CHANCE * 2.5,
+  };
+}
+
+/**
+ * A hub station at the origin (the hub colliders and the model assume it).
+ * The hangar of the model (Station.ts) opens on +Z, its mouth at
+ * coreRadius × 1.08 + depth 160 − wall 14 + 4 ≈ 334 m from the centre.
+ */
+function hubStation(id: StationId, name: string, livery: StationDef['livery']): StationDef {
+  return {
+    id,
+    name,
+    kind: 'hub',
+    livery,
+    yaw: 0,
+    position: new Vector3(0, 0, 0),
+    ringRadius: 560,
+    ringTube: 46,
+    coreRadius: 170,
+    spineLength: 1100,
+    dock: { mouth: new Vector3(0, 0, 334), radius: 220, out: new Vector3(0, 0, 1) },
+  };
+}
+
+/** A flattened ellipsoidal cluster of rocks, denser in the middle. */
+function belt(rand: () => number, center: Vector3, count: number, bigShare: number, variant: () => number): AsteroidDef[] {
   const asteroids: AsteroidDef[] = [];
-  const count = 520;
   for (let i = 0; i < count; i++) {
-    // Flattened ellipsoidal cluster, denser in the middle.
     const a = rand() * Math.PI * 2;
     const r = Math.pow(rand(), 0.7) * 3000;
     const y = (rand() - 0.5) * 2 * 420 * (1 - r / 3600);
-    const pos = new Vector3(Math.cos(a) * r, y, Math.sin(a) * r * 0.75).add(beltCenter);
-    const big = rand() < 0.04;
+    const pos = new Vector3(Math.cos(a) * r, y, Math.sin(a) * r * 0.75).add(center);
+    const big = rand() < bigShare;
     const radius = big ? 160 + rand() * 220 : 6 + Math.pow(rand(), 2.2) * 90;
     const ax = new Vector3(rand() - 0.5, rand() - 0.5, rand() - 0.5).normalize();
     asteroids.push({
@@ -145,31 +299,37 @@ export function buildZone(seed = 1337): ZoneDef {
       radius,
       spinAxis: [ax.x, ax.y, ax.z],
       spinSpeed: (rand() * 0.25 + 0.02) * (big ? 0.15 : 1),
-      variant: Math.floor(rand() * 4),
+      variant: variant(),
     });
   }
-  const ferro = buildFerro(station.position, beltCenter);
-  // Keep the station approaches clear: around each station and along the depot's approach lane.
-  const lane = new Line3(ferro.dock.mouth, ferro.dock.mouth.clone().addScaledVector(ferro.dock.out, 1400));
+  return asteroids;
+}
+
+/** Keeps the approaches clear: around each station, along the depot's approach lane, and at the jump arrival point. */
+function clearApproaches(asteroids: AsteroidDef[], hub: StationDef, depot: StationDef, jumpPoint: Vector3): AsteroidDef[] {
+  const lane = new Line3(depot.dock.mouth, depot.dock.mouth.clone().addScaledVector(depot.dock.out, 1400));
   const onLane = new Vector3();
-  const clear = asteroids.filter(
+  return asteroids.filter(
     (a) =>
-      a.position.distanceTo(station.position) > station.ringRadius + 600 + a.radius &&
-      a.position.distanceTo(ferro.position) > FERRO_CLEARANCE + a.radius &&
+      a.position.distanceTo(hub.position) > hub.ringRadius + 600 + a.radius &&
+      a.position.distanceTo(depot.position) > FERRO_CLEARANCE + a.radius &&
+      a.position.distanceTo(jumpPoint) > 500 + a.radius &&
       lane.closestPointToPoint(a.position, true, onLane).distanceTo(a.position) > 160 + a.radius,
   );
+}
 
+function zoneColliders(asteroids: AsteroidDef[], hub: StationDef, depot: StationDef, planets: PlanetDef[]): StaticCollider[] {
   const colliders: StaticCollider[] = [];
-  clear.forEach((a, index) => {
+  asteroids.forEach((a, index) => {
     // Rocks are displaced meshes; use ~85% of the nominal radius so contacts feel fair.
     colliders.push({ kind: 'asteroid', center: a.position, radius: a.radius * 0.85, index });
   });
-  colliders.push({ kind: 'station', center: station.position.clone(), radius: station.coreRadius });
+  colliders.push({ kind: 'station', center: hub.position.clone(), radius: hub.coreRadius });
   for (let i = -4; i <= 4; i++) {
     if (i === 0) continue;
     colliders.push({
       kind: 'station',
-      center: new Vector3(0, (i / 4) * (station.spineLength / 2), 0),
+      center: new Vector3(0, (i / 4) * (hub.spineLength / 2), 0).add(hub.position),
       radius: 70,
     });
   }
@@ -178,29 +338,16 @@ export function buildZone(seed = 1337): ZoneDef {
     const t = (i / ringSegments) * Math.PI * 2;
     colliders.push({
       kind: 'station',
-      center: new Vector3(Math.cos(t) * station.ringRadius, 0, Math.sin(t) * station.ringRadius),
-      radius: station.ringTube + 6,
+      center: new Vector3(Math.cos(t) * hub.ringRadius, 0, Math.sin(t) * hub.ringRadius).add(hub.position),
+      radius: hub.ringTube + 6,
     });
   }
-  for (const c of FERRO_PARTS) colliders.push({ kind: 'station', center: ferroPoint(ferro, c[0], c[1], c[2]), radius: c[3] });
+  for (const c of FERRO_PARTS) colliders.push({ kind: 'station', center: ferroPoint(depot, c[0], c[1], c[2]), radius: c[3] });
   for (const p of planets) colliders.push({ kind: 'planet', center: p.position, radius: p.radius });
-
-  return {
-    id: 'aurora',
-    name: 'Secteur Aurora',
-    seed,
-    sunDirection: new Vector3(-0.8, 0.35, 0.12).normalize(),
-    station,
-    stations: [station, ferro],
-    planets,
-    asteroids: clear,
-    beltCenter,
-    colliders,
-    playerSpawn: new Vector3(0, 60, 1100),
-  };
+  return colliders;
 }
 
-/** Nothing floats closer than this to the depot's centre (m). */
+/** Nothing floats closer than this to a depot's centre (m). */
 const FERRO_CLEARANCE = 520;
 /** Hangar mouth of the depot model (Outpost.ts), on local +Z. */
 export const FERRO_MOUTH_Z = 130;
@@ -227,16 +374,17 @@ export function ferroPoint(st: StationDef, x: number, y: number, z: number, out 
 }
 
 /**
- * Dépôt Ferro-9: the mining depot at the far edge of the belt, about 7.5 km
- * from Aurora-7, its hangar turned toward the hub.
+ * A mining depot (the Ferro-9 model) at the far edge of a belt, its hangar
+ * turned toward the hub: Ferro-9 about 7.5 km from Aurora-7, Vesta-2 about
+ * 7.4 km from Kepler-4.
  */
-function buildFerro(hub: Vector3, beltCenter: Vector3): StationDef {
-  const position = beltCenter.clone().add(new Vector3(2400, 150, -2000));
+function outpostStation(id: StationId, name: string, livery: StationDef['livery'], position: Vector3, hub: Vector3): StationDef {
   const toHub = hub.clone().sub(position).setY(0).normalize();
   const st: StationDef = {
-    id: 'ferro',
-    name: 'Dépôt Ferro-9',
+    id,
+    name,
     kind: 'outpost',
+    livery,
     yaw: Math.atan2(toHub.x, toHub.z),
     position,
     ringRadius: 0,

@@ -5,13 +5,14 @@ import { BOARD_RENEW, BOARD_SIZE, boardKinds, crates, MAX_ACTIVE, makeOffer, mis
 import { restoreSector, SAVE_VERSION, sectorSave, validateSave, type PilotSave, type SectorSave } from '../shared/save';
 import { effectiveStats, noMods, offerOf, SHIPYARD_STATION, UPGRADES, upgradeCost, type ShipStats, type UpgradeSlot } from '../shared/sim/upgrades';
 import { AIPilot } from '../shared/sim/ai';
-import { oreOf, PLATINUM_CHANCE } from '../shared/sim/mining';
+import { oreOf } from '../shared/sim/mining';
 import { mulberry32 } from '../shared/rng';
 import { SHIP_CLASSES } from '../shared/sim/shipClasses';
 import type { EntityId, ShipClassId, SimEvent } from '../shared/sim/types';
 import { TICK_DT, TICK_RATE, World } from '../shared/sim/world';
-import { buildZone, DOCK_MAX_SPEED, UNDOCK_DISTANCE, UNDOCK_SPEED, type StationDef } from '../shared/sim/zone';
-import type { ChatLine, ClientMessage, MarketView, PilotState, PlayerInfo, PlayerStats, ServerMessage } from '../shared/net/protocol';
+import { buildSector, DOCK_MAX_SPEED, UNDOCK_DISTANCE, UNDOCK_SPEED, type StationDef } from '../shared/sim/zone';
+import { isSectorId, JUMP_CHARGE, JUMP_CLEARANCE, JUMP_COOLDOWN, JUMP_ENERGY, SECTOR_HUB, SECTOR_NAMES, STATION_SECTOR, type SectorId } from '../shared/sectors';
+import type { ChatLine, ClientMessage, JumpView, MarketView, PilotState, PlayerInfo, PlayerStats, ServerMessage } from '../shared/net/protocol';
 import { PROTOCOL_VERSION, sanitizeChat, sanitizeInput, sanitizeName, snapshotShip } from '../shared/net/protocol';
 import type { ShipInput } from '../shared/sim/types';
 import { neutralInput } from '../shared/sim/types';
@@ -77,6 +78,30 @@ interface Session {
   fleet: PilotSave['fleet'];
   /** Contracts in progress (v0.6). */
   missions: Mission[];
+  /** The sector the pilot is in (v0.7): its ship, if any, lives in this sector's world. */
+  sector: Sector;
+  /** Hyperspace drive charging toward `to`, jumping at sim time `at`. */
+  jump: { to: SectorId; at: number } | null;
+  /** Sim time from which the drive may charge again. */
+  jumpReadyAt: number;
+}
+
+/**
+ * One region of space (v0.7): its World, who flies which ship there, its NPC
+ * pilots and its raid director. Every sector's world steps on every tick, so
+ * their clocks stay equal; entity ids are only unique within a sector.
+ */
+interface Sector {
+  id: SectorId;
+  world: World;
+  shipOwner: Map<EntityId, string>;
+  pilots: Map<EntityId, AIPilot>;
+  /** Spawns and raids (Aurora's is the stream the server used before sectors existed). */
+  rng: () => number;
+  /** Raids launched since the sector was last empty (sent to clients as `wave`). */
+  wave: number;
+  waveTimer: number;
+  wingmenTimers: number[];
 }
 
 /** A station's contract board: empty slots are refilled after OFFER_REFILL seconds. */
@@ -139,26 +164,25 @@ const _m = new Quaternion();
  * WebSocket transport for real multiplayer.
  */
 export class GameServer {
-  readonly world: World;
+  /** Every sector by id (v0.7). */
+  readonly sectors: Record<SectorId, Sector>;
   private sessions = new Map<string, Session>();
-  private shipOwner = new Map<EntityId, string>();
-  private pilots = new Map<EntityId, AIPilot>();
-  private rng;
   private accumulator = 0;
   private nextSession = 1;
   private snapshotEvery: number;
   private npcs: boolean;
-  /** Raids launched since the sector was last empty (sent to clients as `wave`). */
-  wave = 0;
-  private waveTimer = 4;
-  private wingmenTimers: number[] = [2, 2.5];
   readonly maxPlayers: number;
   private reconnectGrace: number;
   private now: () => number;
   private chatLog: ChatLine[] = [];
   private nextChatId = 1;
   private playersDirty = true;
-  readonly markets: Record<StationId, MarketState> = { aurora: createMarket('aurora'), ferro: createMarket('ferro') };
+  readonly markets: Record<StationId, MarketState> = {
+    aurora: createMarket('aurora'),
+    ferro: createMarket('ferro'),
+    kepler: createMarket('kepler'),
+    vesta: createMarket('vesta'),
+  };
   private marketClock = 0;
   readonly boards: Record<StationId, Board>;
   private boardRenewAt = BOARD_RENEW;
@@ -171,11 +195,23 @@ export class GameServer {
 
   constructor(opts: GameServerOptions = {}) {
     const seed = opts.seed ?? 1337;
-    this.world = new World(buildZone(seed));
-    this.rng = mulberry32(seed ^ 0x9e3779b9);
+    const sector = (id: SectorId): Sector => {
+      const world = new World(buildSector(id, seed));
+      return {
+        id,
+        world,
+        shipOwner: new Map(),
+        pilots: new Map(),
+        rng: mulberry32(world.zone.seed ^ 0x9e3779b9),
+        wave: 0,
+        waveTimer: 4,
+        wingmenTimers: [2, 2.5],
+      };
+    };
+    this.sectors = { aurora: sector('aurora'), kepler: sector('kepler') };
     this.lootRng = mulberry32(seed ^ 0x51ed270b);
     this.missionRng = mulberry32(seed ^ 0x2545f491);
-    this.boards = { aurora: this.newBoard('aurora'), ferro: this.newBoard('ferro') };
+    this.boards = { aurora: this.newBoard('aurora'), ferro: this.newBoard('ferro'), kepler: this.newBoard('kepler'), vesta: this.newBoard('vesta') };
     this.snapshotEvery = opts.snapshotEvery ?? 1;
     this.npcs = opts.npcs ?? true;
     this.maxPlayers = opts.maxPlayers ?? 30;
@@ -186,6 +222,45 @@ export class GameServer {
 
   get snapshotRate() {
     return TICK_RATE / this.snapshotEvery;
+  }
+
+  /** The Aurora sector's world: where new pilots start (tools and tests that predate sectors read it). */
+  get world(): World {
+    return this.sectors.aurora.world;
+  }
+
+  /** Raids launched in the Aurora sector since it was last empty. */
+  get wave() {
+    return this.sectors.aurora.wave;
+  }
+
+  /** Server sim time (every sector's world steps together). */
+  get time() {
+    return this.sectors.aurora.world.time;
+  }
+
+  /** The sector a session is in, its ship there (null when docked or destroyed) and its station (tests, tools). */
+  whereIs(sessionId: string): { sector: SectorId; shipId: EntityId | null; docked: StationId | null } | null {
+    const s = this.sessions.get(sessionId);
+    return s ? { sector: s.sector.id, shipId: s.shipId, docked: s.docked } : null;
+  }
+
+  /** Who is where, for the server's status page. */
+  sectorStatus() {
+    return Object.values(this.sectors).map((sector) => ({ id: sector.id, name: sector.world.zone.name, online: this.onlineIn(sector), wave: sector.wave }));
+  }
+
+  private sessionsIn(sector: Sector) {
+    let n = 0;
+    for (const s of this.sessions.values()) if (s.sector === sector) n++;
+    return n;
+  }
+
+  /** Pilots with a live connection in a sector (raids grow with them). */
+  private onlineIn(sector: Sector) {
+    let n = 0;
+    for (const s of this.sessions.values()) if (s.link && s.sector === sector) n++;
+    return n;
   }
 
   /** Players with a live connection. */
@@ -256,6 +331,9 @@ export class GameServer {
       lastChat: '',
       lastChatAt: -999,
       cargo: save ? { ...save.cargo } : {},
+      sector: this.sectors[save ? STATION_SECTOR[save.station] : 'aurora'],
+      jump: null,
+      jumpReadyAt: 0,
       // A returning pilot is back at its station, ship in the hangar; a new one starts in space.
       docked: save ? save.station : null,
       stored: save ? { hull: Math.min(cls.hull, fleet[shipClass]!.hull), shield: cls.shield, energy: cls.energy } : null,
@@ -282,7 +360,8 @@ export class GameServer {
       playerId: s.id,
       token: s.token,
       name: s.name,
-      zoneSeed: this.world.zone.seed,
+      sector: s.sector.id,
+      zoneSeed: s.sector.world.zone.seed,
       tickRate: TICK_RATE,
       snapshotRate: this.snapshotRate,
       resumed,
@@ -311,9 +390,10 @@ export class GameServer {
     // A resumed session already has a new link: the old socket closing must not detach it.
     if (!s || !s.link || (link && s.link !== link)) return;
     s.link = null;
-    s.offlineSince = this.world.time;
+    s.offlineSince = this.time;
     s.inputs.length = 0;
-    if (s.shipId !== null) this.world.setInput(s.shipId, neutralInput());
+    s.jump = null;
+    if (s.shipId !== null) s.sector.world.setInput(s.shipId, neutralInput());
     this.playersDirty = true;
   }
 
@@ -323,13 +403,13 @@ export class GameServer {
     if (!s) return;
     if (save && s.accountId !== null) this.onSave?.(s.accountId, this.pilotSave(s), true);
     if (s.shipId !== null) {
-      this.world.removeShip(s.shipId);
-      this.shipOwner.delete(s.shipId);
+      s.sector.world.removeShip(s.shipId);
+      s.sector.shipOwner.delete(s.shipId);
     }
     this.sessions.delete(id);
     this.playersDirty = true;
     if (this.sessions.size > 0) this.system(`${s.name} a quitté le secteur`);
-    else this.resetSector();
+    if (!this.sessionsIn(s.sector)) this.resetSector(s.sector);
   }
 
   /** Ends an account's session without saving it: the account is now played elsewhere. */
@@ -342,15 +422,15 @@ export class GameServer {
     }
   }
 
-  /** Last pilot left: clear the pirates so the next visitor meets a small raid first. */
-  private resetSector() {
-    for (const ship of [...this.world.ships.values()]) {
+  /** Last pilot left the sector: clear the pirates so the next visitor meets a small raid first. */
+  private resetSector(sector: Sector) {
+    for (const ship of [...sector.world.ships.values()]) {
       if (ship.faction !== 'raiders') continue;
-      this.world.removeShip(ship.id);
-      this.pilots.delete(ship.id);
+      sector.world.removeShip(ship.id);
+      sector.pilots.delete(ship.id);
     }
-    this.wave = 0;
-    this.waveTimer = 4;
+    sector.wave = 0;
+    sector.waveTimer = 4;
   }
 
   receive(sessionId: string, msg: ClientMessage) {
@@ -362,7 +442,7 @@ export class GameServer {
         const input = sanitizeInput(msg.input);
         if (!input) return;
         s.lastSeq = msg.seq;
-        s.lastInputAt = this.world.time;
+        s.lastInputAt = this.time;
         s.inputs.push({ seq: msg.seq, input });
         // A client far ahead of the server clock (or flooding): keep only the newest inputs.
         if (s.inputs.length > MAX_QUEUED_INPUTS) s.inputs.splice(0, s.inputs.length - MAX_QUEUED_INPUTS);
@@ -408,6 +488,10 @@ export class GameServer {
         if (msg.op === 'accept') this.acceptMission(s, msg.id);
         else this.abandonMission(s, msg.id);
         break;
+      case 'jump':
+        if (msg.to === null) this.cancelJump(s, 'Saut annulé.');
+        else this.startJump(s, msg.to);
+        break;
     }
   }
 
@@ -416,13 +500,19 @@ export class GameServer {
   }
 
   private station(id: StationId): StationDef {
-    return this.world.zone.stations.find((st) => st.id === id) ?? this.world.zone.station;
+    const zone = this.sectors[STATION_SECTOR[id]].world.zone;
+    return zone.stations.find((st) => st.id === id) ?? zone.station;
+  }
+
+  /** The pilot's ship in space, if any. */
+  private shipOf(s: Session) {
+    return s.shipId !== null ? s.sector.world.ships.get(s.shipId) : undefined;
   }
 
   /** A ship slow enough at a hangar mouth leaves space and waits at the station. */
   private dock(s: Session) {
-    const w = this.world;
-    const ship = s.shipId !== null ? w.ships.get(s.shipId) : undefined;
+    const w = s.sector.world;
+    const ship = this.shipOf(s);
     if (s.docked || !ship || !ship.alive) return;
     const st = w.zone.stations.find((x) => ship.position.distanceTo(x.dock.mouth) <= x.dock.radius);
     if (!st) return this.notice(s, "Amarrage : approchez-vous de l'entrée d'un hangar.", 'warn');
@@ -432,9 +522,10 @@ export class GameServer {
     const cls = this.shipStats(s);
     s.stored = { hull: ship.hull, shield: cls.shield, energy: cls.energy };
     w.removeShip(ship.id);
-    this.shipOwner.delete(ship.id);
+    s.sector.shipOwner.delete(ship.id);
     s.shipId = null;
     s.inputs.length = 0;
+    s.jump = null;
     s.docked = st.id;
     s.home = st.id;
     s.pilotDirty = true;
@@ -532,7 +623,7 @@ export class GameServer {
 
   /** Once a second: refill taken slots, and renew every board now and then so offers do not go stale. */
   private stepBoards() {
-    const t = this.world.time;
+    const t = this.time;
     const changed = new Set<StationId>();
     if (t >= this.boardRenewAt) {
       this.boardRenewAt = t + BOARD_RENEW;
@@ -568,7 +659,7 @@ export class GameServer {
     if (s.missions.length >= MAX_ACTIVE) return this.notice(s, `Contrats : ${MAX_ACTIVE} au maximum en même temps.`, 'warn');
     if (crates(offer) > this.holdSpace(s) - cargoTotal(s.cargo)) return this.notice(s, `Il faut ${crates(offer)} places libres en soute pour ces caisses.`, 'warn');
     board.offers[i] = null;
-    board.refillAt[i] = this.world.time + OFFER_REFILL;
+    board.refillAt[i] = this.time + OFFER_REFILL;
     s.missions.push({ ...offer });
     s.pilotDirty = true;
     this.notice(s, `Contrat accepté : ${missionTitle(offer)}`, 'good');
@@ -697,7 +788,7 @@ export class GameServer {
   /** What an account keeps of this session: wallet, hold, score, station and ships. */
   private pilotSave(s: Session): PilotSave {
     const max = this.shipStats(s).hull;
-    const ship = s.shipId !== null ? this.world.ships.get(s.shipId) : undefined;
+    const ship = this.shipOf(s);
     // Destroyed and waiting to respawn: the next ship comes out of the hangar intact.
     const hull = s.stored ? s.stored.hull : ship ? ship.hull : max;
     const flownHull = Math.max(1, Math.min(max, Math.round(hull * 10) / 10));
@@ -746,16 +837,17 @@ export class GameServer {
 
   /** Whole units of ore under the beams go into the miners' holds. */
   private collectOre() {
-    const w = this.world;
     for (const s of this.sessions.values()) {
-      const ship = s.shipId !== null ? w.ships.get(s.shipId) : undefined;
+      const ship = this.shipOf(s);
       if (!ship || ship.mining === null || ship.mineProgress < 1) continue;
-      const ore = oreOf(w.zone.asteroids[ship.mining].variant);
+      const zone = s.sector.world.zone;
+      const ore = oreOf(zone.asteroids[ship.mining].variant);
       const units = Math.floor(ship.mineProgress);
       const cap = this.holdSpace(s);
       let added = 0;
       for (; added < units; added++) {
-        const item: ItemId = ore === 'ironNickel' && this.lootRng() < PLATINUM_CHANCE ? 'platinum' : ore;
+        // The richer Kepler belt yields more platinum.
+        const item: ItemId = ore === 'ironNickel' && this.lootRng() < zone.platinum ? 'platinum' : ore;
         if (!addCargo(s.cargo, item, 1, cap)) break;
         this.mined(s, item);
         if (item === 'platinum') this.notice(s, 'Pépite de platine !', 'good');
@@ -773,7 +865,7 @@ export class GameServer {
   private chat(s: Session, raw: string) {
     const text = sanitizeChat(raw);
     if (!text || !s.link) return;
-    const t = this.world.time;
+    const t = this.time;
     s.chatTimes = s.chatTimes.filter((x) => t - x < CHAT_WINDOW);
     if (s.chatTimes.length >= CHAT_BURST) {
       s.link.send({ t: 'notice', text: 'Chat : trop de messages, patientez quelques secondes.', tone: 'warn' });
@@ -803,8 +895,8 @@ export class GameServer {
 
   private setPvp(s: Session, on: boolean) {
     if (s.pvp === on || !s.link) return;
-    const t = this.world.time;
-    const ship = s.shipId !== null ? this.world.ships.get(s.shipId) : undefined;
+    const t = this.time;
+    const ship = this.shipOf(s);
     if (t - s.pvpChangedAt < PVP_SWITCH_COOLDOWN) {
       s.link.send({ t: 'notice', text: 'PvP : changement trop rapide, réessayez dans quelques secondes.', tone: 'warn' });
       return;
@@ -834,6 +926,7 @@ export class GameServer {
       deaths: s.stats.deaths,
       ping: s.ping,
       online: s.link !== null,
+      sector: s.sector.id,
     }));
   }
 
@@ -847,13 +940,14 @@ export class GameServer {
   }
 
   tick() {
-    const w = this.world;
+    const t0 = this.time;
     // One buffered input per player per tick, so client prediction replays the same steps.
     for (const s of this.sessions.values()) {
+      const w = s.sector.world;
       const next = s.inputs.shift();
       if (!next) {
         // No input for a second (frozen or backgrounded client): cut the engines and the guns.
-        if (s.shipId !== null && w.time - s.lastInputAt > INPUT_TIMEOUT && w.time - s.lastInputAt < INPUT_TIMEOUT + TICK_DT * 1.5) {
+        if (s.shipId !== null && t0 - s.lastInputAt > INPUT_TIMEOUT && t0 - s.lastInputAt < INPUT_TIMEOUT + TICK_DT * 1.5) {
           const ship = w.ships.get(s.shipId);
           if (ship) w.setInput(s.shipId, { ...neutralInput(), flightAssist: ship.input.flightAssist });
         }
@@ -862,13 +956,18 @@ export class GameServer {
       s.ackSeq = next.seq;
       if (s.shipId !== null) w.setInput(s.shipId, next.input);
     }
-    for (const pilot of this.pilots.values()) {
-      const input = pilot.update(w, TICK_DT);
-      w.setInput(pilot.shipId, input);
+    const events = new Map<Sector, SimEvent[]>();
+    for (const sector of Object.values(this.sectors)) {
+      const w = sector.world;
+      for (const pilot of sector.pilots.values()) {
+        const input = pilot.update(w, TICK_DT);
+        w.setInput(pilot.shipId, input);
+      }
+      w.step(TICK_DT);
+      const list = w.drainEvents();
+      this.handleEvents(sector, list);
+      events.set(sector, list);
     }
-    w.step(TICK_DT);
-    const events = w.drainEvents();
-    this.handleEvents(events);
     this.collectOre();
     this.marketClock += TICK_DT;
     if (this.marketClock >= 1) {
@@ -877,14 +976,16 @@ export class GameServer {
       for (const s of this.sessions.values()) this.sendMarket(s);
       this.stepBoards();
     }
-    if (this.npcs && this.sessions.size > 0) this.directWaves(TICK_DT);
+    if (this.npcs) for (const sector of Object.values(this.sectors)) if (this.sessionsIn(sector) > 0) this.directWaves(sector, TICK_DT);
 
+    const t = this.time;
     for (const s of [...this.sessions.values()]) {
       if (!s.link) {
-        if (w.time - s.offlineSince >= this.reconnectGrace) this.disconnect(s.id);
+        if (t - s.offlineSince >= this.reconnectGrace) this.disconnect(s.id);
         continue;
       }
-      if (s.shipId === null && s.respawnAt > 0 && w.time >= s.respawnAt) this.spawnPlayer(s);
+      if (s.jump) this.stepJump(s);
+      if (s.shipId === null && s.respawnAt > 0 && t >= s.respawnAt) this.spawnPlayer(s);
       if (s.pilotDirty) {
         s.pilotDirty = false;
         s.saveDirty = true;
@@ -896,27 +997,35 @@ export class GameServer {
       }
     }
 
-    if (events.length) this.broadcast({ t: 'events', tick: w.tick, events });
-    if (w.tick % this.snapshotEvery === 0) this.sendSnapshots();
-    if (this.playersDirty || w.tick % TICK_RATE === 0) {
+    // Jumps add their own events: read the lists again.
+    for (const sector of Object.values(this.sectors)) {
+      const list = events.get(sector)!;
+      list.push(...sector.world.drainEvents());
+      if (list.length) this.broadcastIn(sector, { t: 'events', tick: sector.world.tick, events: list });
+    }
+    const tick = this.world.tick;
+    if (tick % this.snapshotEvery === 0) for (const sector of Object.values(this.sectors)) this.sendSnapshots(sector);
+    if (this.playersDirty || tick % TICK_RATE === 0) {
       this.playersDirty = false;
       this.broadcast({ t: 'players', list: this.playerList(), max: this.maxPlayers });
     }
   }
 
-  private sendSnapshots() {
-    const w = this.world;
-    const snap = { tick: w.tick, time: w.time, ships: [...w.ships.values()].map(snapshotShip) };
-    // The world part is identical for everyone: serialise it once for network links.
+  private sendSnapshots(sector: Sector) {
+    const w = sector.world;
+    let snap: { tick: number; time: number; ships: ReturnType<typeof snapshotShip>[] } | null = null;
+    // The world part is identical for everyone in the sector: serialise it once for network links.
     let snapJson: string | null = null;
     for (const s of this.sessions.values()) {
-      if (!s.link) continue;
+      if (!s.link || s.sector !== sector) continue;
+      snap ??= { tick: w.tick, time: w.time, ships: [...w.ships.values()].map(snapshotShip) };
       const personal = {
         ackSeq: s.ackSeq,
         you: s.shipId,
         stats: s.stats,
-        wave: this.wave,
+        wave: sector.wave,
         respawnIn: s.shipId === null ? Math.max(0, s.respawnAt - w.time) : 0,
+        jump: this.jumpView(s),
       };
       if (s.link.sendRaw) {
         snapJson ??= JSON.stringify(snap);
@@ -931,19 +1040,24 @@ export class GameServer {
     for (const s of this.sessions.values()) s.link?.send(msg);
   }
 
-  private handleEvents(events: SimEvent[]) {
+  private broadcastIn(sector: Sector, msg: ServerMessage) {
+    for (const s of this.sessions.values()) if (s.sector === sector) s.link?.send(msg);
+  }
+
+  private handleEvents(sector: Sector, events: SimEvent[]) {
     for (const e of events) {
       if (e.type !== 'destroyed') continue;
-      this.pilots.delete(e.ship);
-      const ownerSession = this.shipOwner.get(e.ship);
+      sector.pilots.delete(e.ship);
+      const ownerSession = sector.shipOwner.get(e.ship);
       if (ownerSession) {
-        this.shipOwner.delete(e.ship);
+        sector.shipOwner.delete(e.ship);
         const s = this.sessions.get(ownerSession);
         if (s) {
           s.shipId = null;
           s.stats.deaths++;
           s.saveDirty = true;
-          s.respawnAt = this.world.time + 5;
+          s.respawnAt = this.time + 5;
+          s.jump = null;
           this.playersDirty = true;
           if (cargoTotal(s.cargo) > 0) {
             s.cargo = {};
@@ -955,10 +1069,10 @@ export class GameServer {
         }
       }
       if (e.faction === 'union' && !ownerSession) {
-        this.wingmenTimers.push(20);
+        sector.wingmenTimers.push(20);
       }
       if (e.by !== null) {
-        const killer = this.shipOwner.get(e.by);
+        const killer = sector.shipOwner.get(e.by);
         const ks = killer ? this.sessions.get(killer) : undefined;
         if (ks && ks.id !== ownerSession) {
           ks.stats.kills++;
@@ -976,11 +1090,12 @@ export class GameServer {
     }
   }
 
-  /** Puts the player's ship in space: near the spawn point, or where given (undocking). */
+  /** Puts the player's ship in space, in its sector: near the spawn point, or where given (undocking, jump arrival). */
   private spawnPlayer(s: Session, position?: Vector3, rotation?: Quaternion, velocity?: Vector3) {
-    const z = this.world.zone;
-    const offset = _v.set((this.rng() - 0.5) * 120, (this.rng() - 0.5) * 40, (this.rng() - 0.5) * 60);
-    const ship = this.world.spawnShip({
+    const sector = s.sector;
+    const z = sector.world.zone;
+    const offset = _v.set((sector.rng() - 0.5) * 120, (sector.rng() - 0.5) * 40, (sector.rng() - 0.5) * 60);
+    const ship = sector.world.spawnShip({
       classId: s.ship,
       mods: s.fleet[s.ship]!.mods,
       faction: 'union',
@@ -994,73 +1109,173 @@ export class GameServer {
     s.shipId = ship.id;
     this.playersDirty = true;
     s.respawnAt = 0;
-    this.shipOwner.set(ship.id, s.id);
+    sector.shipOwner.set(ship.id, s.id);
     return ship;
   }
 
-  private spawnNpc(classId: ShipClassId, faction: 'union' | 'raiders', name: string, pos: Vector3, skill: number, home: Vector3, anchor = home) {
+  /** What the pilot's drive is doing, for its HUD. */
+  private jumpView(s: Session): JumpView {
+    const t = this.time;
+    return {
+      to: s.jump?.to ?? null,
+      left: s.jump ? Math.max(0, Math.round((s.jump.at - t) * 10) / 10) : 0,
+      cooldown: Math.max(0, Math.round((s.jumpReadyAt - t) * 10) / 10),
+    };
+  }
+
+  /**
+   * Why the drive cannot jump right now, or null: `text` refuses a new
+   * charge, `cancel` explains why a charge in progress stopped.
+   */
+  private jumpBlocked(s: Session, to: SectorId): { text: string; cancel: string } | null {
+    const ship = this.shipOf(s);
+    if (s.docked || !ship || !ship.alive) return { text: 'Saut impossible : il faut être en vol.', cancel: '' };
+    if (to === s.sector.id) return { text: `Saut impossible : vous êtes déjà dans le ${SECTOR_NAMES[to]}.`, cancel: '' };
+    const t = this.time;
+    if (t < s.jumpReadyAt) return { text: `Saut : réacteur hyperspatial en recharge (${Math.ceil(s.jumpReadyAt - t)} s).`, cancel: '' };
+    for (const st of s.sector.world.zone.stations) {
+      if (ship.position.distanceTo(st.position) >= JUMP_CLEARANCE) continue;
+      const km = String(JUMP_CLEARANCE / 1000).replace('.', ',');
+      return { text: `Saut impossible près d'une station : éloignez-vous à plus de ${km} km.`, cancel: `Saut annulé : trop près de ${st.name}.` };
+    }
+    if (t - ship.lastPvpCombat < PVP_COMBAT_LOCK) return { text: 'Saut impossible : combat PvP en cours.', cancel: 'Saut annulé : combat PvP en cours.' };
+    if (ship.energy < this.shipStats(s).energy * JUMP_ENERGY) {
+      const pct = Math.round(JUMP_ENERGY * 100);
+      return { text: `Saut : énergie insuffisante (il faut ${pct} % du condensateur).`, cancel: `Saut annulé : énergie sous ${pct} %.` };
+    }
+    return null;
+  }
+
+  /** J: the drive charges for JUMP_CHARGE seconds, then the ship jumps (stepJump). Again while charging: cancel. */
+  private startJump(s: Session, to: SectorId) {
+    if (!isSectorId(to)) return;
+    if (s.jump) return this.cancelJump(s, 'Saut annulé.');
+    const why = this.jumpBlocked(s, to);
+    if (why) return this.notice(s, why.text, 'warn');
+    s.jump = { to, at: this.time + JUMP_CHARGE };
+    this.notice(s, `Réacteur hyperspatial en charge : saut vers le ${SECTOR_NAMES[to]} dans ${JUMP_CHARGE} s`, 'info');
+  }
+
+  private cancelJump(s: Session, text: string) {
+    if (!s.jump) return;
+    s.jump = null;
+    if (text) this.notice(s, text, 'warn');
+  }
+
+  /** While charging: the conditions must hold until the end, then the ship jumps. */
+  private stepJump(s: Session) {
+    const jump = s.jump!;
+    const why = this.jumpBlocked(s, jump.to);
+    if (why) return this.cancelJump(s, why.cancel);
+    if (this.time >= jump.at) this.jumpNow(s, jump.to);
+  }
+
+  /**
+   * The ship leaves its sector's world and appears at the destination's jump
+   * point, with its hull, shield, cargo and contracts; the jump takes
+   * JUMP_ENERGY of the capacitor. The client is told first (`sector`), so the
+   * snapshots it gets next are from the new sector.
+   */
+  private jumpNow(s: Session, to: SectorId) {
+    const from = s.sector;
+    const dest = this.sectors[to];
+    const ship = this.shipOf(s)!;
+    const cls = this.shipStats(s);
+    const kept = { hull: ship.hull, shield: ship.shield, energy: Math.max(0, ship.energy - cls.energy * JUMP_ENERGY) };
+    from.world.emit({ type: 'jumpOut', ship: ship.id, pos: [ship.position.x, ship.position.y, ship.position.z], classId: ship.classId });
+    from.world.removeShip(ship.id);
+    from.shipOwner.delete(ship.id);
+    s.shipId = null;
+    s.jump = null;
+    s.inputs.length = 0;
+    s.sector = dest;
+    // Logging off in this sector's space brings the pilot back to its hub, not to a station a jump away.
+    s.home = SECTOR_HUB[to];
+    s.jumpReadyAt = this.time + JUMP_COOLDOWN;
+    s.saveDirty = true;
+    s.link?.send({ t: 'sector', sector: to, zoneSeed: dest.world.zone.seed });
+
+    const z = dest.world.zone;
+    const at = z.jumpPoint.clone().add(new Vector3((dest.rng() - 0.5) * 300, (dest.rng() - 0.5) * 100, (dest.rng() - 0.5) * 300));
+    const look = z.station.position.clone().sub(at).normalize();
+    const arrived = this.spawnPlayer(s, at, new Quaternion().setFromUnitVectors(new Vector3(0, 0, -1), look), look.clone().multiplyScalar(60));
+    arrived.hull = kept.hull;
+    arrived.shield = kept.shield;
+    arrived.energy = kept.energy;
+    dest.world.emit({ type: 'jumpIn', ship: arrived.id, pos: [at.x, at.y, at.z], classId: arrived.classId });
+    s.pilotDirty = true;
+    this.playersDirty = true;
+    this.notice(s, `Arrivée : ${z.name}`, 'good');
+    if (!this.sessionsIn(from)) this.resetSector(from);
+  }
+
+  private spawnNpc(sector: Sector, classId: ShipClassId, faction: 'union' | 'raiders', name: string, pos: Vector3, skill: number, home: Vector3, anchor = home) {
     // Face the station on arrival.
     const look = _v.copy(home).sub(pos).normalize();
     _m.setFromUnitVectors(new Vector3(0, 0, -1), look);
-    const ship = this.world.spawnShip({ classId, faction, name, position: pos, rotation: _m });
-    this.pilots.set(ship.id, new AIPilot(ship.id, mulberry32(Math.floor(this.rng() * 2 ** 31)), skill, home.clone(), anchor.clone()));
+    const ship = sector.world.spawnShip({ classId, faction, name, position: pos, rotation: _m });
+    sector.pilots.set(ship.id, new AIPilot(ship.id, mulberry32(Math.floor(sector.rng() * 2 ** 31)), skill, home.clone(), anchor.clone()));
     return ship;
   }
 
   /** A point ~3 km from the station, away from the asteroid belt, with no obstacle nearby. */
-  private findOpenSpawn(): Vector3 {
-    const w = this.world;
+  private findOpenSpawn(sector: Sector): Vector3 {
+    const w = sector.world;
+    const rng = sector.rng;
     const station = w.zone.station.position;
     const beltDir = w.zone.beltCenter.clone().sub(station).normalize();
     const p = new Vector3();
     for (let attempt = 0; attempt < 40; attempt++) {
-      const dir = new Vector3(this.rng() - 0.5, (this.rng() - 0.5) * 0.5, this.rng() - 0.5).normalize();
+      const dir = new Vector3(rng() - 0.5, (rng() - 0.5) * 0.5, rng() - 0.5).normalize();
       if (dir.dot(beltDir) > 0.2) continue;
-      p.copy(station).addScaledVector(dir, 2800 + this.rng() * 600);
+      p.copy(station).addScaledVector(dir, 2800 + rng() * 600);
       if (w.grid.query(p, 600).every((c) => c.center.distanceTo(p) > c.radius + 600)) return p;
     }
     return p.copy(station).add(new Vector3(-3000, 400, 0));
   }
 
-  private directWaves(dt: number) {
-    const w = this.world;
+  private directWaves(sector: Sector, dt: number) {
+    const w = sector.world;
+    const rng = sector.rng;
     // Allied wingmen defending the station.
-    for (let i = this.wingmenTimers.length - 1; i >= 0; i--) {
-      this.wingmenTimers[i] -= dt;
-      if (this.wingmenTimers[i] <= 0) {
-        this.wingmenTimers.splice(i, 1);
-        const pos = w.zone.playerSpawn.clone().add(new Vector3((this.rng() - 0.5) * 400, 80 + this.rng() * 80, 150));
-        const n = Math.floor(this.rng() * 90 + 10);
-        this.spawnNpc('warden', 'union', `Garde ${n}`, pos, 0.7, w.zone.playerSpawn.clone(), w.zone.station.position);
+    for (let i = sector.wingmenTimers.length - 1; i >= 0; i--) {
+      sector.wingmenTimers[i] -= dt;
+      if (sector.wingmenTimers[i] <= 0) {
+        sector.wingmenTimers.splice(i, 1);
+        const pos = w.zone.playerSpawn.clone().add(new Vector3((rng() - 0.5) * 400, 80 + rng() * 80, 150));
+        const n = Math.floor(rng() * 90 + 10);
+        this.spawnNpc(sector, 'warden', 'union', `Garde ${n}`, pos, 0.7, w.zone.playerSpawn.clone(), w.zone.station.position);
       }
     }
 
     let hostiles = 0;
     for (const s of w.ships.values()) if (s.faction === 'raiders') hostiles++;
     if (hostiles > 0) return;
-    this.waveTimer -= dt;
-    if (this.waveTimer > 0) return;
+    sector.waveTimer -= dt;
+    if (sector.waveTimer > 0) return;
 
     // Pirate raids, not arcade waves: after one is beaten the sector stays calm for a while, and
     // raids grow only a little (the number of pilots online matters more than the raid count).
-    this.wave++;
-    this.waveTimer = RAID_CALM_MIN + this.rng() * (RAID_CALM_MAX - RAID_CALM_MIN);
-    const extra = Math.min(Math.max(0, this.onlineCount - 1), 6);
-    const threat = Math.min(this.wave, 4);
+    // The Kepler sector (danger 1) starts a step harder.
+    sector.wave++;
+    sector.waveTimer = RAID_CALM_MIN + rng() * (RAID_CALM_MAX - RAID_CALM_MIN);
+    const extra = Math.min(Math.max(0, this.onlineIn(sector) - 1), 6);
+    const step = sector.wave + w.zone.danger;
+    const threat = Math.min(step, 4 + w.zone.danger);
     const raiders = Math.min(2 + threat + extra, 12);
-    const marauders = Math.min((this.wave >= 3 ? 1 : 0) + Math.floor(extra / 3), 4);
+    const marauders = Math.min((step >= 3 ? 1 : 0) + Math.floor(extra / 3), 4);
     // Pirates jump in from open space ~3 km out and converge on the station.
     const station = w.zone.station.position;
-    const center = this.findOpenSpawn();
+    const center = this.findOpenSpawn(sector);
     const home = station.clone().lerp(w.zone.playerSpawn, 0.6);
-    const squad = String(Math.floor(this.rng() * 90 + 10));
+    const squad = String(Math.floor(rng() * 90 + 10));
     for (let i = 0; i < raiders + marauders; i++) {
-      const pos = center.clone().add(new Vector3((this.rng() - 0.5) * 500, (this.rng() - 0.5) * 200, (this.rng() - 0.5) * 500));
+      const pos = center.clone().add(new Vector3((rng() - 0.5) * 500, (rng() - 0.5) * 200, (rng() - 0.5) * 500));
       const cls: ShipClassId = i < raiders ? 'raider' : 'marauder';
       const label = cls === 'raider' ? 'Raider' : 'Marauder';
-      this.spawnNpc(cls, 'raiders', `${label}-${squad}${String.fromCharCode(65 + i)}`, pos, Math.min(0.45 + threat * 0.08, 0.8), home, station);
+      this.spawnNpc(sector, cls, 'raiders', `${label}-${squad}${String.fromCharCode(65 + i)}`, pos, Math.min(0.45 + threat * 0.08, 0.85), home, station);
     }
-    this.broadcast({
+    this.broadcastIn(sector, {
       t: 'notice',
       text: `RAID PIRATE — ${raiders + marauders} contacts en approche de ${w.zone.station.name.replace(/^Station\s+/, '')}`,
       tone: 'warn',

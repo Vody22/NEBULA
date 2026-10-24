@@ -65,6 +65,7 @@ describe('contract offers', () => {
   it('are varied, bounded, and point at a real destination', () => {
     const rng = mulberry32(7);
     const kinds = new Set<string>();
+    const couriers = { near: [] as number[], far: [] as number[] };
     for (let i = 0; i < 300; i++) {
       const m = makeOffer(rng, 'ferro', i + 1);
       kinds.add(m.kind);
@@ -72,13 +73,22 @@ describe('contract offers', () => {
       expect(m.count).toBeLessThanOrEqual(15);
       expect(m.reward).toBeGreaterThan(0);
       expect(m.reward % 10).toBe(0);
-      if (m.kind === 'courier') expect(m.target).toBe('aurora');
-      else expect(m.target).toBe('ferro');
+      // Courier: Aurora-7 in the same sector, or a Kepler station (a jump away, paid more).
+      if (m.kind === 'courier') {
+        expect(['aurora', 'kepler', 'vesta']).toContain(m.target);
+        couriers[m.target === 'aurora' ? 'near' : 'far'].push(m.reward / m.count);
+      } else expect(m.target).toBe('ferro');
       if (m.kind === 'mining') expect(['carbon', 'regolith', 'silicates', 'ironNickel']).toContain(m.item);
       // Courier crates always fit an empty Falcon.
       if (m.kind === 'courier') expect(m.count).toBeLessThanOrEqual(CARGO);
     }
     expect([...kinds].sort()).toEqual(['courier', 'hunt', 'mining']);
+    // About a third of the deliveries cross sectors, and they pay more per crate.
+    const share = couriers.far.length / (couriers.far.length + couriers.near.length);
+    expect(share).toBeGreaterThan(0.2);
+    expect(share).toBeLessThan(0.5);
+    const mean = (l: number[]) => l.reduce((a, b) => a + b, 0) / l.length;
+    expect(mean(couriers.far)).toBeGreaterThan(mean(couriers.near) * 1.5);
   });
 
   it('are shown on docking, and a taken one leaves the board for everyone until it is replaced', () => {

@@ -178,7 +178,7 @@ describe('pilot saves', () => {
     const eq = c.server.markets.aurora.water.eq;
     expect(Math.abs(c.server.markets.aurora.water.stock - eq)).toBeLessThan(Math.abs(sold - eq) * 0.5);
     // Junk is ignored, stocks are clamped.
-    const markets = { aurora: createMarket('aurora'), ferro: createMarket('ferro') };
+    const markets = { aurora: createMarket('aurora'), ferro: createMarket('ferro'), kepler: createMarket('kepler'), vesta: createMarket('vesta') };
     expect(restoreSector(markets, { v: 1, savedAt: 0, stocks: { mars: { water: 5 }, aurora: { water: -10, medicine: 1e9, gold: 3 } } })).toBe(2);
     expect(markets.aurora.water.stock).toBe(0);
     expect(markets.aurora.medicine.stock).toBe(markets.aurora.medicine.ref * 10);

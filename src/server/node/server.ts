@@ -182,6 +182,7 @@ export function startServer(opts: NodeServerOptions): Promise<RunningServer> {
           game: 'NEBULA FRONTIER',
           protocol: PROTOCOL_VERSION,
           sector: game.world.zone.name,
+          sectors: game.sectorStatus(),
           online: game.onlineCount,
           players: game.sessionCount,
           max: game.maxPlayers,
