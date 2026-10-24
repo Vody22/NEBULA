@@ -38,6 +38,41 @@ describe('ship physics', () => {
     expect(s.energy).toBeLessThan(SHIP_CLASSES.falcon.energy);
   });
 
+  it('an emptied capacitor stops the boost cleanly until it is back to 30 %', () => {
+    const w = emptyWorld();
+    const s = w.spawnShip({ classId: 'falcon', faction: 'union', name: 't', position: new Vector3(5e4, 0, 0) });
+    s.input.throttle = 1;
+    s.input.boost = true;
+    // Boost held all along: every time it comes back on, the capacitor is at 30 % at least.
+    const restarts: number[] = [];
+    let was = false;
+    let emptied = 0;
+    for (let i = 0; i < 60 * 30; i++) {
+      w.step();
+      if (s.boosting && !was && w.time > TICK_DT * 2) restarts.push(s.energy / SHIP_CLASSES.falcon.energy);
+      if (!s.boosting && was) emptied++;
+      was = s.boosting;
+    }
+    expect(emptied).toBeGreaterThan(0);
+    expect(restarts.length).toBeGreaterThan(0);
+    for (const r of restarts) expect(r).toBeGreaterThan(0.29);
+    // Right after emptying, the boost stays off while energy comes back.
+    const w2 = emptyWorld();
+    const t = w2.spawnShip({ classId: 'falcon', faction: 'union', name: 't', position: new Vector3(5e4, 0, 0) });
+    t.input.boost = true;
+    t.energy = 2;
+    run(w2, 0.1);
+    expect(t.weaponsLocked).toBe(true);
+    expect(t.boosting).toBe(false);
+    run(w2, 1.5);
+    expect(t.energy).toBeGreaterThan(2);
+    expect(t.energy).toBeLessThan(SHIP_CLASSES.falcon.energy * 0.3);
+    expect(t.boosting).toBe(false);
+    for (let i = 0; i < 60 * 20 && !t.boosting; i++) w2.step();
+    expect(t.boosting).toBe(true);
+    expect(t.energy).toBeGreaterThan(SHIP_CLASSES.falcon.energy * 0.29);
+  });
+
   it('turning with flight assist produces drift that decays', () => {
     const w = emptyWorld();
     const s = w.spawnShip({ classId: 'falcon', faction: 'union', name: 't', position: new Vector3(5e4, 0, 0) });

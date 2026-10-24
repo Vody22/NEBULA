@@ -210,7 +210,7 @@ export const ALERT_LINES: Record<AlertId, { text: string; priority: number; cool
   shieldsBack: { text: 'Boucliers rétablis', priority: 1, cooldown: 10 },
   hullDamaged: { text: 'Coque endommagée', priority: 3, cooldown: 20 },
   hullCritical: { text: 'Coque critique', priority: 4, cooldown: 10 },
-  energyLow: { text: 'Énergie insuffisante, armes en recharge', priority: 2, cooldown: 10 },
+  energyLow: { text: 'Énergie épuisée : boost et armes en recharge', priority: 2, cooldown: 10 },
   weaponsReady: { text: 'Armes prêtes', priority: 0, cooldown: 6 },
   targetDestroyed: { text: 'Cible détruite', priority: 1, cooldown: 2 },
   docked: { text: 'Amarrage confirmé', priority: 1, cooldown: 5 },

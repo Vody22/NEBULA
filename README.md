@@ -129,7 +129,7 @@ Sur un écran tactile, le jeu affiche ses commandes à l'écran. Il se joue en m
 
 Sur mobile, la qualité graphique basse est choisie par défaut (`?q=high` pour la forcer). `?touch` affiche les commandes tactiles sur un ordinateur.
 
-Le tir consomme l'énergie du condensateur. Elle ne se recharge que 0,6 s après le dernier tir et hors boost ; si elle tombe à zéro, les armes restent hors ligne jusqu'à 30 % (« ARMES EN RECHARGE »).
+Le tir et le boost consomment l'énergie du condensateur. Elle ne se recharge que 0,6 s après le dernier tir et hors boost ; si elle tombe à zéro, les armes et le boost restent hors ligne jusqu'à 30 % (« ÉNERGIE ÉPUISÉE · RECHARGE » dans le HUD, avec une alerte de bord).
 
 ## Architecture
 
