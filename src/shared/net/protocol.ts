@@ -60,6 +60,8 @@ export interface PilotState {
   docked: StationId | null;
   /** The docked ship's hull, for the repair counter (null in space). */
   hull: number | null;
+  /** The docked ship's components (v0.8), for the repair counter (null in space). */
+  parts: Record<ComponentId, number> | null;
   /** Hull of the ship flown, upgrades included. */
   hullMax: number;
   /** The ship flown. */

@@ -15,7 +15,9 @@ import { isSectorId, JUMP_CHARGE, JUMP_CLEARANCE, JUMP_COOLDOWN, JUMP_ENERGY, SE
 import type { ChatLine, ClientMessage, JumpView, MarketView, PilotState, PlayerInfo, PlayerStats, ServerMessage } from '../shared/net/protocol';
 import { PROTOCOL_VERSION, sanitizeChat, sanitizeInput, sanitizeName, snapshotShip } from '../shared/net/protocol';
 import type { ShipInput } from '../shared/sim/types';
-import { neutralInput } from '../shared/sim/types';
+import { intactParts, neutralInput } from '../shared/sim/types';
+import { allIntact, componentRepairCost } from '../shared/physics/damage';
+import type { ComponentId } from '../shared/physics/hitboxes';
 
 /** Anything able to deliver server messages to one client (in-process, WebSocket...). */
 export interface ClientLink {
@@ -65,7 +67,7 @@ interface Session {
   cargo: Cargo;
   /** Docked at this station: the ship has left space and waits in `stored`. */
   docked: StationId | null;
-  stored: { hull: number; shield: number; energy: number } | null;
+  stored: { hull: number; shield: number; energy: number; parts: Record<ComponentId, number> } | null;
   /** Credits, cargo or docking changed: send a `pilot` message at the end of the tick. */
   pilotDirty: boolean;
   holdFullNotified: boolean;
@@ -336,7 +338,7 @@ export class GameServer {
       jumpReadyAt: 0,
       // A returning pilot is back at its station, ship in the hangar; a new one starts in space.
       docked: save ? save.station : null,
-      stored: save ? { hull: Math.min(cls.hull, fleet[shipClass]!.hull), shield: cls.shield, energy: cls.energy } : null,
+      stored: save ? { hull: Math.min(cls.hull, fleet[shipClass]!.hull), shield: cls.shield, energy: cls.energy, parts: { ...(fleet[shipClass]!.parts ?? intactParts()) } } : null,
       pilotDirty: true,
       holdFullNotified: false,
       home: save?.station ?? 'aurora',
@@ -520,7 +522,7 @@ export class GameServer {
     if (w.time - ship.lastPvpCombat < PVP_COMBAT_LOCK) return this.notice(s, 'Amarrage refusé : combat PvP en cours.', 'warn');
     // The station recharges shield and capacitor; the hull needs a paid repair.
     const cls = this.shipStats(s);
-    s.stored = { hull: ship.hull, shield: cls.shield, energy: cls.energy };
+    s.stored = { hull: ship.hull, shield: cls.shield, energy: cls.energy, parts: { ...ship.parts } };
     w.removeShip(ship.id);
     s.sector.shipOwner.delete(ship.id);
     s.shipId = null;
@@ -545,6 +547,7 @@ export class GameServer {
       ship.hull = s.stored.hull;
       ship.shield = s.stored.shield;
       ship.energy = s.stored.energy;
+      ship.parts = { ...s.stored.parts };
     }
     s.docked = null;
     s.stored = null;
@@ -575,9 +578,12 @@ export class GameServer {
     if (!s.docked || !s.stored || !next || s.ship === classId) return;
     const cls = effectiveStats(classId, next.mods);
     if (cargoTotal(s.cargo) + this.reserved(s) > cls.cargo) return this.notice(s, `Soute trop pleine pour le ${SHIP_CLASSES[classId].label} (${cls.cargo} unités) : vendez d'abord une partie de la cargaison.`, 'warn');
-    s.fleet[s.ship]!.hull = s.stored.hull;
+    const parked = s.fleet[s.ship]!;
+    parked.hull = s.stored.hull;
+    if (allIntact(s.stored)) delete parked.parts;
+    else parked.parts = { ...s.stored.parts };
     s.ship = classId;
-    s.stored = { hull: Math.min(cls.hull, next.hull), shield: cls.shield, energy: cls.energy };
+    s.stored = { hull: Math.min(cls.hull, next.hull), shield: cls.shield, energy: cls.energy, parts: { ...(next.parts ?? intactParts()) } };
     s.holdFullNotified = false;
     s.pilotDirty = true;
     this.notice(s, `Aux commandes du ${SHIP_CLASSES[classId].label}`, 'good');
@@ -727,18 +733,33 @@ export class GameServer {
     s.pilotDirty = true;
   }
 
+  /** Docked: the hull plating, then the damaged components (v0.8), as far as the credits go. */
   private repair(s: Session) {
     if (!s.docked || !s.stored) return;
     const max = this.shipStats(s).hull;
     const missing = max - s.stored.hull;
-    if (missing < 0.5) return this.notice(s, 'La coque est intacte.');
-    const fix = Math.min(missing, s.stats.credits / REPAIR_COST);
-    if (fix < 0.5) return this.notice(s, TRADE_REFUSALS.funds, 'warn');
-    const cost = repairCost(fix);
-    s.stats.credits -= cost;
-    s.stored.hull = fix >= missing ? max : s.stored.hull + fix;
+    const partsCost = componentRepairCost(s.stored.parts, max);
+    if (missing < 0.5 && partsCost === 0) return this.notice(s, 'Le vaisseau est intact.');
+    let spent = 0;
+    let partial = false;
+    if (missing >= 0.5) {
+      const fix = Math.min(missing, s.stats.credits / REPAIR_COST);
+      if (fix < 0.5) return this.notice(s, TRADE_REFUSALS.funds, 'warn');
+      const cost = repairCost(fix);
+      s.stats.credits -= cost;
+      spent += cost;
+      s.stored.hull = fix >= missing ? max : s.stored.hull + fix;
+      partial = fix < missing;
+    }
+    if (!partial && partsCost > 0) {
+      if (s.stats.credits >= partsCost) {
+        s.stats.credits -= partsCost;
+        spent += partsCost;
+        s.stored.parts = intactParts();
+      } else partial = true;
+    }
     s.pilotDirty = true;
-    this.notice(s, `Coque réparée${fix < missing ? ' en partie' : ''}  −${cost} cr`, 'good');
+    this.notice(s, `${partial ? 'Réparé en partie' : 'Vaisseau réparé'}  −${spent} cr`, spent > 0 ? 'good' : 'warn');
   }
 
   private trade(s: Session, item: ItemId, qty: number) {
@@ -773,6 +794,7 @@ export class GameServer {
       capacity: cls.cargo,
       docked: s.docked,
       hull,
+      parts: s.stored ? { ...s.stored.parts } : null,
       hullMax: cls.hull,
       ship: s.ship,
       reserved: this.reserved(s),
@@ -792,9 +814,11 @@ export class GameServer {
     // Destroyed and waiting to respawn: the next ship comes out of the hangar intact.
     const hull = s.stored ? s.stored.hull : ship ? ship.hull : max;
     const flownHull = Math.max(1, Math.min(max, Math.round(hull * 10) / 10));
+    const flownParts = s.stored ? s.stored.parts : ship ? ship.parts : intactParts();
     const fleet: PilotSave['fleet'] = {};
     for (const [id, o] of Object.entries(s.fleet) as [ShipClassId, NonNullable<PilotSave['fleet'][ShipClassId]>][]) {
-      fleet[id] = { mods: { ...o.mods }, hull: id === s.ship ? flownHull : o.hull };
+      const parts = id === s.ship ? (allIntact({ parts: flownParts }) ? undefined : { ...flownParts }) : o.parts;
+      fleet[id] = { mods: { ...o.mods }, hull: id === s.ship ? flownHull : o.hull, ...(parts ? { parts } : {}) };
     }
     return {
       v: SAVE_VERSION,
@@ -1181,7 +1205,7 @@ export class GameServer {
     const dest = this.sectors[to];
     const ship = this.shipOf(s)!;
     const cls = this.shipStats(s);
-    const kept = { hull: ship.hull, shield: ship.shield, energy: Math.max(0, ship.energy - cls.energy * JUMP_ENERGY) };
+    const kept = { hull: ship.hull, shield: ship.shield, energy: Math.max(0, ship.energy - cls.energy * JUMP_ENERGY), parts: { ...ship.parts } };
     from.world.emit({ type: 'jumpOut', ship: ship.id, pos: [ship.position.x, ship.position.y, ship.position.z], classId: ship.classId });
     from.world.removeShip(ship.id);
     from.shipOwner.delete(ship.id);
@@ -1202,6 +1226,7 @@ export class GameServer {
     arrived.hull = kept.hull;
     arrived.shield = kept.shield;
     arrived.energy = kept.energy;
+    arrived.parts = kept.parts;
     dest.world.emit({ type: 'jumpIn', ship: arrived.id, pos: [at.x, at.y, at.z], classId: arrived.classId });
     s.pilotDirty = true;
     this.playersDirty = true;

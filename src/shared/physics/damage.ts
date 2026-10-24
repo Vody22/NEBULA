@@ -1,5 +1,5 @@
 import type { Ship } from '../sim/types';
-import type { ComponentId, PartId } from './hitboxes';
+import { COMPONENT_IDS, type ComponentId, type PartId } from './hitboxes';
 
 /**
  * Localised damage (v0.8). A blow takes hull points (the structure, which
@@ -23,6 +23,14 @@ export const COMPONENT_HP: Record<ComponentId, number> = {
   wingL: 0.5,
   wingR: 0.5,
   engines: 0.55,
+};
+
+/** Names shown to the player. */
+export const COMPONENT_LABELS: Record<ComponentId, string> = {
+  cockpit: 'Cockpit',
+  wingL: 'Aile gauche',
+  wingR: 'Aile droite',
+  engines: 'Moteurs',
 };
 
 /** A component under this health counts as damaged (warnings, smoke). */
@@ -87,4 +95,26 @@ export function flightFactors(ship: Ship): FlightFactors {
 export function allIntact(ship: Pick<Ship, 'parts'>): boolean {
   const p = ship.parts;
   return p.cockpit >= 1 && p.wingL >= 1 && p.wingR >= 1 && p.engines >= 1;
+}
+
+/** Credits per hull-equivalent point of component repair (hull plating costs REPAIR_COST, 2). */
+export const COMPONENT_REPAIR_COST = 1;
+
+/** Price of restoring every component of a ship (`hullMax`: its maximum hull), in whole credits. */
+export function componentRepairCost(parts: Record<ComponentId, number>, hullMax: number): number {
+  let points = 0;
+  for (const c of COMPONENT_IDS) points += (1 - Math.max(0, Math.min(1, parts[c]))) * hullMax * COMPONENT_HP[c];
+  return Math.ceil(points * COMPONENT_REPAIR_COST - 1e-9);
+}
+
+/** Component health read back from untrusted data (a save): null when intact or not understood. */
+export function cleanParts(raw: unknown): Record<ComponentId, number> | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as Record<string, unknown>;
+  const out = {} as Record<ComponentId, number>;
+  for (const c of COMPONENT_IDS) {
+    const v = o[c];
+    out[c] = typeof v === 'number' && Number.isFinite(v) ? Math.round(Math.max(0, Math.min(1, v)) * 1000) / 1000 : 1;
+  }
+  return allIntact({ parts: out }) ? null : out;
 }

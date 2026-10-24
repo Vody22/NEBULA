@@ -1,6 +1,8 @@
 import { ITEM_IDS, type Cargo } from './economy/items';
 import { isStationId, type MarketState, type StationId } from './economy/market';
 import { cleanMissions, crates, type Mission } from './missions';
+import { cleanParts } from './physics/damage';
+import type { ComponentId } from './physics/hitboxes';
 import type { ShipClassId } from './sim/types';
 import { cleanMods, effectiveStats, noMods, offerOf, type ShipMods } from './sim/upgrades';
 
@@ -30,6 +32,8 @@ export interface PilotSave {
 export interface OwnedShip {
   mods: ShipMods;
   hull: number;
+  /** Damaged components (v0.8), absent when all are intact. Older servers ignore it. */
+  parts?: Record<ComponentId, number>;
 }
 
 /**
@@ -61,7 +65,8 @@ export function validateSave(raw: unknown): PilotSave | null {
       // Only ships that can be bought (a save cannot grant a pirate Marauder).
       if (!offerOf(id as ShipClassId) || !entry || typeof entry !== 'object') continue;
       const mods = cleanMods((entry as Record<string, unknown>).mods);
-      fleet[id as ShipClassId] = { mods, hull: hullOf((entry as Record<string, unknown>).hull, effectiveStats(id as ShipClassId, mods).hull) };
+      const parts = cleanParts((entry as Record<string, unknown>).parts);
+      fleet[id as ShipClassId] = { mods, hull: hullOf((entry as Record<string, unknown>).hull, effectiveStats(id as ShipClassId, mods).hull), ...(parts ? { parts } : {}) };
     }
   }
   fleet.falcon ??= { mods: noMods(), hull: effectiveStats('falcon', noMods()).hull };

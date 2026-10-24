@@ -32,7 +32,7 @@ describe('docking', () => {
   it('starts a pilot with credits and an empty hold', () => {
     const { server, last } = solo();
     server.tick();
-    expect(last('pilot')!.pilot).toEqual({ credits: STARTING_CREDITS, cargo: {}, capacity: SHIP_CLASSES.falcon.cargo, docked: null, hull: null, hullMax: SHIP_CLASSES.falcon.hull, ship: 'falcon', fleet: [{ classId: 'falcon', mods: noMods(), hull: SHIP_CLASSES.falcon.hull }], reserved: 0, missions: [] });
+    expect(last('pilot')!.pilot).toEqual({ credits: STARTING_CREDITS, cargo: {}, capacity: SHIP_CLASSES.falcon.cargo, docked: null, hull: null, parts: null, hullMax: SHIP_CLASSES.falcon.hull, ship: 'falcon', fleet: [{ classId: 'falcon', mods: noMods(), hull: SHIP_CLASSES.falcon.hull }], reserved: 0, missions: [] });
   });
 
   it('refuses far from a hangar or too fast, and docks a slow ship at the mouth', () => {

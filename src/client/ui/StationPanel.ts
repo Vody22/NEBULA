@@ -2,6 +2,8 @@ import { ITEMS, ITEM_IDS, cargoTotal, type ItemId } from '../../shared/economy/i
 import { repairCost } from '../../shared/economy/market';
 import { MAX_ACTIVE, crates, missionBrief, missionStatus, missionTitle, type Mission } from '../../shared/missions';
 import type { MarketView, PilotState } from '../../shared/net/protocol';
+import { COMPONENT_LABELS, componentRepairCost } from '../../shared/physics/damage';
+import { COMPONENT_IDS } from '../../shared/physics/hitboxes';
 import { SHIP_CLASSES } from '../../shared/sim/shipClasses';
 import type { ShipClassId } from '../../shared/sim/types';
 import { effectiveStats, noMods, SHIPYARD, SHIPYARD_STATION, UPGRADES, UPGRADE_MAX, UPGRADE_SLOTS, upgradeCost, type ShipMods, type UpgradeSlot } from '../../shared/sim/upgrades';
@@ -45,6 +47,7 @@ export class StationPanel {
   private holdEl: HTMLElement;
   private holdBar: HTMLElement;
   private hullEl: HTMLElement;
+  private partsEl: HTMLElement;
   private repairBtn: HTMLButtonElement;
   private undockKey: HTMLElement;
   private body: HTMLTableSectionElement;
@@ -72,7 +75,7 @@ export class StationPanel {
       <div class="summary">
         <div class="cell cr"><div class="label">Crédits</div><div class="v credits"></div></div>
         <div class="cell"><div class="label">Soute</div><div class="v hold"></div><div class="bar o"><i></i></div></div>
-        <div class="cell"><div class="label">Coque</div><div class="v hull"></div><button class="repair" data-act="repair"></button></div>
+        <div class="cell"><div class="label">Coque</div><div class="v hull"></div><div class="parts"></div><button class="repair" data-act="repair"></button></div>
       </div>
       <div class="mhead">
         <div class="tabs" role="tablist" aria-label="Services de la station">
@@ -109,6 +112,7 @@ export class StationPanel {
     this.holdEl = root.querySelector('.hold')!;
     this.holdBar = root.querySelector('.bar.o > i')!;
     this.hullEl = root.querySelector('.hull')!;
+    this.partsEl = root.querySelector('.parts')!;
     this.repairBtn = root.querySelector('.repair')!;
     this.undockKey = root.querySelector('.undock kbd')!;
     this.body = root.querySelector('tbody')!;
@@ -346,8 +350,13 @@ export class StationPanel {
       const missing = p.hullMax - hull;
       this.hullEl.textContent = `${Math.floor((hull / p.hullMax) * 100)} %`;
       this.hullEl.classList.toggle('crit', hull < p.hullMax * 0.3);
-      this.repairBtn.textContent = missing >= 0.5 ? `Réparer · ${fmt(repairCost(missing))} cr` : 'Coque intacte';
-      this.repairBtn.disabled = missing < 0.5;
+      // Damaged components (v0.8) are repaired with the hull.
+      const parts = p.parts;
+      const damaged = parts ? COMPONENT_IDS.filter((c) => parts[c] < 1) : [];
+      this.partsEl.textContent = damaged.map((c) => `${COMPONENT_LABELS[c]} ${Math.floor(parts![c] * 100)} %`).join(' · ');
+      const cost = (missing >= 0.5 ? repairCost(missing) : 0) + (parts ? componentRepairCost(parts, p.hullMax) : 0);
+      this.repairBtn.textContent = cost > 0 ? `Réparer · ${fmt(cost)} cr` : 'Vaisseau intact';
+      this.repairBtn.disabled = cost === 0;
     }
     this.root.classList.toggle('compare', this.known.size > 0);
     const now = performance.now();

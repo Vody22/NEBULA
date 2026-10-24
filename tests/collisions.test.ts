@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { Quaternion, Vector3 } from 'three';
 import { Predictor } from '../src/client/net/Predictor';
+import { GameServer } from '../src/server/GameServer';
+import type { ServerMessage } from '../src/shared/net/protocol';
+import { validateSave, type PilotSave } from '../src/shared/save';
 import { snapshotShip } from '../src/shared/net/protocol';
 import { IMPACT_THRESHOLD, impactDamage } from '../src/shared/physics/collide';
-import { flightFactors } from '../src/shared/physics/damage';
+import { componentRepairCost, flightFactors } from '../src/shared/physics/damage';
 import { HITBOXES, massOf } from '../src/shared/physics/hitboxes';
 import { MATERIALS } from '../src/shared/physics/materials';
 import { distanceTo } from '../src/shared/physics/shapes';
@@ -231,19 +234,21 @@ describe('collisions: low and violent impacts', () => {
 describe('collisions: localised damage', () => {
   it('a frontal crash damages the cockpit; a reversing crash damages the engines and the drive weakens', () => {
     const w = aurora();
-    const nose = coasting(w, 'falcon', aboveRoof(50), new Vector3(0, -90, 0), FACE_DOWN, 'nose');
+    const nose = coasting(w, 'falcon', aboveRoof(50), new Vector3(0, -50, 0), FACE_DOWN, 'nose');
     nose.shield = 0;
     nose.sinceDamage = -100;
     run(w, 2);
+    expect(nose.alive).toBe(true);
     expect(nose.parts.cockpit).toBeLessThan(0.7);
     expect(nose.parts.engines).toBe(1);
 
     const w2 = aurora();
     // Facing up, drifting backward onto the roof: engines first.
-    const back = coasting(w2, 'falcon', aboveRoof(50), new Vector3(0, -90, 0), new Quaternion().setFromAxisAngle(X, Math.PI / 2), 'back');
+    const back = coasting(w2, 'falcon', aboveRoof(50), new Vector3(0, -50, 0), new Quaternion().setFromAxisAngle(X, Math.PI / 2), 'back');
     back.shield = 0;
     back.sinceDamage = -100;
     run(w2, 2);
+    expect(back.alive).toBe(true);
     expect(back.parts.engines).toBeLessThan(0.7);
     expect(back.parts.cockpit).toBe(1);
     expect(flightFactors(back).thrust).toBeLessThan(1);
@@ -364,5 +369,66 @@ describe('collisions: multiplayer and performance', () => {
     const perTick = (performance.now() - t0) / ticks;
     expect(ships.some((s) => s.alive)).toBe(true);
     expect(perTick).toBeLessThan(3);
+  });
+});
+
+describe('collisions: the server keeps the damage', () => {
+  function pilot(save?: unknown) {
+    const saves: PilotSave[] = [];
+    const server = new GameServer({ npcs: false, onSave: (_id, s) => saves.push(JSON.parse(JSON.stringify(s))) });
+    const inbox: ServerMessage[] = [];
+    const session = server.connect({ send: (m: ServerMessage) => inbox.push(JSON.parse(JSON.stringify(m))), close: () => {} }, { accountId: '1', name: 'Kerys', save });
+    const me = () => [...server.world.ships.values()].find((x) => x.ownerId === session);
+    const last = <T extends ServerMessage['t']>(t: T) => [...inbox].reverse().find((m) => m.t === t) as Extract<ServerMessage, { t: T }> | undefined;
+    return { server, session, me, last, saves, inbox };
+  }
+
+  it('crash damage reaches every client in the snapshot, and the client cannot claim otherwise', () => {
+    const { server, session, me, last } = pilot();
+    const ship = me()!;
+    ship.position.copy(aboveRoof(50));
+    ship.rotation.copy(FACE_DOWN);
+    ship.velocity.set(0, -50, 0);
+    ship.shield = 0;
+    ship.sinceDamage = -100;
+    // A forged message carrying a hull or parts is just an input to the server: those fields are ignored.
+    server.receive(session, { t: 'input', seq: 1, input: { ...neutralInput(), flightAssist: false, hull: 999, parts: { cockpit: 1 } } } as never);
+    for (let i = 0; i < 120; i++) server.tick();
+    expect(ship.alive).toBe(true);
+    expect(ship.parts.cockpit).toBeLessThan(1);
+    const snap = last('snapshot')!.snap.ships.find((x) => x.id === ship.id)!;
+    expect(snap.d![0]).toBe(Math.round(ship.parts.cockpit * 100));
+    expect(snap.hull).toBeLessThan(statsOf(ship).hull);
+  });
+
+  it('damaged components stay damaged at the station, cost credits to repair, and survive a save', () => {
+    const { server, session, me, last, saves } = pilot();
+    const ship = me()!;
+    ship.parts.engines = 0.4;
+    ship.parts.wingL = 0.75;
+    ship.position.copy(server.world.zone.station.dock.mouth).add(new Vector3(0, 0, 60));
+    ship.velocity.set(0, 0, 0);
+    server.receive(session, { t: 'dock' });
+    server.tick();
+    const p = last('pilot')!.pilot;
+    expect(p.parts).toEqual({ cockpit: 1, wingL: 0.75, wingR: 1, engines: 0.4 });
+    // Saved with the components; a v0.7 server would simply drop the field.
+    const saved = saves.at(-1)!;
+    expect(saved.fleet.falcon!.parts).toEqual({ cockpit: 1, wingL: 0.75, wingR: 1, engines: 0.4 });
+    expect(validateSave(saved)!.fleet.falcon!.parts).toEqual(saved.fleet.falcon!.parts);
+    // Back from a save: still damaged, until repaired.
+    const back = pilot(saved);
+    back.server.tick();
+    expect(back.last('pilot')!.pilot.parts).toEqual({ cockpit: 1, wingL: 0.75, wingR: 1, engines: 0.4 });
+    const credits = p.credits;
+    const cost = componentRepairCost(p.parts!, p.hullMax);
+    expect(cost).toBeGreaterThan(0);
+    server.receive(session, { t: 'repair' });
+    server.tick();
+    const fixed = last('pilot')!.pilot;
+    expect(fixed.parts).toEqual({ cockpit: 1, wingL: 1, wingR: 1, engines: 1 });
+    expect(fixed.credits).toBe(credits - cost);
+    server.receive(session, { t: 'undock' });
+    expect(me()!.parts.engines).toBe(1);
   });
 });

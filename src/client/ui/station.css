@@ -23,6 +23,8 @@ body.touch #station .undock kbd { display: none; }
 #station .cell .v.crit { color: var(--hostile); }
 #station .cell .bar { height: 6px; margin-top: 2px; }
 #station .bar.o > i { background: var(--warn); transform: scaleX(0); }
+#station .parts { font-size: 11px; line-height: 1.3; color: var(--warn, #ffb347); max-width: 220px; }
+#station .parts:empty { display: none; }
 #station .repair { margin-top: 2px; padding: 6px 8px; font-size: 11px; letter-spacing: 1px; }
 
 #station .mhead { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
