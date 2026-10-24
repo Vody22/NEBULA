@@ -224,7 +224,8 @@ export function buildSky(renderer: THREE.WebGLRenderer, sunDir: THREE.Vector3, r
       uSunCol: { value: tint },
     },
   });
-  skyScene.add(new THREE.Mesh(new THREE.SphereGeometry(10, 64, 32), mat));
+  const dome = new THREE.SphereGeometry(10, 64, 32);
+  skyScene.add(new THREE.Mesh(dome, mat));
   const rt = new THREE.WebGLCubeRenderTarget(resolution, {
     type: THREE.HalfFloatType,
     generateMipmaps: true,
@@ -232,10 +233,14 @@ export function buildSky(renderer: THREE.WebGLRenderer, sunDir: THREE.Vector3, r
   });
   const cubeCam = new THREE.CubeCamera(0.1, 100, rt);
   cubeCam.update(renderer, skyScene);
+  // Baked: the dome is not needed any more (a new sky is baked for each sector).
   mat.dispose();
+  dome.dispose();
 
   const pmrem = new THREE.PMREMGenerator(renderer);
-  const env = pmrem.fromCubemap(rt.texture).texture;
+  // A render target's texture is freed only by disposing the target itself.
+  const envTarget = pmrem.fromCubemap(rt.texture);
+  const env = envTarget.texture;
   pmrem.dispose();
 
   // Everything live follows the camera: stars all around, the sun far away.
@@ -291,9 +296,13 @@ export function buildSky(renderer: THREE.WebGLRenderer, sunDir: THREE.Vector3, r
     },
     dispose() {
       rt.dispose();
-      env.dispose();
+      envTarget.dispose();
       stars.geometry.dispose();
       (stars.material as THREE.Material).dispose();
+      (core.material as THREE.SpriteMaterial).map?.dispose();
+      core.material.dispose();
+      for (const t of [flareMain, flareHex, ring]) t.dispose();
+      lens.dispose();
     },
   };
 }

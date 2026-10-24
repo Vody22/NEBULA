@@ -22,7 +22,9 @@ const errors = [];
 const watch = (page) => {
   page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
   page.on('console', (m) => {
-    if ((m.type() === 'error' || m.type() === 'warning') && !/fonts\.googleapis|ERR_|net::|GPU stall|swiftshader|Automatic fallback/i.test(m.text())) errors.push(`${m.type()}: ${m.text()}`);
+    // ?autostart starts without a click: the browser's autoplay and fullscreen notices are expected then.
+    const expected = /fonts\.googleapis|ERR_|net::|GPU stall|GL Driver|AudioContext was not allowed to start|requestFullscreen.*user gesture/i;
+    if ((m.type() === 'error' || m.type() === 'warning') && !expected.test(m.text())) errors.push(`${m.type()}: ${m.text()}`);
   });
 };
 
