@@ -509,7 +509,8 @@ export class Station {
   }
 
   update(time: number, camPos?: THREE.Vector3) {
-    this.ring.rotation.y = time * 0.02;
+    // v0.8: the ring no longer turns. Its spokes swept through the hangar, which the
+    // collision shapes (physics/structures.ts) would turn into a spoke sweeping docked ships.
     if (camPos) this.detail.visible = this._cam.copy(camPos).sub(this.group.position).length() < 5000;
     for (const b of this.blinkers) {
       const t = (((time * b.rate - b.phase) % 1) + 1) % 1;

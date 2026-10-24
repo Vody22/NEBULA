@@ -38,7 +38,7 @@ export const MAX_SPIN = 6;
 /** Damage per (m/s)² of velocity change, times the struck material's hardness. */
 export const IMPACT_DAMAGE = 0.02;
 /** Velocity changes below this (m/s) leave no mark. */
-export const IMPACT_THRESHOLD = 4;
+export const IMPACT_THRESHOLD = 7;
 
 /** Hull damage of a blow: grows with the square of the velocity change (the energy per tonne). */
 export function impactDamage(dv: number, hardness: number): number {

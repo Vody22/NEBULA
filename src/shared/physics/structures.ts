@@ -9,12 +9,10 @@ import type { Shape } from './shapes';
  * the depots), so the walls a ship hits are the walls it sees. Before v0.8 a
  * hub was a sphere and a row of balls; its hangar walls had no collision.
  *
- * Every shape is metal. The habitat ring turns with the model (0.02 rad/s):
- * its spokes and pods are spinning colliders, swept at the sim's time.
+ * Every shape is metal. The habitat ring stands still since v0.8: turning,
+ * its spokes swept through the hangar. Turning structures are supported
+ * (`spin`, see shapes.ts) for the ones to come.
  */
-
-/** The hub's ring turns this fast about its axis (Station.ts: ring.rotation.y = time × 0.02). */
-export const RING_SPIN = 0.02;
 
 /** Hub hangar (Station.ts): width, height, depth, wall thickness. */
 export const HUB_HANGAR = { w: 200, h: 110, d: 160, wall: 14 };
@@ -34,11 +32,11 @@ class Builder {
     private frame: Quaternion,
   ) {}
 
-  private place(local: V3, shape: Shape, radius: number, rot?: Quaternion, spin?: number) {
+  private place(local: V3, shape: Shape, radius: number, rot?: Quaternion) {
     const center = new Vector3(...local).applyQuaternion(this.frame).add(this.origin);
     const r = rot ? this.frame.clone().multiply(rot) : this.frame.clone();
     const identity = r.equals(new Quaternion());
-    this.out.push({ kind: 'station', center, radius, material: 'metal', shape, ...(identity ? {} : { rot: r }), ...(spin ? { spin } : {}) });
+    this.out.push({ kind: 'station', center, radius, material: 'metal', shape, ...(identity ? {} : { rot: r }) });
   }
 
   box(at: V3, h: V3, rot?: Quaternion) {
@@ -61,14 +59,8 @@ class Builder {
     this.place(mid, { t: 'capsule', a: ha, b: hb, r }, Math.hypot(...ha) + r);
   }
 
-  /** A capsule turning with the ring: defined around the structure's origin, so it spins in place. */
-  spinningCapsule(a: V3, b: V3, r: number, spin: number) {
-    const reach = Math.max(Math.hypot(...a), Math.hypot(...b)) + r;
-    this.place([0, 0, 0], { t: 'capsule', a, b, r }, reach, undefined, spin);
-  }
-
-  torus(at: V3, R: number, r: number, spin?: number) {
-    this.place(at, { t: 'torus', R, r }, R + r, undefined, spin);
+  torus(at: V3, R: number, r: number) {
+    this.place(at, { t: 'torus', R, r }, R + r);
   }
 
   /** The five walls of a hangar shell open on +Z, centred at `z`. */
@@ -110,26 +102,26 @@ export function hubColliders(st: StationDef): StaticCollider[] {
       b.capsule([0, y, sgn * 44], [0, y, sgn * 230], 3.5);
     }
   }
-  // Habitat ring, its spokes, walkways and pods: turning with the model.
-  b.torus([0, 0, 0], st.ringRadius, st.ringTube + 1, RING_SPIN);
+  // Habitat ring, its spokes, walkways and pods.
+  b.torus([0, 0, 0], st.ringRadius, st.ringTube + 1);
   for (let i = 0; i < 6; i++) {
     const a = (i / 6) * Math.PI * 2;
     const c = Math.cos(a);
     const s = Math.sin(a);
     const from = R * 0.98;
     const to = st.ringRadius - st.ringTube * 0.8;
-    b.spinningCapsule([c * from, 0, s * from], [c * to, 0, s * to], 11, RING_SPIN);
+    b.capsule([c * from, 0, s * from], [c * to, 0, s * to], 11);
     // Walkway tube beside the truss, 18 m to the side.
     const sx = -s * 18;
     const sz = c * 18;
-    b.spinningCapsule([c * from + sx, 0, s * from + sz], [c * to + sx, 0, s * to + sz], 6, RING_SPIN);
+    b.capsule([c * from + sx, 0, s * from + sz], [c * to + sx, 0, s * to + sz], 6);
     // Pressure pod lying along the ring, 0.26 rad further on.
     const pa = a + 0.26;
     const px = Math.cos(pa) * st.ringRadius;
     const pz = Math.sin(pa) * st.ringRadius;
     const tx = Math.sin(pa) * 45;
     const tz = -Math.cos(pa) * 45;
-    b.spinningCapsule([px - tx, 0, pz - tz], [px + tx, 0, pz + tz], st.ringTube * 1.18, RING_SPIN);
+    b.capsule([px - tx, 0, pz - tz], [px + tx, 0, pz + tz], st.ringTube * 1.18);
   }
   // Hangar (on +Z): the shell, the mouth frame, the side fins and the two approach arms.
   const g = HUB_HANGAR;
