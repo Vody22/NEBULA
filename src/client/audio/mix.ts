@@ -201,7 +201,15 @@ export type AlertId =
   | 'contractDone'
   | 'proximity'
   | 'jumpCharge'
-  | 'jumpDone';
+  | 'jumpDone'
+  | 'cockpitDamaged'
+  | 'cockpitDestroyed'
+  | 'enginesDamaged'
+  | 'enginesDestroyed'
+  | 'wingLDamaged'
+  | 'wingLDestroyed'
+  | 'wingRDamaged'
+  | 'wingRDestroyed';
 
 /** Onboard announcement lines (text for the HUD and for voice; a recorded file can replace each later). */
 export const ALERT_LINES: Record<AlertId, { text: string; priority: number; cooldown: number }> = {
@@ -218,7 +226,21 @@ export const ALERT_LINES: Record<AlertId, { text: string; priority: number; cool
   proximity: { text: 'Obstacle à proximité', priority: 2, cooldown: 6 },
   jumpCharge: { text: 'Réacteur hyperspatial en charge', priority: 1, cooldown: 3 },
   jumpDone: { text: 'Saut terminé', priority: 1, cooldown: 3 },
+  // A component of our ship crossed a damage threshold (v0.8).
+  cockpitDamaged: { text: 'Verrière fissurée : systèmes perturbés', priority: 3, cooldown: 8 },
+  cockpitDestroyed: { text: 'Avionique hors service : boucliers et énergie rechargent au ralenti', priority: 4, cooldown: 8 },
+  enginesDamaged: { text: 'Moteurs endommagés : propulsion réduite', priority: 3, cooldown: 8 },
+  enginesDestroyed: { text: 'Moteurs hors service : propulseurs de manœuvre seulement', priority: 4, cooldown: 8 },
+  wingLDamaged: { text: 'Aile gauche endommagée : stabilité réduite', priority: 3, cooldown: 8 },
+  wingLDestroyed: { text: 'Aile gauche arrachée : maniabilité réduite', priority: 4, cooldown: 8 },
+  wingRDamaged: { text: 'Aile droite endommagée : stabilité réduite', priority: 3, cooldown: 8 },
+  wingRDestroyed: { text: 'Aile droite arrachée : maniabilité réduite', priority: 4, cooldown: 8 },
 };
+
+/** The announcement for a component crossing a damage threshold. */
+export function componentAlert(part: 'cockpit' | 'engines' | 'wingL' | 'wingR', state: 'damaged' | 'destroyed'): AlertId {
+  return `${part}${state === 'damaged' ? 'Damaged' : 'Destroyed'}` as AlertId;
+}
 
 export interface ShipVitals {
   shield: number;

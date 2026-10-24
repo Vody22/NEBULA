@@ -1,3 +1,4 @@
+import { impactScale } from '../../shared/physics/collide';
 import { Ambience } from './Ambience';
 import { Announcer } from './Announcer';
 import { AudioEngine, type Occluder, type Vec3 } from './AudioEngine';
@@ -51,6 +52,10 @@ export interface AudioFrame {
 }
 
 export type UiSound = 'click' | 'tab' | 'confirm' | 'deny' | 'notify' | 'lock' | 'comms' | 'mission' | 'repair' | 'upgrade' | 'purchase';
+
+/** What a ship can strike, as heard (rock: also iron-nickel rock and debris). */
+export type ImpactSurface = 'metal' | 'hull' | 'rock' | 'ice';
+const COLLISION: Record<ImpactSurface, SoundId> = { metal: 'collision', hull: 'collision_hull', rock: 'collision_rock', ice: 'collision_ice' };
 
 const LASER: Record<ShipClass, SoundId> = { falcon: 'laser_falcon', warden: 'laser_warden', raider: 'laser_raider', marauder: 'laser_marauder' };
 const EXPLOSION: Record<ShipClass, SoundId> = { falcon: 'explosion_medium', warden: 'explosion_medium', raider: 'explosion_small', marauder: 'explosion_large' };
@@ -268,13 +273,33 @@ export class GameAudio {
     if (byMe) this.alert('targetDestroyed');
   }
 
-  /** Our ship (or another, at `at`) scraping a rock or a station. */
-  collision(at: Vec3, damage: number, onMe: boolean) {
-    const g = Math.min(1, 0.3 + damage / 25);
-    if (onMe) {
+  /**
+   * A ship striking something (v0.8). The sound follows what was struck and
+   * how hard: a muffled knock for a bump too slow to hurt, a scrape when the
+   * ship slides along, a crash otherwise (station plating, rock, ice or
+   * another hull), louder and lower the faster the blow. `onMe`: our ship
+   * (heard through the hull, centred); otherwise placed at `at`.
+   */
+  collision(at: Vec3, o: { damage: number; speed: number; surface: ImpactSurface; shield: boolean; onMe: boolean }) {
+    const k = impactScale(o.speed);
+    const soft = o.damage <= 0;
+    const id: SoundId = soft
+      ? o.speed < 3.5
+        ? o.surface === 'metal' || o.surface === 'hull' ? 'scrape_metal' : 'scrape_rock'
+        : 'bump'
+      : COLLISION[o.surface];
+    const g = soft ? 0.3 + 0.4 * k : Math.min(1, 0.45 + 0.55 * k + o.damage / 80);
+    // Harder blows sound heavier: played slower, so lower.
+    const rate = soft ? 0.95 + Math.random() * 0.1 : 1.1 - 0.25 * k + (Math.random() - 0.5) * 0.06;
+    const e = this.engine;
+    if (o.onMe) {
       this.sinceCombat = Math.min(this.sinceCombat, 4);
-      this.engine.play('collision', { bus: 'impacts', gain: g, importance: 4 });
-    } else this.engine.play('collision', { at, bus: 'impacts', gain: g * 0.8, ref: 60, range: 900 });
+      e.play(id, { bus: 'impacts', gain: g, rate, importance: soft ? 2 : 4 });
+      if (o.shield) e.play('shield_hit', { bus: 'impacts', gain: 0.4 + 0.4 * k, importance: 3 });
+      if (!soft && k > 0.55) e.duck('music', 0.6, 0.2, 0.6);
+      return;
+    }
+    e.play(id, { at, bus: 'impacts', gain: g * 0.85, rate, ref: 60, range: soft ? 500 : 1100, importance: soft ? 1 : 2 });
   }
 
   /** Our shield or weapons changed state (driven by AlertMonitor too, these are the system sounds). */

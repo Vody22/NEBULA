@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type { MaterialId } from '../../shared/physics/materials';
 import { makeRadialTexture } from './textures';
 
 const pointVert = /* glsl */ `
@@ -145,6 +146,23 @@ interface Pending {
 }
 
 const _lightColor = new THREE.Color();
+const _sparkHot = new THREE.Color(7, 4.2, 1.6);
+const _sparkEnd = new THREE.Color(1, 0.18, 0);
+const _arc = new THREE.Color(3.5, 4.5, 7);
+const _arcEnd = new THREE.Color(0.2, 0.4, 1.2);
+const _dust = new THREE.Color(0.36, 0.31, 0.26);
+const _dustEnd = new THREE.Color(0.14, 0.13, 0.12);
+const _chip = new THREE.Color(0.2, 0.18, 0.16);
+const _crystal = new THREE.Color(2.4, 3, 3.8);
+const _crystalEnd = new THREE.Color(0.15, 0.3, 0.6);
+const _mist = new THREE.Color(0.78, 0.85, 0.93);
+const _mistEnd = new THREE.Color(0.5, 0.56, 0.64);
+const _smokeDark = new THREE.Color(0.1, 0.09, 0.08);
+const _smokeDarkEnd = new THREE.Color(0.04, 0.04, 0.05);
+const _ember = new THREE.Color(5, 1.6, 0.3);
+const _emberEnd = new THREE.Color(0.4, 0.05, 0);
+const _t1 = new THREE.Vector3();
+const _t2 = new THREE.Vector3();
 const _miningHot = new THREE.Color(6, 4.2, 2);
 const _miningCool = new THREE.Color(1.5, 0.5, 0.1);
 const _miningSpark = new THREE.Color(7, 4, 1.4);
@@ -366,6 +384,124 @@ export class Effects {
       this.glow.emit(pos, this.v, _miningSpark, _black, 1.1, 0.3, 0.3 + Math.random() * 0.3, 1.5);
     }
     if (dust) this.smoke.emit(pos, this.v.copy(normal).multiplyScalar(4 + Math.random() * 4), new THREE.Color(0.32, 0.28, 0.24), new THREE.Color(0.16, 0.15, 0.14), 2.5, 12, 1.8, 0.6, 0.3);
+  }
+
+  /** A random direction leaving a surface of normal `n`: `lift` 0 = along the surface, 1 = mostly straight out. */
+  private spray(n: THREE.Vector3, lift: number, out: THREE.Vector3) {
+    _t1.set(Math.abs(n.x) < 0.9 ? 1 : 0, Math.abs(n.x) < 0.9 ? 0 : 1, 0).cross(n).normalize();
+    _t2.crossVectors(n, _t1);
+    const a = Math.random() * Math.PI * 2;
+    const up = lift * (0.3 + Math.random() * 0.7) + 0.08;
+    return out.copy(_t1).multiplyScalar(Math.cos(a)).addScaledVector(_t2, Math.sin(a)).addScaledVector(n, up * 2).normalize();
+  }
+
+  /**
+   * A ship striking something (v0.8), by what it struck: sparks off station
+   * plating and hulls, dust and chips off rock (and a few sparks off
+   * iron-nickel), glinting crystals and mist off ice. `k` (0..1) is how
+   * violent the blow was (closing speed, on a log scale), so a 5 m/s bump
+   * throws a few sparks and a 200 m/s crash a storm of them. `hard` when it
+   * did damage: the worst tear plates off the hull. `normal` points out of
+   * the struck surface. `shield`: the shield took the blow, in its colour.
+   */
+  collision(pos: THREE.Vector3, normal: THREE.Vector3, k: number, mat: MaterialId, hard: boolean, shield: THREE.Color | null = null) {
+    const n = this.density;
+    const metallic = mat === 'metal' || mat === 'hull' || mat === 'metalRock';
+    const rocky = mat === 'rock' || mat === 'metalRock' || mat === 'debris';
+    // A shield in the way keeps part of the grinding off the hull.
+    const through = shield ? 0.45 : 1;
+    if (shield) this.shieldSparks(pos, shield);
+    if (metallic || (rocky && hard)) {
+      const count = Math.round((metallic ? 5 + 75 * k * k : 3 + 22 * k) * n * through * (mat === 'metalRock' ? 0.6 : 1));
+      this.glow.emit(pos, this.v.set(0, 0, 0), _sparkHot, _sparkEnd, 2 + 9 * k, 6 + 20 * k, 0.1 + 0.15 * k);
+      for (let i = 0; i < count; i++) {
+        // Sparks skate along the surface; the faster the blow, the further they fly.
+        this.spray(normal, 0.35, this.d);
+        this.v.copy(this.d).multiplyScalar(25 + Math.random() * (60 + 260 * k));
+        this.glow.emit(pos, this.v, _sparkHot, _sparkEnd, 0.8 + 0.7 * k, 0.25, 0.2 + Math.random() * (0.35 + 0.5 * k), 1.4);
+      }
+    }
+    if (rocky) {
+      for (let i = 0; i < Math.round((4 + 34 * k) * n * through); i++) {
+        this.spray(normal, 0.8, this.d);
+        this.v.copy(this.d).multiplyScalar(2 + Math.random() * (6 + 30 * k));
+        this.smoke.emit(pos, this.v, _dust, _dustEnd, 2 + 8 * k, (10 + Math.random() * 14) * (0.6 + 2.4 * k), 2 + Math.random() * 3, 0.6, 0.5, Math.random() * 0.08);
+      }
+      // Chips of rock: small, dark, quick, barely slowed.
+      for (let i = 0; i < Math.round((3 + 40 * k) * n * through); i++) {
+        this.spray(normal, 0.6, this.d);
+        this.v.copy(this.d).multiplyScalar(15 + Math.random() * (25 + 140 * k));
+        this.smoke.emit(pos, this.v, _chip, _chip, 0.5 + Math.random() * 0.6 + k * 0.6, 0.35, 1 + Math.random() * 1.6, 0.15, 0.95);
+      }
+    }
+    if (mat === 'ice') {
+      for (let i = 0; i < Math.round((8 + 60 * k) * n * through); i++) {
+        this.spray(normal, 0.7, this.d);
+        this.v.copy(this.d).multiplyScalar(10 + Math.random() * (25 + 120 * k));
+        this.glow.emit(pos, this.v, _crystal, _crystalEnd, 0.7 + 0.5 * k, 0.15, 0.5 + Math.random() * 1.2, 0.35);
+      }
+      for (let i = 0; i < Math.round((4 + 22 * k) * n * through); i++) {
+        this.spray(normal, 0.8, this.d);
+        this.v.copy(this.d).multiplyScalar(2 + Math.random() * (5 + 25 * k));
+        this.smoke.emit(pos, this.v, _mist, _mistEnd, 3 + 10 * k, (14 + Math.random() * 16) * (0.6 + 2 * k), 2 + Math.random() * 2.5, 0.8, 0.32, Math.random() * 0.1);
+      }
+    }
+    if (hard && k > 0.25) {
+      // Crushed plating smokes.
+      this.smoke.emit(pos, this.v.copy(normal).multiplyScalar(3 + 10 * k), new THREE.Color(0.17, 0.15, 0.14), _smokeDarkEnd, 3 + 6 * k, 14 + 40 * k, 1.5 + 2 * k, 0.5, 0.55);
+    }
+    if (hard && k > 0.6) {
+      // A crash: torn plates and fragments fly off the hull.
+      const pieces = Math.round((2 + 8 * (k - 0.6) / 0.4) * Math.min(1, n + 0.3));
+      for (let i = 0; i < pieces; i++) {
+        const s = 0.25 + Math.random() * 0.7;
+        const mesh = new THREE.Mesh(this.debrisGeos[i % this.debrisGeos.length], this.debrisMat);
+        mesh.scale.setScalar(s);
+        mesh.position.copy(pos);
+        mesh.rotation.set(Math.random() * 6, Math.random() * 6, Math.random() * 6);
+        this.group.add(mesh);
+        this.spray(normal, 0.7, this.d);
+        this.debris.push({
+          mesh,
+          v: this.d.clone().multiplyScalar(10 + Math.random() * 50 * k),
+          spin: new THREE.Vector3(rnd(), rnd(), rnd()).multiplyScalar(5),
+          age: 0,
+          life: 3 + Math.random() * 3,
+          burn: Math.random() < 0.4 ? 0.4 + Math.random() : 0,
+          emitAcc: 0,
+        });
+      }
+    }
+    if (k > 0.3 && (metallic || hard)) {
+      this.flashLight(pos, (1500 + 2.2e4 * k * k) * through, 0.12 + 0.3 * k, shield ?? new THREE.Color(1, 0.7, 0.45), 120 + 520 * k);
+    }
+  }
+
+  /**
+   * A damaged component (v0.8), each frame: smoke and embers from failing
+   * engines and wings, electrical arcs from a broken cockpit. `health` 0..1
+   * (0 = destroyed); nothing above 50 %.
+   */
+  componentDamage(pos: THREE.Vector3, vel: THREE.Vector3, kind: 'engines' | 'wing' | 'cockpit', health: number, dt: number) {
+    const sev = health <= 0 ? 1 : Math.max(0, (0.5 - health) * 2);
+    if (sev <= 0) return;
+    const rate = (0.25 + 0.75 * sev) * dt * (kind === 'engines' ? 45 : 30);
+    if (Math.random() < rate) {
+      this.v.copy(vel).multiplyScalar(0.2).add(this.d.set(rnd(), rnd(), rnd()).multiplyScalar(3 + 3 * sev));
+      const thick = kind === 'engines' && health <= 0 ? 1.6 : 1;
+      this.smoke.emit(pos, this.v, _smokeDark, _smokeDarkEnd, 2 * thick, (8 + 8 * sev) * thick, 1.2 + sev, 0.3, 0.45 + 0.25 * sev);
+    }
+    if (kind !== 'cockpit' && Math.random() < rate * 0.5 * sev) {
+      this.v.copy(vel).multiplyScalar(0.3).add(this.d.set(rnd(), rnd(), rnd()).multiplyScalar(10));
+      this.glow.emit(pos, this.v, _ember, _emberEnd, 1.1, 0.3, 0.45, 0.5);
+    }
+    if (kind !== 'engines' && Math.random() < dt * (1 + 5 * sev)) {
+      // A short circuit: a few blue-white sparks.
+      for (let i = 0; i < 4; i++) {
+        this.v.copy(vel).add(this.d.set(rnd(), rnd(), rnd()).multiplyScalar(18));
+        this.glow.emit(pos, this.v, _arc, _arcEnd, 0.7, 0.2, 0.12 + Math.random() * 0.15, 2);
+      }
+    }
   }
 
   /** `light`: the player's own guns light up the hull around the muzzle. */

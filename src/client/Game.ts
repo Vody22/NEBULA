@@ -2,6 +2,9 @@ import * as THREE from 'three';
 import { cargoTotal, ITEMS, type ItemId } from '../shared/economy/items';
 import type { StationId } from '../shared/economy/market';
 import { segmentSphere } from '../shared/math';
+import { impactScale } from '../shared/physics/collide';
+import { DAMAGED_BELOW } from '../shared/physics/damage';
+import { COMPONENT_IDS, partCentre } from '../shared/physics/hitboxes';
 import type { ChatLine, ErrorCode, JumpView, MarketView, PilotState, PlayerInfo, PlayerStats, ServerMessage } from '../shared/net/protocol';
 import { JUMP_CHARGE, JUMP_CLEARANCE, nextSector, SECTOR_NAMES, STATION_NAMES, type SectorId } from '../shared/sectors';
 import { MINING_MAX_SPEED, MINING_RANGE, MINING_RATE, miningTarget, oreOf, richness, richnessLabel } from '../shared/sim/mining';
@@ -12,6 +15,7 @@ import { neutralInput, type Ship, type ShipClassId, type ShipInput, type SimEven
 import { TICK_DT, TICK_RATE } from '../shared/sim/world';
 import { DOCK_MAX_SPEED, zoneOf, type ZoneDef } from '../shared/sim/zone';
 import { GameAudio, type AudioFrame } from './audio/Audio';
+import { ALERT_LINES, componentAlert } from './audio/mix';
 import { Benchmark, type BenchCallbacks } from './bench/Benchmark';
 import { ChaseCamera } from './camera/ChaseCamera';
 import { isHostile } from './hostility';
@@ -51,6 +55,8 @@ const _q = new THREE.Quaternion();
 const _fwd = new THREE.Vector3();
 const _end = new THREE.Vector3();
 const _normal = new THREE.Vector3();
+const _unionShield = new THREE.Color(0.6, 1.6, 4);
+const _raiderShield = new THREE.Color(4, 1.2, 0.5);
 const _camTarget = new THREE.Vector3();
 const _audioFwd = new THREE.Vector3();
 const _audioUp = new THREE.Vector3();
@@ -179,7 +185,7 @@ export class Game {
   /** Performance test (?bench): replaces the game loop while it runs. */
   private bench: Benchmark | null = null;
   /** Exposed for automated smoke tests. */
-  readonly debug = { frames: 0, ships: 0, bolts: 0, events: 0, explosions: 0, myShots: 0, myHits: 0, myKills: 0, hitsTaken: 0 };
+  readonly debug = { frames: 0, ships: 0, bolts: 0, events: 0, explosions: 0, myShots: 0, myHits: 0, myKills: 0, hitsTaken: 0, collisions: 0 };
 
   constructor(canvas: HTMLCanvasElement, private opts: GameOptions, settings: Settings) {
     this.audio.onAlertText = (text, priority) => this.hud.notice(text, priority >= 3 ? 'warn' : 'info');
@@ -831,6 +837,18 @@ export class Game {
         _p.set((Math.random() - 0.5) * cls.radius * 0.6, 0, cls.radius * 0.4).applyQuaternion(s.rotation).add(s.position);
         this.effects.damageTrail(_p, s.velocity, (0.5 - hullFrac) * 2);
       }
+      // Damaged components (v0.8) smoke, spark and, for the engines, cough.
+      const d = s.snap.d;
+      view.setEngines(d ? d[3] / 100 : 1);
+      if (d) {
+        for (let i = 0; i < 4; i++) {
+          const h = d[i] / 100;
+          if (h >= DAMAGED_BELOW) continue;
+          const part = COMPONENT_IDS[i];
+          _p.copy(partCentre(s.snap.classId, part)).applyQuaternion(s.rotation).add(s.position);
+          this.effects.componentDamage(_p, s.velocity, part === 'engines' ? 'engines' : part === 'cockpit' ? 'cockpit' : 'wing', h, dt);
+        }
+      }
     }
     for (const [id, view] of this.views) {
       if (!ships.has(id)) {
@@ -1132,13 +1150,46 @@ export class Game {
         this.lasers.remove(e.projectile);
         this.effects.impact(_p.set(...e.pos), new THREE.Color(3, 2, 1.2));
         break;
-      case 'collision':
-        if (e.ship === this.myShipId) {
-          this.cam.addShake(Math.min(1.2, e.damage / 30));
-          this.hud.damageTaken(e.damage, false);
+      case 'collision': {
+        // v0.8: what was struck, how hard, where on the ship, and whether its shield took it.
+        _p.set(...e.pos);
+        _normal.set(...(e.n ?? [0, 1, 0]));
+        const mine = e.ship === this.myShipId;
+        const speed = e.speed ?? 10;
+        const k = impactScale(speed);
+        const hard = e.damage > 0;
+        const view = this.views.get(e.ship);
+        const shieldColor = e.shield ? (view && (view.classId === 'falcon' || view.classId === 'warden') ? _unionShield : _raiderShield) : null;
+        if (e.shield) view?.shieldHit(_p, this.time);
+        else if (hard) view?.hullHit(_p);
+        // Two ships report the same contact, one event each: the sparks and the sound once.
+        const pair = e.other !== undefined;
+        if (!pair || mine || (e.other !== this.myShipId && e.ship < e.other!)) {
+          const mat = e.mat ?? 'rock';
+          this.effects.collision(_p, _normal, k, mat, hard, shieldColor);
+          const surface = mat === 'metal' ? 'metal' : mat === 'hull' ? 'hull' : mat === 'ice' ? 'ice' : 'rock';
+          this.audio.collision(_p, { damage: e.damage, speed, surface, shield: !!e.shield, onMe: mine || e.other === this.myShipId });
         }
-        this.effects.hullHit(_p.set(...e.pos));
-        this.audio.collision(_p, e.damage, e.ship === this.myShipId);
+        if (mine) {
+          this.debug.collisions++;
+          // The camera lurches toward what was hit and shakes, both with the violence of the blow.
+          this.cam.kick(_normal, (0.08 + 2.4 * k * k) * this.cam.shipScale);
+          this.cam.addShake(0.06 + 1.1 * k * k + Math.min(0.4, e.damage / 50));
+          if (hard) {
+            this.hud.damageTaken(e.damage, !!e.shield);
+            if (!e.shield) this.damageFx = Math.min(1, this.damageFx + 0.15 + 0.5 * k);
+            if (e.part === 'cockpit' && !e.shield) this.hud.cockpitHit();
+          }
+        }
+        break;
+      }
+      case 'partDamaged':
+        if (e.ship === this.myShipId) {
+          const id = componentAlert(e.part, e.state);
+          this.hud.notice(ALERT_LINES[id].text, 'warn');
+          this.audio.alert(id);
+          if (e.part === 'cockpit') this.hud.cockpitHit();
+        }
         break;
       case 'destroyed': {
         _p.set(...e.pos);

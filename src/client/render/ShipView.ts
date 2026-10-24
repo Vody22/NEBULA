@@ -227,6 +227,9 @@ export class ShipView {
   /** Fires on a badly damaged hull, at points found on the surface once. */
   private fires: Glow[] = [];
   private damage = 0;
+  /** Engine health (v0.8): failing engines cough, dead ones only flicker. */
+  private engineHealth = 1;
+  private cough = 0;
   /** The hull's meshes, for placing marks. */
   private hullMeshes: THREE.Object3D[] | null = null;
 
@@ -347,6 +350,11 @@ export class ShipView {
     for (let i = 0; i < this.fires.length; i++) this.fires[i].visible = i < want;
   }
 
+  /** Health of the engines, 0..1 (snapshot `d`, v0.8). */
+  setEngines(health: number) {
+    this.engineHealth = health;
+  }
+
   /** Register a shield impact at a world position. */
   shieldHit(worldPos: THREE.Vector3, time: number) {
     const local = this.group.worldToLocal(worldPos.clone());
@@ -362,10 +370,20 @@ export class ShipView {
     this.throttleVis += (target - this.throttleVis) * Math.min(1, dt * 6);
     const tv = this.throttleVis;
     this.batches.time.value = time;
+    // Damaged engines cough (the flame drops out for a moment, more often as
+    // they fail); with the main drive out only a weak, ragged flicker is left.
+    let health = 1;
+    const e = this.engineHealth;
+    if (e <= 0) health = 0.1 + 0.2 * Math.max(0, Math.sin(time * 37) * Math.sin(time * 13.7));
+    else if (e < 0.5) {
+      if (this.cough > 0) this.cough -= dt;
+      else if (Math.random() < (0.5 - e) * 5 * dt) this.cough = 0.05 + Math.random() * 0.15;
+      health = this.cough > 0 ? 0.15 : 0.8 + 0.2 * Math.sin(time * 29);
+    }
     for (const { flame, radius } of this.flames) {
-      const len = radius * (2 + tv * 7 + (boosting ? 6 : 0));
+      const len = radius * (2 + tv * 7 + (boosting ? 6 : 0)) * (0.35 + 0.65 * health);
       flame.scale.set(radius * (0.75 + tv * 0.15), radius * (0.75 + tv * 0.15), len);
-      flame.power = 0.12 + tv * 0.7;
+      flame.power = (0.12 + tv * 0.7) * health;
       flame.color.copy(boosting ? this.model.boostColor : this.model.engineColor);
     }
     this.flash = Math.max(0, this.flash - dt * 2.5);

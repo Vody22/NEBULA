@@ -397,7 +397,7 @@ describe('collisions: the server keeps the damage', () => {
     expect(ship.alive).toBe(true);
     expect(ship.parts.cockpit).toBeLessThan(1);
     const snap = last('snapshot')!.snap.ships.find((x) => x.id === ship.id)!;
-    expect(snap.d![0]).toBe(Math.round(ship.parts.cockpit * 100));
+    expect(snap.d![0]).toBe(Math.floor(ship.parts.cockpit * 100));
     expect(snap.hull).toBeLessThan(statsOf(ship).hull);
   });
 

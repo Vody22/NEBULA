@@ -150,6 +150,19 @@ kbd { display: inline-block; min-width: 1.6em; text-align: center; font-family: 
 .segbar.h i.on { background: var(--hull); }
 .segbar.h.crit i.on { background: var(--hostile); }
 .stat.crit .head span:last-child { color: var(--hostile); }
+/* Components (v0.8): plan view of the ship, shown once a part is damaged */
+.stat.parts { display: none; align-items: center; gap: 10px; margin: -2px 0 8px; }
+.stat.parts.show { display: flex; }
+.stat.parts svg { width: 46px; height: 43px; flex: none; overflow: visible; }
+.stat.parts path { fill: rgba(143, 233, 255, 0.1); stroke: rgba(143, 233, 255, 0.55); stroke-width: 1.2; stroke-linejoin: round; transition: fill 0.3s; }
+.stat.parts path.worn { fill: rgba(255, 214, 120, 0.25); stroke: var(--warn); }
+.stat.parts path.dmg { fill: rgba(255, 150, 60, 0.6); stroke: var(--warn); }
+.stat.parts path.out { fill: rgba(255, 70, 50, 0.75); stroke: var(--hostile); animation: partOut 0.9s ease-in-out infinite alternate; }
+@keyframes partOut { from { opacity: 1; } to { opacity: 0.45; } }
+.stat.parts .list { display: flex; flex-direction: column; gap: 2px; font-family: var(--font-display); font-size: 11px; font-weight: 600; letter-spacing: 0.5px; color: #fff; }
+.stat.parts .list .worn { color: rgba(255, 230, 170, 0.85); }
+.stat.parts .list .dmg { color: var(--warn); }
+.stat.parts .list .out { color: var(--hostile); }
 
 #radarWrap { left: 50%; bottom: 10px; transform: translateX(-50%); width: 300px; height: 170px; padding: 0; background: none; border: none; box-shadow: none; }
 #radar { width: 100%; height: 100%; display: block; }
@@ -235,6 +248,17 @@ kbd { display: inline-block; min-width: 1.6em; text-align: center; font-family: 
 
 #vignette { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(ellipse at center, transparent 55%, rgba(255, 40, 20, 0.55) 100%); opacity: 0; }
 #shieldflash { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(ellipse at center, transparent 60%, rgba(80, 180, 255, 0.35) 100%); opacity: 0; }
+/* Cracked canopy (v0.8): fine cracks from the top-left corner of the view */
+#cracks { position: fixed; left: 0; top: 0; width: min(62vmin, 560px); height: min(62vmin, 560px); pointer-events: none; }
+#cracks path { fill: none; stroke: rgba(225, 240, 255, 0.55); stroke-width: 0.32; stroke-linecap: round; filter: drop-shadow(0 0 0.6px rgba(160, 210, 255, 0.8)); }
+/* Damaged avionics: the panels flicker now and then */
+#hud.glitch .panel { animation: glitch 3.3s steps(1, end) infinite; }
+#hud.glitch #status { animation-delay: -1.1s; }
+#hud.glitch #radarWrap { animation-delay: -2.2s; }
+@keyframes glitch { 0%, 100% { opacity: 1; } 23% { opacity: 0.3; } 25% { opacity: 1; } 61% { opacity: 0.65; } 63% { opacity: 1; } 86% { opacity: 0.2; } 87% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  #hud.glitch .panel, .stat.parts path.out { animation: none; }
+}
 
 #death { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; flex-direction: column; background: radial-gradient(ellipse at center, rgba(60, 0, 0, 0.35), rgba(0, 0, 0, 0.7)); pointer-events: none; text-align: center; padding: 16px; }
 #death.show { display: flex; }
@@ -490,6 +514,9 @@ body.touch #status { top: 54px; bottom: auto; right: calc(10px + env(safe-area-i
 body.touch #status .stat { margin-bottom: 4px; }
 body.touch #status .stat .head { font-size: 11px; }
 body.touch #status .segbar { height: 6px; margin-top: 2px; }
+body.touch #status .stat.parts { margin: 0 0 2px; gap: 6px; }
+body.touch #status .stat.parts svg { width: 26px; height: 24px; }
+body.touch #status .stat.parts .list { flex-direction: row; flex-wrap: wrap; column-gap: 6px; font-size: 9px; }
 /* the hold is one line on phones: the roll buttons sit just below the status panel */
 body.touch #flight { top: 64px; bottom: auto; left: calc(10px + env(safe-area-inset-left, 0px)); width: auto; padding: 6px 10px; }
 body.touch #flight .gauge { height: auto; }

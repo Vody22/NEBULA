@@ -1,5 +1,8 @@
 import * as THREE from 'three';
 import { interceptPoint } from '../../shared/math';
+import { COMPONENT_LABELS, DAMAGED_BELOW } from '../../shared/physics/damage';
+import { COMPONENT_IDS, type ComponentId } from '../../shared/physics/hitboxes';
+import { mulberry32 } from '../../shared/rng';
 import { cargoTotal } from '../../shared/economy/items';
 import { missionStatus, missionTitle } from '../../shared/missions';
 import type { PilotState, PlayerInfo, PlayerStats } from '../../shared/net/protocol';
@@ -99,6 +102,70 @@ const _v = new THREE.Vector3();
 const _w = new THREE.Vector3();
 const _q = new THREE.Quaternion();
 
+/**
+ * Cracks in the canopy glass (v0.8), seeded so they always look the same: a
+ * few long cracks running from the point of impact, branches, and the rings
+ * of a spider web between them. The main cracks come first: as the cockpit
+ * fails, more of the list is shown. Coordinates in a 100 × 100 box.
+ */
+function canopyCracks(): string[] {
+  const r = mulberry32(0xc4ac);
+  const cx = 14;
+  const cy = 12;
+  const main: string[] = [];
+  const minor: string[] = [];
+  const rays: { x: number; y: number }[][] = [];
+  for (let i = 0; i < 8; i++) {
+    let a = -0.35 + (i / 7) * 2.25 + (r() - 0.5) * 0.25;
+    let x = cx;
+    let y = cy;
+    const pts = [{ x, y }];
+    const len = 45 + r() * 50;
+    let d = 0;
+    while (d < len) {
+      const step = 3 + r() * 6;
+      a += (r() - 0.5) * 0.5;
+      x += Math.cos(a) * step;
+      y += Math.sin(a) * step;
+      d += step;
+      pts.push({ x, y });
+      if (r() < 0.22 && d > 8) {
+        // A branch splits off and dies out.
+        let b = a + (r() < 0.5 ? -1 : 1) * (0.4 + r() * 0.5);
+        let bx = x;
+        let by = y;
+        let path = `M${bx.toFixed(1)} ${by.toFixed(1)}`;
+        for (let k = 0; k < 3; k++) {
+          b += (r() - 0.5) * 0.6;
+          bx += Math.cos(b) * (2 + r() * 4);
+          by += Math.sin(b) * (2 + r() * 4);
+          path += ` L${bx.toFixed(1)} ${by.toFixed(1)}`;
+        }
+        minor.push(path);
+      }
+    }
+    rays.push(pts);
+    main.push('M' + pts.map((p) => `${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' L'));
+  }
+  // Web rings: short links between neighbouring cracks near the impact.
+  for (const ring of [2, 4, 6]) {
+    for (let i = 0; i + 1 < rays.length; i++) {
+      const p = rays[i][Math.min(ring, rays[i].length - 1)];
+      const q = rays[i + 1][Math.min(ring, rays[i + 1].length - 1)];
+      const mx = (p.x + q.x) / 2 + (r() - 0.5) * 2;
+      const my = (p.y + q.y) / 2 + (r() - 0.5) * 2;
+      minor.push(`M${p.x.toFixed(1)} ${p.y.toFixed(1)} Q${mx.toFixed(1)} ${my.toFixed(1)} ${q.x.toFixed(1)} ${q.y.toFixed(1)}`);
+    }
+  }
+  // Interleave so that every stage shows long cracks and some web.
+  const out: string[] = [];
+  while (main.length || minor.length) {
+    if (main.length) out.push(main.shift()!);
+    for (let k = 0; k < 2 && minor.length; k++) out.push(minor.shift()!);
+  }
+  return out;
+}
+
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls = '', parent?: HTMLElement, html = '') {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
@@ -157,6 +224,14 @@ export class Hud {
   private keys = { dock: 'G', mine: 'R', jump: 'J' };
   private jumpEl: HTMLDivElement;
   private warpEl: HTMLDivElement;
+  /** Ship components (v0.8): the plan view, each part's last state, the damaged list. */
+  private partsStat: HTMLDivElement;
+  private partsList: HTMLDivElement;
+  private partEls = new Map<ComponentId | 'hull', { el: SVGPathElement; state: string }>();
+  private cracks: SVGSVGElement;
+  private crackPaths: SVGPathElement[] = [];
+  private crackShown = -1;
+  private crackFlash = 0;
   private damage = 0;
   private shieldFx = 0;
   private cache = new Map<HTMLElement, string>();
@@ -258,6 +333,16 @@ export class Hud {
     el('div', 'head', en, '<span class="label">Énergie</span>');
     const eb = el('div', 'bar e', en);
     this.energyBar = el('i', '', eb);
+    // Components (v0.8): a plan view of the ship, each part in the colour of
+    // its health, and the damaged ones listed; shown once something is hurt.
+    this.partsStat = el('div', 'stat parts', status) as HTMLDivElement;
+    this.partsStat.innerHTML =
+      '<svg viewBox="0 0 60 56" aria-hidden="true">' +
+      '<path data-p="wingL" d="M24 22 L5 39 L5 45 L24 37 Z"/><path data-p="wingR" d="M36 22 L55 39 L55 45 L36 37 Z"/>' +
+      '<path data-p="hull" d="M25 17 L35 17 L36 41 L24 41 Z"/><path data-p="cockpit" d="M30 3 L35 17 L25 17 Z"/>' +
+      '<path data-p="engines" d="M24 41 L36 41 L35 52 L25 52 Z"/></svg><div class="list" role="status"></div>';
+    this.partsList = this.partsStat.querySelector('.list')!;
+    for (const p of this.partsStat.querySelectorAll('path')) this.partEls.set(p.dataset.p as ComponentId | 'hull', { el: p, state: '' });
 
     const rw = el('div', 'panel', this.root) as HTMLDivElement;
     rw.id = 'radarWrap';
@@ -280,6 +365,22 @@ export class Hud {
     this.warpEl = el('div', '', document.body) as HTMLDivElement;
     this.warpEl.id = 'warp';
     this.warpEl.setAttribute('aria-hidden', 'true');
+    // Cracked canopy (v0.8), over the view while the cockpit is damaged.
+    const svgNS = 'http://www.w3.org/2000/svg';
+    this.cracks = document.createElementNS(svgNS, 'svg');
+    this.cracks.id = 'cracks';
+    this.cracks.setAttribute('viewBox', '0 0 100 100');
+    this.cracks.setAttribute('preserveAspectRatio', 'xMinYMin meet');
+    this.cracks.setAttribute('aria-hidden', 'true');
+    for (const d of canopyCracks()) {
+      const path = document.createElementNS(svgNS, 'path');
+      path.setAttribute('d', d);
+      path.style.display = 'none';
+      this.cracks.appendChild(path);
+      this.crackPaths.push(path);
+    }
+    this.cracks.style.display = 'none';
+    document.body.appendChild(this.cracks);
     this.death = el('div', '', document.body, '<h2>VAISSEAU DÉTRUIT</h2>') as HTMLDivElement;
     this.death.id = 'death';
     this.deathTimer = el('p', '', this.death) as HTMLParagraphElement;
@@ -288,6 +389,8 @@ export class Hud {
   show(v: boolean) {
     this.root.classList.toggle('hidden', !v);
     if (!v) {
+      this.cracks.style.display = 'none';
+      this.crackShown = -1;
       this.death.classList.remove('show');
       this.board.classList.add('hidden');
       this.vignette.style.opacity = this.shieldFlash.style.opacity = '0';
@@ -356,6 +459,47 @@ export class Hud {
   damageTaken(amount: number, shield: boolean) {
     if (shield) this.shieldFx = Math.min(1, this.shieldFx + 0.25 + amount / 60);
     else this.damage = Math.min(1, this.damage + 0.35 + amount / 40);
+  }
+
+  /** The cockpit took a blow: the cracks catch the light for a moment. */
+  cockpitHit() {
+    this.crackFlash = 1;
+  }
+
+  /**
+   * Components of our ship (snapshot `d`: cockpit, left wing, right wing,
+   * engines, in %; absent when all intact), and the hull fraction for the
+   * body of the plan view.
+   */
+  private components(d: [number, number, number, number] | undefined, hull: number, dt: number, show: boolean) {
+    this.partsStat.classList.toggle('show', !!d && show);
+    const set = (k: ComponentId | 'hull', h: number) => {
+      const state = h <= 0 ? 'out' : h < DAMAGED_BELOW ? 'dmg' : h < 0.995 ? 'worn' : 'ok';
+      const p = this.partEls.get(k)!;
+      if (p.state === state) return;
+      p.state = state;
+      p.el.setAttribute('class', state);
+    };
+    set('hull', hull >= 0.6 ? 1 : hull >= 0.3 ? 0.4 : 0);
+    const items: string[] = [];
+    COMPONENT_IDS.forEach((c, i) => {
+      const h = d ? d[i] / 100 : 1;
+      set(c, h);
+      if (h < 1) items.push(`<span class="${h <= 0 ? 'out' : h < DAMAGED_BELOW ? 'dmg' : 'worn'}">${COMPONENT_LABELS[c]} ${h <= 0 ? 'HS' : Math.round(h * 100) + ' %'}</span>`);
+    });
+    this.html(this.partsList, items.join(''));
+    // The canopy cracks a little more as the cockpit fails; under a quarter its systems flicker.
+    const cockpit = d ? d[0] / 100 : 1;
+    const cracked = show && cockpit < DAMAGED_BELOW;
+    const n = cracked ? Math.max(4, Math.ceil(((DAMAGED_BELOW - cockpit) / DAMAGED_BELOW) * this.crackPaths.length)) : 0;
+    if (n !== this.crackShown) {
+      this.crackShown = n;
+      this.cracks.style.display = n ? '' : 'none';
+      this.crackPaths.forEach((p, i) => (p.style.display = i < n ? '' : 'none'));
+    }
+    this.crackFlash = Math.max(0, this.crackFlash - dt * 1.8);
+    if (n) this.cracks.style.opacity = String(Math.min(1, 0.5 + 0.5 * this.crackFlash));
+    this.root.classList.toggle('glitch', show && cockpit < 0.25);
   }
 
   /** Projects a world point; returns screen px and whether it is in front of the camera. */
@@ -458,6 +602,8 @@ export class Hud {
     // Virtual cursor
     const cx = W / 2 + f.cursor.x * Math.min(W, H) * 0.32;
     const cy = H / 2 + f.cursor.y * Math.min(W, H) * 0.32;
+
+    this.components(me?.snap.d, me ? me.snap.hull / statsOfPacked(me.snap.classId, me.snap.u).hull : 1, dt, !!me && !docked);
 
     if (!me) {
       this.crosshair.style.display = this.cursorEl.style.display = this.lead.style.display = this.bracket.style.display = this.arrow.style.display = 'none';

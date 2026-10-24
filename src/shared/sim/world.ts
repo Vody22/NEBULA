@@ -67,6 +67,8 @@ export class World {
   /** Ships far from every player, collided as one sphere (refreshed twice a second). */
   private coarse = new Set<EntityId>();
   private lastScrape = new Map<EntityId, number>();
+  /** Same, for pairs of ships grinding against each other (key: lower id × 2²⁰ + higher id). */
+  private lastPairScrape = new Map<number, number>();
   private shipCells = new Map<string, Ship[]>();
 
   constructor(readonly zone: ZoneDef) {
@@ -351,16 +353,29 @@ export class World {
           // The sweeps of later pairs start where this contact left the ships.
           fa.copy(a.position);
           fb.copy(b.position);
-          this.shipImpact(c.a, c.b, c.partA, c.dvA, c.point, c.normal, c.speed);
-          this.shipImpact(c.b, c.a, c.partB, c.dvB, c.point, c.normal.clone().negate(), c.speed);
+          const hardness = contactOf(SHIP_MATERIAL, SHIP_MATERIAL).hardness;
+          const damageA = impactDamage(c.dvA, hardness);
+          const damageB = impactDamage(c.dvB, hardness);
+          if (damageA <= 0 && damageB <= 0) {
+            // Two hulls grinding: one pair of events now and then, both or none, so clients can pair them.
+            if (c.speed < 1.5) continue;
+            const last = this.lastPairScrape.get(key) ?? -1;
+            if (this.time - last < SCRAPE_EVENT_INTERVAL) continue;
+          }
+          this.lastPairScrape.set(key, this.time);
+          this.shipImpact(c.a, c.b, c.partA, damageA, c.point, c.normal, c.speed);
+          this.shipImpact(c.b, c.a, c.partB, damageB, c.point, c.normal.clone().negate(), c.speed);
         }
       }
     }
+    // Forget pairs that have not touched for a while.
+    if (this.lastPairScrape.size > 256) {
+      for (const [k, t] of this.lastPairScrape) if (this.time - t > 5) this.lastPairScrape.delete(k);
+    }
   }
 
-  private shipImpact(ship: Ship, other: Ship, part: PartId, dv: number, point: Vector3, normal: Vector3, speed: number) {
-    let damage = impactDamage(dv, contactOf(SHIP_MATERIAL, SHIP_MATERIAL).hardness);
-    if (damage <= 0 && speed < 1.5) return;
+  /** One ship's side of a ship-to-ship contact (`damage`: from its own velocity change). */
+  private shipImpact(ship: Ship, other: Ship, part: PartId, damage: number, point: Vector3, normal: Vector3, speed: number) {
     const shield = damage > 0 && ship.shield > 0;
     if (shield) damage *= 1 - SHIELD_COLLISION_ABSORB;
     this.events.push({

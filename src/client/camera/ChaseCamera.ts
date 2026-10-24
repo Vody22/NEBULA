@@ -9,6 +9,9 @@ const MODES: Record<CameraMode, { offset: THREE.Vector3; look: number; posRate: 
   cinematic: { offset: new THREE.Vector3(14, 5, 42), look: 30, posRate: 6, rotRate: 3 },
 };
 
+/** Angular frequency of the impact jolt's spring (rad/s). */
+const JOLT_RATE = 14;
+
 /**
  * Third-person chase camera. Its orientation lags the ship with a damped
  * slerp so turns, rolls and drift read clearly; FOV widens and the camera
@@ -31,6 +34,9 @@ export class ChaseCamera {
   private look = new THREE.Vector3();
   private lookAhead = new THREE.Vector2();
   private scale = 1;
+  /** Impact jolt (v0.8): an offset on a damped spring, and its rate of change. */
+  private jolt = new THREE.Vector3();
+  private joltVel = new THREE.Vector3();
 
   constructor(aspect: number) {
     this.camera = new THREE.PerspectiveCamera(this.baseFov, aspect, 0.5, 250000);
@@ -45,8 +51,38 @@ export class ChaseCamera {
     this.shake = Math.min(1.5, this.shake + amount);
   }
 
+  /**
+   * The ship struck something: carried on by its own inertia, the camera
+   * lurches about `amount` metres toward what was hit (`normal` points away
+   * from it), then springs back with a small overshoot.
+   */
+  kick(normal: THREE.Vector3, amount: number) {
+    this.joltVel.addScaledVector(normal, -amount * JOLT_RATE * 2);
+  }
+
+  private stepJolt(dt: number) {
+    const n = Math.min(40, Math.ceil(dt / 0.004));
+    const h = dt / n;
+    for (let i = 0; i < n; i++) {
+      // x'' = −ω²x − 2ζωx', ζ = 0.55: a quick lurch, one soft rebound.
+      this.joltVel.addScaledVector(this.jolt, -JOLT_RATE * JOLT_RATE * h).addScaledVector(this.joltVel, -2 * 0.55 * JOLT_RATE * h);
+      this.jolt.addScaledVector(this.joltVel, h);
+    }
+    if (this.jolt.lengthSq() < 1e-8 && this.joltVel.lengthSq() < 1e-8) {
+      this.jolt.set(0, 0, 0);
+      this.joltVel.set(0, 0, 0);
+    }
+  }
+
+  /** Size of the followed ship relative to a fighter (the camera stands further back from bigger ones). */
+  get shipScale() {
+    return this.scale;
+  }
+
   snap() {
     this.initialized = false;
+    this.jolt.set(0, 0, 0);
+    this.joltVel.set(0, 0, 0);
   }
 
   /** `cursor` is the virtual-joystick offset; it slightly offsets the view in the turn direction. */
@@ -84,9 +120,10 @@ export class ChaseCamera {
     this.tmp.x += this.lookAhead.x * -3 * this.scale;
     this.tmp.y += this.lookAhead.y * 2 * this.scale;
     this.tmp.applyQuaternion(this.rot);
-    this.camera.position.copy(this.pos).add(this.tmp);
+    this.stepJolt(dt);
+    this.camera.position.copy(this.pos).add(this.tmp).add(this.jolt);
 
-    this.look.set(this.lookAhead.x * 8, 2 * this.scale - this.lookAhead.y * 5, -m.look).applyQuaternion(this.rot).add(this.pos);
+    this.look.set(this.lookAhead.x * 8, 2 * this.scale - this.lookAhead.y * 5, -m.look).applyQuaternion(this.rot).add(this.pos).add(this.jolt);
     this.camera.up.set(0, 1, 0).applyQuaternion(this.rot);
     this.camera.lookAt(this.look);
 

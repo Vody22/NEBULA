@@ -45,6 +45,15 @@ export function impactDamage(dv: number, hardness: number): number {
   return IMPACT_DAMAGE * hardness * Math.max(0, dv * dv - IMPACT_THRESHOLD * IMPACT_THRESHOLD);
 }
 
+/**
+ * How violent a blow at closing speed `speed` (m/s) is, 0..1 on a log scale:
+ * 5 m/s ≈ 0.15, 50 m/s ≈ 0.6, 200 m/s and more = 1. The client sizes sparks,
+ * camera shake and sound with it.
+ */
+export function impactScale(speed: number): number {
+  return Math.min(1, Math.max(0, Math.log2(1 + speed / 8) / Math.log2(26)));
+}
+
 const _r = new Vector3();
 const _w = new Vector3();
 const _vp = new Vector3();

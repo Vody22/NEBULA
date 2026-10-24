@@ -330,9 +330,9 @@ function zoneColliders(asteroids: AsteroidDef[], hub: StationDef, depot: Station
     // Rocks are displaced meshes; use ~85% of the nominal radius so contacts feel fair.
     colliders.push({ kind: 'asteroid', center: a.position, radius: a.radius * 0.85, material: oreOf(a.variant) === 'ironNickel' ? 'metalRock' : 'rock', index });
   });
-  // v0.8: the stations' real shapes (walls, hangar, spine, turning ring), see physics/structures.ts.
+  // v0.8: the stations' real shapes (walls, hangar, spine, ring, panels), see physics/structures.ts.
   colliders.push(...hubColliders(hub), ...depotColliders(depot, FERRO_MOUTH_Z));
-  for (const p of planets) colliders.push({ kind: 'planet', center: p.position, radius: p.radius, material: 'rock' });
+  for (const p of planets) colliders.push({ kind: 'planet', center: p.position, radius: p.radius, material: p.kind === 'ice' ? 'ice' : 'rock' });
   return colliders;
 }
 

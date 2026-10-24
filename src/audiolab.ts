@@ -159,7 +159,7 @@ const SCENES: Scene[] = [
     duration: 11,
     frame: (t) => (t < 6 ? { ship: { throttle: 0.6, speed: 0.6, shield: 0, hull: t < 3 ? 40 : 15 } } : { ship: null }),
     events: [
-      [3, (a) => a.collision(v(0, 0, -5), 22, true)],
+      [3, (a) => a.collision(v(0, 0, -5), { damage: 22, speed: 45, surface: 'metal', shield: false, onMe: true })],
       [6, (a) => a.explosion(v(0, 0, 0), 'falcon', true, false)],
     ],
   },
@@ -177,6 +177,30 @@ const SCENES: Scene[] = [
       [7, (a) => a.jump('out')],
       [7.6, (a) => a.jump('in')],
       [11, (a) => a.jump('in', v(-260, 40, -700))],
+    ],
+  },
+  {
+    id: '13-collisions-materiaux',
+    label: 'Collisions (v0.8) : contact léger, frottements, chocs sur métal, roche, glace, coque, bouclier, crash violent, alertes de composants',
+    duration: 17,
+    frame: (t) => ({ ship: { throttle: 0.5, speed: 0.5, shield: t < 11 ? 0 : t < 13 ? 60 : 0, hull: t < 13 ? 80 : 25 } }),
+    events: [
+      // 5 m/s against a wall: no damage, a muffled knock.
+      [0.5, (a) => a.collision(v(0, 0, -5), { damage: 0, speed: 5, surface: 'metal', shield: false, onMe: true })],
+      // Sliding along station plating, then over rock: rate-limited scrapes as the server sends them.
+      ...every(1.8, 3, 0.25, (a) => a.collision(v(0, 0, -5), { damage: 0, speed: 2.2, surface: 'metal', shield: false, onMe: true })),
+      [3.5, (a) => a.collision(v(0, 0, -5), { damage: 12, speed: 40, surface: 'metal', shield: false, onMe: true })],
+      [5.2, (a) => a.collision(v(0, 0, -5), { damage: 30, speed: 60, surface: 'rock', shield: false, onMe: true })],
+      ...every(7, 8.2, 0.25, (a) => a.collision(v(0, 0, -5), { damage: 0, speed: 2, surface: 'rock', shield: false, onMe: true })),
+      [8.6, (a) => a.collision(v(0, 0, -5), { damage: 10, speed: 50, surface: 'ice', shield: false, onMe: true })],
+      [10, (a) => a.collision(v(0, 0, -5), { damage: 8, speed: 35, surface: 'hull', shield: false, onMe: true })],
+      [11.5, (a) => a.collision(v(0, 0, -5), { damage: 9, speed: 40, surface: 'metal', shield: true, onMe: true })],
+      // 200 m/s into a wall: the worst crash, then what it broke.
+      [13, (a) => a.collision(v(0, 0, -5), { damage: 300, speed: 200, surface: 'metal', shield: false, onMe: true })],
+      [13.4, (a) => a.alert('enginesDestroyed')],
+      [14.4, (a) => a.alert('cockpitDamaged')],
+      // Another ship crashing into a rock 300 m away.
+      [16, (a) => a.collision(v(-200, 30, -220), { damage: 40, speed: 80, surface: 'rock', shield: false, onMe: false })],
     ],
   },
 ];

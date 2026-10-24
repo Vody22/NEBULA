@@ -204,7 +204,12 @@ export function snapshotShip(s: Ship): ShipSnapshot {
   };
 }
 
-const pct = (h: number) => Math.round(Math.max(0, Math.min(1, h)) * 100);
+/**
+ * Whole % rounded down, and never to 0 while the part still works: the
+ * client predicts with these values, and the thresholds (no boost under 30 %,
+ * main drive out at 0) must fall on the same side as on the server.
+ */
+const pct = (h: number) => (h <= 0 ? 0 : Math.max(1, Math.floor(Math.min(1, h) * 100 + 1e-9)));
 /** Component health as sent in snapshots (whole %). */
 export function packParts(p: Record<ComponentId, number>): [number, number, number, number] {
   return [pct(p.cockpit), pct(p.wingL), pct(p.wingR), pct(p.engines)];

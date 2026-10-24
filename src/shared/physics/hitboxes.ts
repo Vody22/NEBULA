@@ -79,6 +79,26 @@ export const HITBOXES: Record<ShipClassId, HitSphere[]> = {
   ],
 };
 
+const centreCache = new Map<string, Vector3>();
+
+/** Where a part sits on a ship of class `classId` (local frame): the mean of its spheres, weighted by volume. */
+export function partCentre(classId: ShipClassId, part: PartId): Vector3 {
+  const key = `${classId}:${part}`;
+  let c = centreCache.get(key);
+  if (c) return c;
+  c = new Vector3();
+  let w = 0;
+  for (const h of HITBOXES[classId]) {
+    if (h.part !== part) continue;
+    const k = h.r ** 3;
+    c.addScaledVector(h.at, k);
+    w += k;
+  }
+  if (w > 0) c.multiplyScalar(1 / w);
+  centreCache.set(key, c);
+  return c;
+}
+
 /** Mass of each class (t). */
 export const SHIP_MASS: Record<ShipClassId, number> = {
   falcon: 28,

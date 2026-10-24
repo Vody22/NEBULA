@@ -320,6 +320,146 @@ const collision: Recipe = {
   },
 };
 
+// ---------------------------------------------------------------- collisions by material (v0.8)
+
+/** Rock: a dull, heavy thud and the crunch of gravel; our own plating rings a little. */
+const collisionRock: Recipe = {
+  duration: 1.2,
+  variants: 3,
+  build(c, out, r) {
+    const t = 0.005;
+    // Body: brown noise through a falling low-pass, saturated: the crunch.
+    const n = noise(c, t, 0.8, r, true);
+    const lp = filter(c, 'lowpass', 900, 1.2);
+    sweep(lp.frequency, t, 1300, 140, 0.7);
+    const g = gain(c);
+    perc(g, t, 1, 0.002, 0.7);
+    n.connect(lp).connect(drive(c, 4)).connect(g).connect(out);
+    // Gravel: a spray of short grains, thinning out.
+    for (let i = 0; i < 26; i++) {
+      const at = t + 0.01 + Math.pow(r(), 1.8) * 0.6;
+      const gr = noise(c, at, 0.02, r);
+      const bp = filter(c, 'bandpass', 900 + r() * 2600, 3);
+      const gg = gain(c);
+      perc(gg, at, 0.12 + r() * 0.2, 0.001, 0.01 + r() * 0.03);
+      gr.connect(bp).connect(gg).connect(out);
+    }
+    metal(c, out, t, r, 140 + r() * 60, 0.22, 0.45);
+    thump(c, out, t, 70, 26, 1, 0.55);
+  },
+};
+
+/** Ice: a sharp crack, glassy shards tinkling away, a soft thud under them. */
+const collisionIce: Recipe = {
+  duration: 1.3,
+  variants: 3,
+  build(c, out, r) {
+    const t = 0.005;
+    const n = noise(c, t, 0.06, r);
+    const hp = filter(c, 'highpass', 2500, 0.8);
+    const g = gain(c);
+    perc(g, t, 1, 0.0005, 0.05);
+    n.connect(hp).connect(g).connect(out);
+    for (let i = 0; i < 18; i++) {
+      const at = t + 0.02 + Math.pow(r(), 1.5) * 0.8;
+      bell(c, out, at, 2400 + r() * 4200, 0.05 + r() * 0.07, 0.08 + r() * 0.2, 2.76 + r() * 0.5, 0.6);
+    }
+    const body = noise(c, t, 0.5, r, true);
+    const lp = filter(c, 'lowpass', 600, 1);
+    const bg = gain(c);
+    perc(bg, t, 0.5, 0.003, 0.4);
+    body.connect(lp).connect(bg).connect(out);
+    thump(c, out, t, 90, 35, 0.6, 0.35);
+  },
+};
+
+/** Two hulls: a deep double clang, the plating ringing, loose panels rattling. */
+const collisionHull: Recipe = {
+  duration: 1.3,
+  variants: 3,
+  build(c, out, r) {
+    const t = 0.005;
+    const n = noise(c, t, 0.08, r);
+    const lp = filter(c, 'lowpass', 3000);
+    const ng = gain(c);
+    perc(ng, t, 0.8, 0.001, 0.07);
+    n.connect(lp).connect(drive(c, 2)).connect(ng).connect(out);
+    metal(c, out, t, r, 95 + r() * 40, 0.7, 1.0);
+    metal(c, out, t + 0.012 + r() * 0.02, r, 210 + r() * 90, 0.45, 0.7);
+    thump(c, out, t, 75, 28, 1, 0.6);
+    for (let i = 0; i < 7; i++) metal(c, out, t + 0.06 + r() * 0.45, r, 700 + r() * 1800, 0.05, 0.06);
+  },
+};
+
+/** Sliding along station plating: a screech that wavers as the contact catches and slips. */
+const scrapeMetal: Recipe = {
+  duration: 0.8,
+  variants: 3,
+  build(c, out, r) {
+    const t = 0.005;
+    const n = noise(c, t, 0.75, r);
+    const bp = filter(c, 'bandpass', 2200 + r() * 1200, 9);
+    const lfo = osc(c, 'sine', 9 + r() * 8, t, 0.75);
+    const lg = gain(c, 500);
+    lfo.connect(lg).connect(bp.frequency);
+    const g = gain(c);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.6, t + 0.05);
+    g.gain.setValueAtTime(0.6, t + 0.4);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.75);
+    n.connect(bp).connect(g).connect(out);
+    // The grind under it.
+    const n2 = noise(c, t, 0.75, r, true);
+    const lp = filter(c, 'lowpass', 500);
+    const g2 = gain(c);
+    g2.gain.setValueAtTime(0.0001, t);
+    g2.gain.exponentialRampToValueAtTime(0.5, t + 0.04);
+    g2.gain.exponentialRampToValueAtTime(0.0001, t + 0.7);
+    n2.connect(lp).connect(g2).connect(out);
+    metal(c, out, t, r, 600 + r() * 500, 0.12, 0.3);
+  },
+};
+
+/** Sliding over rock or ice: a dry crackle of grit. */
+const scrapeRock: Recipe = {
+  duration: 0.8,
+  variants: 3,
+  build(c, out, r) {
+    const t = 0.005;
+    const n = noise(c, t, 0.75, r, true);
+    const lp = filter(c, 'lowpass', 1100, 1);
+    const g = gain(c);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.5, t + 0.04);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.72);
+    n.connect(lp).connect(g).connect(out);
+    for (let i = 0; i < 40; i++) {
+      const at = t + r() * 0.65;
+      const gr = noise(c, at, 0.015, r);
+      const bp = filter(c, 'bandpass', 1200 + r() * 3500, 4);
+      const gg = gain(c);
+      perc(gg, at, 0.06 + r() * 0.14, 0.0008, 0.006 + r() * 0.02);
+      gr.connect(bp).connect(gg).connect(out);
+    }
+  },
+};
+
+/** A gentle bump, too slow to hurt: a muffled knock through the hull. */
+const bump: Recipe = {
+  duration: 0.6,
+  variants: 3,
+  build(c, out, r) {
+    const t = 0.005;
+    const n = noise(c, t, 0.05, r);
+    const lp = filter(c, 'lowpass', 700);
+    const g = gain(c);
+    perc(g, t, 0.6, 0.002, 0.06);
+    n.connect(lp).connect(g).connect(out);
+    metal(c, out, t, r, 180 + r() * 80, 0.25, 0.35);
+    thump(c, out, t, 110, 45, 0.7, 0.25);
+  },
+};
+
 /** Our own ship destroyed: hull breach, alarm, short circuits, then the blast muffled through the dying cockpit. */
 const deathOwn: Recipe = {
   duration: 3.2,
@@ -788,6 +928,12 @@ export const RECIPES = {
   explosion_large: explosion(1.6),
   death_own: deathOwn,
   collision,
+  collision_rock: collisionRock,
+  collision_ice: collisionIce,
+  collision_hull: collisionHull,
+  scrape_metal: scrapeMetal,
+  scrape_rock: scrapeRock,
+  bump,
   shield_down: shieldDown,
   shield_up: shieldUp,
   weapons_down: weaponsDown,
@@ -852,6 +998,9 @@ const PEAK: Partial<Record<SoundId, number>> = {
   explosion_medium: 0.95,
   explosion_large: 0.97,
   death_own: 0.97,
+  scrape_metal: 0.55,
+  scrape_rock: 0.55,
+  bump: 0.6,
   shield_down: 0.6,
   shield_up: 0.45,
   weapons_down: 0.4,
