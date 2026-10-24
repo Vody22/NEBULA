@@ -1,6 +1,6 @@
 {
   "name": "nebula-frontier",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "private": true,
   "description": "NEBULA FRONTIER — MMO spatial 3D (prototype pilotage & combat)",
   "type": "module",

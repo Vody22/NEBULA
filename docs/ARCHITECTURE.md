@@ -11,13 +11,22 @@
 
 ## Simulation (`src/shared/sim`)
 
-- `World` : entités (vaisseaux, projectiles), pas de temps fixe `TICK_DT = 1/60`, collisions (grille spatiale pour les obstacles statiques), dégâts bouclier puis coque, file d'événements (`shot`, `hit`, `impact`, `collision`, `destroyed`, `spawned`).
+- `World` : entités (vaisseaux, projectiles, objets libres), pas de temps fixe `TICK_DT = 1/60`, collisions, dégâts bouclier puis coque puis partie touchée, file d'événements (`shot`, `hit`, `impact`, `collision`, `partDamaged`, `bodyHit`, `bodyBroken`, `bodyGone`, `destroyed`, `spawned`).
 - `shipPhysics` : fonction pure `(état, entrée, dt) → état`. Assistance de vol = les propulseurs poursuivent une vitesse cible avec une autorité limitée par axe, d'où la dérive en virage. Mode newtonien = accélération pure.
 - `AIPilot` : produit un `ShipInput` par tick, exactement comme un joueur. Les PNJ passent donc par les mêmes règles que les humains.
 - `zone` : génération déterministe de chaque secteur à partir d'une graine (`buildSector`, `zoneOf`), Aurora et Kepler depuis la v0.7.
 - `upgrades` (v0.5) : niveaux d'amélioration par vaisseau (`Ship.mods`), prix, offre du chantier. Toute la simulation lit les caractéristiques par `statsOf(ship)` (classe × améliorations, mises en cache), jamais directement `SHIP_CLASSES`, pour que le serveur et la prédiction du client volent le même vaisseau.
 
 Conventions : mètres, secondes, axe avant = −Z, haut = +Y, droite = +X.
+
+## Physique des collisions (`src/shared/physics`, v0.8)
+
+- `shapes.ts` : le décor en fonctions de distance signée (sphère, boîte, capsule, cylindre, tore, rocher), orientables et tournantes. Une seule fonction répond au contact, à la profondeur, à la normale et au balayage continu (lancer de sphère), si bien qu'un vaisseau rapide ne traverse pas un mur mince.
+- `structures.ts` : les formes des stations, aux cotes de leurs modèles 3D. `rocks.ts` : la forme des astéroïdes, la même pour le rendu et pour la physique.
+- `hitboxes.ts` : chaque vaisseau est un groupe de sphères, chacune liée à une partie (cockpit, structure, ailes, moteurs), avec sa masse et son inertie. `bodies.ts` : les objets libres (caisses, conteneurs, épaves, rochers).
+- `collide.ts` : balayage d'un solide contre le décor ou d'une paire de solides en mouvement relatif, puis impulsion au point de contact (rebond et frottement selon `materials.ts`), qui peut faire tourner le solide.
+- `damage.ts` : dégâts au carré de la variation de vitesse, usure de la partie touchée et ses effets en vol, les mêmes sur le serveur et dans la prédiction.
+- `World` trouve les paires vaisseau-vaisseau, vaisseau-objet et objet-objet par une grille de hachage des volumes balayés. Les vaisseaux loin de tout pilote n'ont qu'une sphère, et les objets libres loin de tout pilote sont gelés. Détails : [V08_COLLISIONS.md](V08_COLLISIONS.md).
 
 ## Serveur (`src/server/GameServer.ts`)
 
@@ -51,10 +60,10 @@ Possède un `World` par secteur (v0.7), les sessions joueurs, les pilotes IA, le
 - `store.ts` : l'interface `AccountStore` et `MemoryStore` (tests, serveur local sans base) ; `PostgresStore.ts` : PostgreSQL (Neon), tables `nf_*` créées et migrées au démarrage.
 - Règles partagées avec le menu : `src/shared/accounts.ts` (pseudos, mots de passe) et `src/shared/save.ts` (format et validation des sauvegardes). Détails : [V04_PERSISTANCE.md](V04_PERSISTANCE.md).
 
-## Protocole (`src/shared/net/protocol.ts`, version 7)
+## Protocole (`src/shared/net/protocol.ts`, version 8)
 
 - Client → serveur : `hello { version, auth }` (inscription, connexion ou jeton, depuis la v4), `input { seq, input }`, `chat`, `pvp`, `ping`, et depuis la v3 `dock`, `undock`, `trade { item, qty }` (positif = achat, négatif = vente), `repair`, et depuis la v5 `buyShip { ship }`, `useShip { ship }`, `upgrade { slot }`, depuis la v6 `mission { op, id }`, et depuis la v7 `jump { to }` (`null` annule la charge). Chaque message est validé par `validateClientMessage` ; le reste est rejeté et compté.
-- Serveur → client : `welcome` (session, graine, reprise), `account` (pseudo et jeton de connexion, depuis la v4), `snapshot` (tous les vaisseaux, dernière entrée appliquée `ackSeq` ; `m` = astéroïde miné ; `u` = niveaux d'amélioration, six chiffres, depuis la v5), `events`, `notice`, `chat`, `chatHistory`, `players`, `pong`, `error` (`code: 'auth'` et une raison pour un refus de connexion), et depuis la v3 `pilot` (crédits, soute, station, coque à quai ; vaisseau piloté et flotte depuis la v5 ; contrats et places réservées depuis la v6) et `board` (contrats proposés par la station, depuis la v6) à chaque changement et `market` (prix et stocks) une fois par seconde à quai. Depuis la v7 : `welcome` et le nouveau message `sector` donnent le secteur et la graine de sa zone, le snapshot porte l'état du réacteur hyperspatial (`jump`), `players` le secteur de chaque pilote, et les événements `jumpOut` et `jumpIn` montrent les sauts des autres.
+- Serveur → client : `welcome` (session, graine, reprise), `account` (pseudo et jeton de connexion, depuis la v4), `snapshot` (tous les vaisseaux, dernière entrée appliquée `ackSeq` ; `m` = astéroïde miné ; `u` = niveaux d'amélioration, six chiffres, depuis la v5), `events`, `notice`, `chat`, `chatHistory`, `players`, `pong`, `error` (`code: 'auth'` et une raison pour un refus de connexion), et depuis la v3 `pilot` (crédits, soute, station, coque à quai ; vaisseau piloté et flotte depuis la v5 ; contrats et places réservées depuis la v6) et `board` (contrats proposés par la station, depuis la v6) à chaque changement et `market` (prix et stocks) une fois par seconde à quai. Depuis la v7 : `welcome` et le nouveau message `sector` donnent le secteur et la graine de sa zone, le snapshot porte l'état du réacteur hyperspatial (`jump`), `players` le secteur de chaque pilote, et les événements `jumpOut` et `jumpIn` montrent les sauts des autres. Depuis la v8 : le snapshot porte l'état des parties de chaque vaisseau (`d`), sa rotation libre (`s`) et les objets libres qui ont bougé (`b`, la liste complète `bf` pour un nouveau pilote et toutes les 2 s) ; événements `collision` détaillés (partie, matériau, normale, vitesse, bouclier, autre vaisseau ou objet), `partDamaged`, `bodyHit`, `bodyBroken`, `bodyGone`.
 - Un client et un serveur de versions différentes refusent de jouer ensemble avec un message clair : le site et le serveur Render se mettent à jour en même temps.
 - Les lasers sont balistiques : un seul événement `shot` (position, vitesse, durée de vie) suffit au client pour les dessiner, sans trafic par tick.
 
@@ -66,7 +75,7 @@ Possède un `World` par secteur (v0.7), les sessions joueurs, les pilotes IA, le
   - Il se reconnecte avec un délai croissant et reprend la session grâce au jeton de connexion du compte.
 - `account.ts` : ce que le navigateur garde (pseudo et jeton de connexion, jamais le mot de passe ; progression solo), protégé contre un stockage plein ou bloqué. En solo, `LocalTransport` écrit la progression au plus toutes les 1,5 s et quand la page se ferme.
   - Il peut simuler de la latence (`?lag=120&jitter=20`).
-- `Predictor` : le vaisseau du joueur est simulé tout de suite, avec la même physique et les mêmes collisions que le serveur. À chaque snapshot, on repart de l'état serveur et on rejoue les entrées non encore acquittées. Les petits écarts sont lissés à l'écran au lieu de faire « sauter » le vaisseau.
+- `Predictor` : le vaisseau du joueur est simulé tout de suite, avec la même physique et les mêmes collisions que le serveur (décor et objets au repos ; depuis la v8, à l'heure du serveur, pour les rochers qui tournent). À chaque snapshot, on repart de l'état serveur et on rejoue les entrées non encore acquittées. Les petits écarts sont lissés à l'écran au lieu de faire « sauter » le vaisseau.
 - `SnapshotBuffer` affiche les autres vaisseaux légèrement dans le passé et interpole entre deux snapshots : 1,5 tick en solo, 110 ms en ligne pour 20 Hz plus la gigue. Les événements sont joués quand l'horloge de rendu atteint leur tick. Les tirs du joueur partent de la position prédite de son vaisseau.
 - `audio/` : le son, entièrement procédural (Web Audio). `Game.ts` donne à `GameAudio` l'état de chaque image et les événements de jeu. Le son ne lit que ce que le client affiche déjà, sans rien envoyer au serveur. Détails dans [AUDIO.md](AUDIO.md).
 - Le rendu n'a aucun état autoritaire : on peut le remplacer ou le faire tourner dans une application de bureau (Electron ou Tauri) sans toucher à la simulation.

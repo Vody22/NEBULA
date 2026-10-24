@@ -1,7 +1,7 @@
 # NEBULA FRONTIER
 
 MMO spatial 3D dans le navigateur (Three.js + TypeScript + Vite).
-Version actuelle : **v0.7, exploration**. Plusieurs pilotes partagent deux secteurs en temps réel, reliés par saut hyperspatial, avec un serveur Node.js autoritaire. On y mine, on commerce entre quatre stations, on remplit des contrats, on améliore son vaisseau ou on en achète un autre, et la progression est sauvegardée. Le mode solo hors ligne reste disponible.
+Version actuelle : **v0.8, collisions physiques**. Plusieurs pilotes partagent deux secteurs en temps réel, reliés par saut hyperspatial, avec un serveur Node.js autoritaire. On y mine, on commerce entre quatre stations, on remplit des contrats, on améliore son vaisseau ou on en achète un autre, et la progression est sauvegardée. Tout ce qui est solide se heurte vraiment. Le mode solo hors ligne reste disponible.
 
 ![Station Aurora-7](docs/img/station.png)
 
@@ -20,8 +20,17 @@ Options d'URL :
 - `?server=wss://…` : autre serveur.
 - `?lag=120&jitter=20` : latence simulée en millisecondes.
 - `?autostart` : démarrage direct en solo.
+- `?colliders` : formes de collision dessinées par-dessus le décor.
 
 Mise en ligne : voir [docs/DEPLOIEMENT.md](docs/DEPLOIEMENT.md). Le client reste sur Vercel, et le serveur WebSocket va sur Render, Fly.io ou un VPS.
+
+## Collisions physiques (v0.8)
+
+- **On ne traverse plus rien** : les murs des stations, les astéroïdes (avec la forme qu'on voit), les autres vaisseaux et les objets libres arrêtent un vaisseau, même au boost.
+- **Le choc dépend de la vitesse, de la masse, de l'angle et de la matière** : à 5 m/s on touche sans dégâts, à 200 m/s contre du métal le vaisseau est détruit. Métal, roche, fer-nickel, glace et coques rebondissent, glissent, sonnent et étincellent chacun à leur façon.
+- **Dégâts localisés** : cockpit (verrière fissurée), ailes, moteurs, chacun avec ses effets en vol, réparés à la station.
+- **Objets libres** : caisses, conteneurs, épaves et rochers qu'on pousse, qui tournent, rebondissent et cassent.
+- Détails : [docs/V08_COLLISIONS.md](docs/V08_COLLISIONS.md).
 
 ## Exploration (v0.7)
 
@@ -161,7 +170,7 @@ Principes, détaillés dans [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) :
 
 ```bash
 npm run typecheck   # TypeScript strict
-npm test            # tests : physique, combat, énergie, raids, réglages, serveur, réseau, prédiction, comptes, sauvegardes
+npm test            # tests : physique, collisions, combat, énergie, raids, réglages, serveur, réseau, prédiction, comptes, sauvegardes
 TEST_DATABASE_URL=postgres://… npm test   # en plus : le stockage PostgreSQL sur une base jetable (ses tables nf_* sont effacées)
 npm run build       # build de production
 npm run preview &   # puis :
@@ -170,6 +179,7 @@ npm run ui-check    # HUD à 3 tailles, menu pause, réaffectation, réglages, t
 node scripts/mp-check.mjs    # navigateurs sur le vrai serveur : inscription, synchro, chat, combat commun, PvP, latence, reconnexion, connexion refusée puis acceptée
 node scripts/mobile-check.mjs   # téléphone et tablette émulés : commandes tactiles, mise en page, chat et PvP en ligne
 node scripts/jump-check.mjs     # saut hyperspatial en solo : HUD, charge, Kepler, retour, mémoire graphique, bouton tactile
+node scripts/collision-check.mjs   # collisions : mur, astéroïde, deux vaisseaux, faible et violent, aile et cockpit, caisse, puis deux navigateurs en ligne
 node scripts/load-test.mjs 30 30   # 30 pilotes robots pendant 30 s : coût du tick et bande passante
 ```
 
@@ -182,5 +192,6 @@ Pour `npm run smoke`, définir `CHROMIUM_PATH` si Chromium n'est pas trouvé aut
 - **v0.4 : comptes pilotes et sauvegarde.**
 - **v0.5 : vaisseaux et améliorations.**
 - **v0.6 : missions.**
-- **v0.7 : exploration, un deuxième secteur et le saut hyperspatial** (cette version).
+- **v0.7 : exploration, un deuxième secteur et le saut hyperspatial.**
+- **v0.8 : collisions physiques** (cette version).
 - Ensuite : factions et réputation, carte de la galaxie et autres secteurs, version PC installable.

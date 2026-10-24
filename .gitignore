@@ -6,3 +6,4 @@ screenshots/
 .netlify/
 dist-server/
 .mp-check/
+.collision-check/
