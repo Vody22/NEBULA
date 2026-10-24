@@ -165,7 +165,7 @@ kbd { display: inline-block; min-width: 1.6em; text-align: center; font-family: 
 #topbar .hold .bar { width: 54px; height: 4px; margin: 0 0 0 2px; align-self: center; }
 #topbar .hold.full .v { color: var(--warn); }
 #zone { left: var(--gap); top: 20px; }
-#zone .name { font-family: var(--font-display); font-size: 15px; font-weight: 700; letter-spacing: 4px; color: #fff; padding-left: 10px; border-left: 2px solid var(--hud); line-height: 1.1; }
+#zone .name { width: fit-content; font-family: var(--font-display); font-size: 15px; font-weight: 700; letter-spacing: 4px; color: #fff; padding-left: 10px; border-left: 2px solid var(--hud); line-height: 1.1; }
 #zone .help { margin-top: 6px; padding-left: 12px; font-size: 13px; font-weight: 600; color: var(--hud-dim); }
 #zone .net { margin-top: 5px; padding-left: 12px; font-size: 14px; font-weight: 600; letter-spacing: 0.4px; color: var(--hud-text); white-space: nowrap; }
 #zone .net b { color: #fff; }
@@ -481,6 +481,8 @@ body.touch #topbar .u { font-size: 11px; }
 body.touch #topbar .hold .bar { width: 30px; }
 body.touch #zone { top: 8px; left: calc(10px + env(safe-area-inset-left, 0px)); }
 body.touch #zone .label { display: none; }
+/* no room under the sector name on phones: the SAUT button shows when the jump is possible */
+body.touch #zone .jump { display: none; }
 body.touch #zone .name { font-size: 11px; letter-spacing: 2px; }
 body.touch #zone .net { font-size: 12px; white-space: normal; max-width: calc(50vw - 160px); }
 body.touch #fps { display: none; }
