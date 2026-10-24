@@ -5,9 +5,9 @@ import { mulberry32 } from '../../shared/rng';
  * Generated texture sets for ship hulls: a tileable paint sheet with its normal
  * and ORM (occlusion, roughness, metalness) maps, and a decal atlas.
  * One tile of the sheet covers SHEET_METERS of hull, which gives about
- * 256 px per meter at 1024 px.
+ * 170 px per meter at 1024 px.
  */
-export const SHEET_METERS = 4;
+export const SHEET_METERS = 6;
 
 export interface ShipSheet {
   map: THREE.Texture;
@@ -117,7 +117,8 @@ export function makeShipSheet(opts: { seed: number; size?: number; base?: string
     hgt.ctx.strokeStyle = 'rgb(40,40,40)';
     hgt.ctx.lineWidth = 3;
     hgt.ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
-    g.strokeStyle = 'rgba(10,12,16,0.55)';
+    // Kept light: seen from a few hundred meters, dark seams turn the hull into tiles.
+    g.strokeStyle = 'rgba(10,12,16,0.36)';
     g.lineWidth = 2;
     g.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
     orm.ctx.strokeStyle = `rgb(120,${paintRough + 50},${paintMetal})`;

@@ -35,29 +35,48 @@ attribute float aPower;
 varying vec2 vUv;
 varying vec3 vColor;
 varying float vPower;
+varying vec3 vN;
+varying vec3 vView;
 void main(){
   vUv = uv;
   vColor = aColor;
   vPower = aPower;
   vec4 p = vec4(position, 1.0);
+  vec3 n = normal;
   #ifdef USE_INSTANCING
   p = instanceMatrix * p;
+  // Rotation × scale: the inverse transpose divides each axis by its scale squared.
+  mat3 m = mat3(instanceMatrix);
+  n = m * (n / vec3(dot(m[0], m[0]), dot(m[1], m[1]), dot(m[2], m[2])));
   #endif
-  gl_Position = projectionMatrix * modelViewMatrix * p;
+  vec4 mv = modelViewMatrix * p;
+  vN = normalize(normalMatrix * n);
+  vView = normalize(-mv.xyz);
+  gl_Position = projectionMatrix * mv;
 }`;
+// A cone seen side-on has hard edges: the walls fade where they turn away from
+// the eye, and toward the tip, so the plume reads as glowing gas. The core is
+// white-hot near the nozzle, with shock diamonds when the drive is pushed.
 const flameFrag = /* glsl */ `
 uniform vec3 uCore;
 uniform float uTime;
 varying vec2 vUv;
 varying vec3 vColor;
 varying float vPower;
+varying vec3 vN;
+varying vec3 vView;
 void main(){
   float along = clamp(1.0 - vUv.y, 0.0, 1.0); // 1 at nozzle, 0 at tip
   float around = vUv.x;
+  float facing = abs(dot(normalize(vN), normalize(vView)));
+  float soft = pow(facing, 2.2);
+  float tip = smoothstep(0.0, 0.4, along);
   float flick = 0.85 + 0.15*sin(uTime*60.0 + around*25.0) * sin(uTime*37.0);
-  float core = pow(along, 2.5);
-  float bands = 0.75 + 0.25*sin(along*40.0 - uTime*80.0);
-  vec3 col = mix(vColor, uCore, core) * (core*1.6 + along*0.7) * bands * flick * vPower;
+  float core = pow(along, 3.0) * (0.35 + 0.65*facing*facing);
+  float diamonds = pow(0.5 + 0.5*cos(along*26.0), 8.0) * smoothstep(0.35, 0.85, along) * smoothstep(0.45, 1.0, vPower);
+  float bands = 0.85 + 0.15*sin(along*40.0 - uTime*80.0);
+  vec3 col = mix(vColor, uCore, clamp(core*1.4 + diamonds*0.6, 0.0, 1.0));
+  col *= (along*1.2 + core*2.6 + diamonds*1.2) * soft * tip * bands * flick * vPower;
   gl_FragColor = vec4(col, 1.0);
 }`;
 
