@@ -28,7 +28,7 @@
     { "id": "v0.7", "title": "Exploration : secteur Kepler", "status": "done", "date": "2026-10-24", "commit": "2601019",
       "summary": "Un deuxième secteur et le saut hyperspatial pour y aller.",
       "features": ["Saut hyperspatial", "Stations Kepler-4 et Vesta-2", "Ciel et livrées propres au secteur", "Raids plus dangereux, platine plus fréquent"] },
-    { "id": "v0.8", "title": "Collisions physiques", "status": "active", "branch": "v0.8-collisions",
+    { "id": "v0.8", "title": "Collisions physiques", "status": "done", "date": "2026-10-24", "branch": "v0.8-collisions",
       "summary": "Tout ce qui est solide se percute pour de vrai : murs, astéroïdes, vaisseaux, débris. Dégâts selon la vitesse, la masse et la matière.",
       "tasks": [
         { "label": "Formes de collision exactes (astéroïdes, murs de station)", "done": true },
@@ -36,8 +36,8 @@
         { "label": "Impulsions vaisseau contre vaisseau et objets libres", "done": true },
         { "label": "Dégâts localisés par partie du vaisseau", "done": true },
         { "label": "Caisses, conteneurs et épaves près de Ferro-9", "done": true },
-        { "label": "Vérification multijoueur avec le vrai serveur", "done": false },
-        { "label": "Validation par William et mise en ligne", "done": false }
+        { "label": "Vérification multijoueur avec le vrai serveur", "done": true },
+        { "label": "Validation par William et mise en ligne", "done": true }
       ] },
     { "id": "next-1", "title": "Factions et réputation", "status": "planned",
       "summary": "Proposition : la réputation auprès des factions ouvre des stations, des prix et des contrats." },
