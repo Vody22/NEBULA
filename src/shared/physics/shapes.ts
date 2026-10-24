@@ -1,5 +1,6 @@
 import { Quaternion, Vector3 } from 'three';
 import type { StaticCollider } from '../sim/types';
+import { rockCollision } from './rocks';
 
 /**
  * Collision shapes of the static world (v0.8), as exact signed distance
@@ -9,8 +10,8 @@ import type { StaticCollider } from '../sim/types';
  * (sphere tracing), so a fast ship cannot step over a thin wall.
  *
  * Shapes live in the collider's local frame: origin at `center`, oriented by
- * `rot`, and for the rotating parts of a habitat ring also turned by
- * `spin × time` about the world Y axis through `center`.
+ * `rot`, and for turning bodies (asteroids, a habitat ring) also turned by
+ * `spin × time + spinPhase` about `spinAxis` (world Y by default) through `center`.
  */
 export type Shape =
   | { t: 'sphere'; r: number }
@@ -21,7 +22,9 @@ export type Shape =
   /** Capped cylinder along local Y: radius r, half height h. */
   | { t: 'cylinder'; r: number; h: number }
   /** Torus around local Y: ring radius R, tube radius r. */
-  | { t: 'torus'; R: number; r: number };
+  | { t: 'torus'; R: number; r: number }
+  /** An asteroid as drawn (physics/rocks.ts): variant `v`, detailed shape when `big`, radius `s`. */
+  | { t: 'rock'; v: number; big: boolean; s: number };
 
 const _q = new Vector3();
 const _n = new Vector3();
@@ -32,8 +35,8 @@ const _inv = new Quaternion();
 const Y = new Vector3(0, 1, 0);
 
 /** Rotation of a spinning collider at `time` (identity when it does not spin). */
-function spinOf(c: StaticCollider, time: number, out: Quaternion) {
-  return c.spin ? out.setFromAxisAngle(Y, c.spin * time) : out.identity();
+export function spinOf(c: StaticCollider, time: number, out: Quaternion) {
+  return c.spin ? out.setFromAxisAngle(c.spinAxis ?? Y, c.spin * time + (c.spinPhase ?? 0)) : out.identity();
 }
 
 /**
@@ -132,16 +135,18 @@ function localDistance(s: Shape, p: Vector3, n: Vector3): number {
       else n.set(0, 1, 0);
       return len - s.r;
     }
+    case 'rock':
+      return rockCollision(s.v, s.big).distance(_a.copy(p).divideScalar(s.s), n) * s.s;
   }
 }
 
-/** Velocity of the collider's surface at world point `p` (non-zero only for spinning parts). */
+/** Velocity of the collider's surface at world point `p` (non-zero only for spinning bodies). */
 export function surfaceVelocity(c: StaticCollider, p: Vector3, out: Vector3): Vector3 {
   if (!c.spin) return out.set(0, 0, 0);
-  // ω × r with ω = (0, spin, 0).
-  const rx = p.x - c.center.x;
-  const rz = p.z - c.center.z;
-  return out.set(c.spin * rz, 0, -c.spin * rx);
+  // ω × r, ω along the spin axis.
+  const a = c.spinAxis ?? Y;
+  _b.subVectors(p, c.center);
+  return out.crossVectors(a, _b).multiplyScalar(c.spin);
 }
 
 const _p = new Vector3();
@@ -157,13 +162,15 @@ const _seg = new Vector3();
 export function sphereCast(c: StaticCollider, p0: Vector3, p1: Vector3, s: number, time: number, skin = 0.02): number {
   _seg.subVectors(p1, p0);
   const len = _seg.length();
+  // A rock's distance is measured to the nearest point found, which a bump beside it can beat: shorter steps.
+  const step = c.shape?.t === 'rock' ? 0.7 : 1;
   let t = 0;
   for (let i = 0; i < 64; i++) {
     _p.copy(p0).addScaledVector(_seg, t);
     const d = distanceTo(c, _p, time) - s;
     if (d < skin) return t;
     if (len < 1e-9) return -1;
-    t += d / len;
+    t += (d * step) / len;
     if (t > 1) return -1;
   }
   return t;

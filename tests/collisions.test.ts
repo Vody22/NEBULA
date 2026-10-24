@@ -332,7 +332,7 @@ describe('collisions: multiplayer and performance', () => {
     const s = w.spawnShip({ classId: 'falcon', faction: 'union', name: 'p', position: aboveRoof(40), rotation: FACE_DOWN, ownerId: 'p' });
     w.step();
     const predictor = new Predictor(w.grid);
-    predictor.reconcile(snapshotShip(s), 0);
+    predictor.reconcile(snapshotShip(s), 0, w.time);
     const input = { ...neutralInput(), throttle: 1 };
     for (let seq = 1; seq <= 120; seq++) {
       w.grid.time = w.time;

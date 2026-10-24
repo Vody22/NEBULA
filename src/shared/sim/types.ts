@@ -153,8 +153,12 @@ export interface StaticCollider {
   shape?: Shape;
   /** Orientation of the shape (absent = world axes). */
   rot?: Quaternion;
-  /** Turning parts (the habitat ring): rad/s about the world Y axis through `center`. */
+  /** Turning bodies (asteroids, a habitat ring): rad/s about `spinAxis` through `center`. */
   spin?: number;
+  /** Unit axis of the spin (absent = world Y). */
+  spinAxis?: Vector3;
+  /** Angle of the spin at time 0 (rad). */
+  spinPhase?: number;
   /** Asteroids: index in zone.asteroids. */
   index?: number;
 }

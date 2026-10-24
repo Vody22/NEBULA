@@ -2,6 +2,7 @@ import { Line3, Vector3 } from 'three';
 import type { StationId } from '../economy/market';
 import { mulberry32 } from '../rng';
 import { sectorSeed, type SectorId } from '../sectors';
+import { BIG_ROCK, rockCollision } from '../physics/rocks';
 import { depotColliders, hubColliders } from '../physics/structures';
 import { oreOf, PLATINUM_CHANCE } from './mining';
 import type { StaticCollider } from './types';
@@ -27,7 +28,7 @@ export interface PlanetDef {
 export interface AsteroidDef {
   position: Vector3;
   radius: number;
-  /** Visual-only rotation parameters */
+  /** The rock turns about this unit axis at `spinSpeed` rad/s, from the angle `variant` at time 0 (drawn and collided alike). */
   spinAxis: [number, number, number];
   spinSpeed: number;
   variant: number;
@@ -324,12 +325,25 @@ function clearApproaches(asteroids: AsteroidDef[], hub: StationDef, depot: Stati
   );
 }
 
+/** v0.8: an asteroid collides as it is drawn (relief, proportions) and turns as it is drawn (Asteroids.ts). */
+export function asteroidCollider(a: AsteroidDef, index: number): StaticCollider {
+  const big = a.radius >= BIG_ROCK;
+  return {
+    kind: 'asteroid',
+    center: a.position,
+    radius: a.radius * rockCollision(a.variant, big).bound,
+    material: oreOf(a.variant) === 'ironNickel' ? 'metalRock' : 'rock',
+    index,
+    shape: { t: 'rock', v: a.variant, big, s: a.radius },
+    spin: a.spinSpeed,
+    spinAxis: new Vector3(...a.spinAxis).normalize(),
+    spinPhase: a.variant,
+  };
+}
+
 function zoneColliders(asteroids: AsteroidDef[], hub: StationDef, depot: StationDef, planets: PlanetDef[]): StaticCollider[] {
   const colliders: StaticCollider[] = [];
-  asteroids.forEach((a, index) => {
-    // Rocks are displaced meshes; use ~85% of the nominal radius so contacts feel fair.
-    colliders.push({ kind: 'asteroid', center: a.position, radius: a.radius * 0.85, material: oreOf(a.variant) === 'ironNickel' ? 'metalRock' : 'rock', index });
-  });
+  asteroids.forEach((a, index) => colliders.push(asteroidCollider(a, index)));
   // v0.8: the stations' real shapes (walls, hangar, spine, ring, panels), see physics/structures.ts.
   colliders.push(...hubColliders(hub), ...depotColliders(depot, FERRO_MOUTH_Z));
   for (const p of planets) colliders.push({ kind: 'planet', center: p.position, radius: p.radius, material: p.kind === 'ice' ? 'ice' : 'rock' });

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { SimplexNoise } from 'three/examples/jsm/math/SimplexNoise.js';
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { BIG_ROCK, ROCK_FAMILIES, rockShape, type RockFamily, type RockRelief, type RockShape } from '../../shared/physics/rocks';
 import { mulberry32 } from '../../shared/rng';
 import type { AsteroidDef } from '../../shared/sim/zone';
 import { GlowField } from './batches';
@@ -8,14 +8,11 @@ import { NOISE_GLSL } from './glsl';
 import { makeCloudTexture } from './textures';
 
 /**
- * Rock families, picked by the asteroid's variant (shared with the server,
- * visual only). Shapes stay within about 0.8–1.25 of the radius so the
- * collision sphere (0.85 × radius) keeps matching what the player sees.
+ * Rock families, picked by the asteroid's variant. The shapes come from
+ * shared/physics/rocks.ts, where the physics reads the same surface: what a
+ * ship hits is the rock drawn here.
  */
-type Family = 'carbon' | 'rubble' | 'silicate' | 'metal';
-const FAMILY: Family[] = ['carbon', 'rubble', 'silicate', 'metal'];
-
-const PALETTE: Record<Family, { base: [number, number, number]; dust: [number, number, number]; vein?: [number, number, number] }> = {
+const PALETTE: Record<RockFamily, { base: [number, number, number]; dust: [number, number, number]; vein?: [number, number, number] }> = {
   // Carbonaceous: dark, rounded. Rubble piles: the same matter, lumpy.
   carbon: { base: [0.085, 0.078, 0.072], dust: [0.16, 0.145, 0.13] },
   rubble: { base: [0.1, 0.09, 0.08], dust: [0.18, 0.16, 0.14] },
@@ -25,9 +22,8 @@ const PALETTE: Record<Family, { base: [number, number, number]; dust: [number, n
   metal: { base: [0.13, 0.135, 0.145], dust: [0.2, 0.19, 0.18], vein: [0.55, 0.56, 0.6] },
 };
 
-function makeRockGeometry(family: Family, seed: number, detail: number, octaves: number) {
-  const rand = mulberry32(seed);
-  const noise = new SimplexNoise({ random: rand });
+function makeRockGeometry(shape: RockShape, detail: number) {
+  const noise = shape.noise;
   let geo: THREE.BufferGeometry = new THREE.IcosahedronGeometry(1, detail);
   geo.deleteAttribute('normal');
   geo.deleteAttribute('uv');
@@ -35,58 +31,12 @@ function makeRockGeometry(family: Family, seed: number, detail: number, octaves:
   const pos = geo.attributes.position as THREE.BufferAttribute;
   const colors = new Float32Array(pos.count * 3);
   const v = new THREE.Vector3();
-  const pal = PALETTE[family];
-  const stretch =
-    family === 'silicate'
-      ? new THREE.Vector3(0.8 + rand() * 0.3, 0.72 + rand() * 0.2, 0.9 + rand() * 0.3)
-      : new THREE.Vector3(0.88 + rand() * 0.2, 0.84 + rand() * 0.16, 0.88 + rand() * 0.2);
-  const craters: { c: THREE.Vector3; r: number }[] = [];
-  const nCraters = family === 'silicate' ? 4 : family === 'metal' ? 5 : 11;
-  for (let i = 0; i < nCraters; i++) {
-    craters.push({ c: new THREE.Vector3(rand() - 0.5, rand() - 0.5, rand() - 0.5).normalize(), r: 0.12 + rand() * 0.32 });
-  }
-  // Silicate blocks: planar fractures give flat faces and sharp edges.
-  const cuts: { n: THREE.Vector3; d: number }[] = [];
-  if (family === 'silicate') {
-    for (let i = 0; i < 9; i++) cuts.push({ n: new THREE.Vector3(rand() - 0.5, rand() - 0.5, rand() - 0.5).normalize(), d: 0.8 + rand() * 0.15 });
-  }
-  // Rubble piles: a few big lobes.
-  const lobes: { c: THREE.Vector3; r: number }[] = [];
-  if (family === 'rubble') {
-    for (let i = 0; i < 5; i++) lobes.push({ c: new THREE.Vector3(rand() - 0.5, rand() - 0.5, rand() - 0.5).normalize(), r: 0.5 + rand() * 0.4 });
-  }
-  const amp0 = family === 'carbon' ? 0.22 : family === 'metal' ? 0.18 : family === 'rubble' ? 0.16 : 0.12;
+  const pal = PALETTE[shape.family];
+  const relief: RockRelief = { r: 1, h: 0, crater: 0 };
   for (let i = 0; i < pos.count; i++) {
     v.fromBufferAttribute(pos, i).normalize();
-    let h = 0;
-    let amp = amp0;
-    let f = 1.1;
-    for (let o = 0; o < octaves; o++) {
-      h += noise.noise3d(v.x * f + seed, v.y * f, v.z * f) * amp;
-      f *= 2.1;
-      amp *= 0.48;
-    }
-    for (const lb of lobes) {
-      const d = v.distanceTo(lb.c);
-      if (d < lb.r) h += (1 - (d / lb.r) ** 2) * 0.12;
-    }
-    let crater = 0;
-    for (const cr of craters) {
-      const d = v.distanceTo(cr.c);
-      if (d < cr.r) {
-        const t = d / cr.r;
-        h -= (1 - t * t) * 0.1 * cr.r * 2;
-        if (t > 0.75) h += (t - 0.75) * 0.14;
-        crater = Math.max(crater, 1 - t);
-      }
-    }
-    let r = 1 + h;
-    for (const c of cuts) {
-      const dn = v.dot(c.n);
-      if (dn > 0.05) r = Math.min(r, c.d / dn);
-    }
-    r = Math.min(1.25, Math.max(0.8, r));
-    v.multiplyScalar(r).multiply(stretch);
+    const { r, h, crater } = shape.relief(v, relief);
+    v.multiplyScalar(r).multiply(shape.stretch);
     pos.setXYZ(i, v.x, v.y, v.z);
     // Fine dust settles in hollows and craters; exposed relief stays darker.
     const hollow = Math.min(1, Math.max(0, -h * 4 + crater * 0.8));
@@ -186,7 +136,7 @@ export class Asteroids {
   private detail = { value: 1 };
 
   constructor(defs: AsteroidDef[], beltCenter: THREE.Vector3) {
-    const mats: Record<Family, THREE.MeshStandardMaterial> = {
+    const mats: Record<RockFamily, THREE.MeshStandardMaterial> = {
       carbon: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.96, metalness: 0, envMapIntensity: 0.25 }),
       rubble: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, metalness: 0, envMapIntensity: 0.25 }),
       silicate: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.86, metalness: 0.02, envMapIntensity: 0.3 }),
@@ -194,12 +144,12 @@ export class Asteroids {
     };
     for (const m of Object.values(mats)) addRockDetail(m, this.detail);
     for (const big of [false, true]) {
-      for (let v = 0; v < FAMILY.length; v++) {
-        const list = defs.filter((d) => d.variant === v && d.radius >= 140 === big);
+      for (let v = 0; v < ROCK_FAMILIES.length; v++) {
+        const list = defs.filter((d) => d.variant === v && d.radius >= BIG_ROCK === big);
         if (!list.length) continue;
-        const family = FAMILY[v];
-        const geo = makeRockGeometry(family, 100 + v * 17 + (big ? 7 : 0), big ? 22 : 6, big ? 6 : 3);
-        const mesh = new THREE.InstancedMesh(geo, mats[family], list.length);
+        const shape = rockShape(v, big);
+        const geo = makeRockGeometry(shape, big ? 22 : 6);
+        const mesh = new THREE.InstancedMesh(geo, mats[shape.family], list.length);
         mesh.frustumCulled = false;
         this.sets.push({ mesh, defs: list });
         this.group.add(mesh);

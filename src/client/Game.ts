@@ -3,6 +3,7 @@ import { cargoTotal, ITEMS, type ItemId } from '../shared/economy/items';
 import type { StationId } from '../shared/economy/market';
 import { segmentSphere } from '../shared/math';
 import { impactScale } from '../shared/physics/collide';
+import { distanceTo, rayCast } from '../shared/physics/shapes';
 import { DAMAGED_BELOW } from '../shared/physics/damage';
 import { COMPONENT_IDS, partCentre } from '../shared/physics/hitboxes';
 import type { ChatLine, ErrorCode, JumpView, MarketView, PilotState, PlayerInfo, PlayerStats, ServerMessage } from '../shared/net/protocol';
@@ -11,7 +12,7 @@ import { MINING_MAX_SPEED, MINING_RANGE, MINING_RATE, miningTarget, oreOf, richn
 import { SHIP_CLASSES } from '../shared/sim/shipClasses';
 import { statsOfPacked, unpackMods } from '../shared/sim/upgrades';
 import { StaticGrid } from '../shared/sim/spatialGrid';
-import { neutralInput, type Ship, type ShipClassId, type ShipInput, type SimEvent } from '../shared/sim/types';
+import { neutralInput, type Ship, type ShipClassId, type ShipInput, type SimEvent, type StaticCollider } from '../shared/sim/types';
 import { TICK_DT, TICK_RATE } from '../shared/sim/world';
 import { DOCK_MAX_SPEED, zoneOf, type ZoneDef } from '../shared/sim/zone';
 import { GameAudio, type AudioFrame } from './audio/Audio';
@@ -26,6 +27,7 @@ import { SnapshotBuffer, type InterpolatedShip } from './net/SnapshotBuffer';
 import type { Transport } from './net/Transport';
 import { Asteroids } from './render/Asteroids';
 import { BodyViews } from './render/BodyViews';
+import { ColliderDebug } from './render/ColliderDebug';
 import { Effects } from './render/Effects';
 import { Lasers } from './render/Lasers';
 import { MiningBeams, type BeamSegment } from './render/MiningBeams';
@@ -46,6 +48,8 @@ export interface GameOptions {
   quality: QualityLevel;
   /** 'direct' skips post-processing entirely (?render=direct). */
   render?: 'auto' | 'direct';
+  /** The collision shapes drawn over the scene (?colliders). */
+  colliders?: boolean;
 }
 
 const UNION_BOLT = new THREE.Color(1.5, 4, 9);
@@ -111,6 +115,10 @@ export class Game {
   private asteroids: Asteroids | null = null;
   /** Loose bodies: crates, containers, wreckage, boulders (v0.8). */
   private bodyViews: BodyViews | null = null;
+  /** The collision shapes, when shown (?colliders). */
+  private colliderDebug: ColliderDebug | null = null;
+  /** The asteroids' colliders, by asteroid index (the mining beams end on their surface). */
+  private rockColliders: StaticCollider[] = [];
   private lasers = new Lasers();
   private beams = new MiningBeams();
   private beamList: BeamSegment[] = [];
@@ -386,6 +394,32 @@ export class Game {
     this.parked = null;
   }
 
+  /**
+   * The rocks turn (v0.8: and collide as drawn): they are shown at the time
+   * of our predicted ship, so what it bumps into is where it is drawn.
+   */
+  private rockTime() {
+    const p = this.predictor;
+    if (!p?.active) return this.renderTime;
+    return p.time - TICK_DT * (1 - Math.min(1, this.inputAcc / TICK_DT));
+  }
+
+  /** Shows or hides the collision shapes (?colliders, or window.__game.setColliderDebug(true)). */
+  setColliderDebug(on: boolean) {
+    this.opts.colliders = on;
+    if (!on || !this.zone) {
+      if (this.colliderDebug) {
+        this.worldRoot.remove(this.colliderDebug.group);
+        this.colliderDebug.dispose();
+        this.colliderDebug = null;
+      }
+      return;
+    }
+    if (this.colliderDebug) return;
+    this.colliderDebug = new ColliderDebug(this.zone.colliders);
+    this.worldRoot.add(this.colliderDebug.group);
+  }
+
   /** Network state for automated tests and debugging (window.__game.inspect()). */
   inspect() {
     const latest = this.buffer.latest;
@@ -599,12 +633,23 @@ export class Game {
       this.stationViews.set(def.id, view);
       if (view !== this.station) this.worldRoot.add(view.group);
     }
-    // Stations, planets and the big rocks hide the sounds behind them.
-    this.audio.setOccluders(zone.colliders.filter((c) => c.kind !== 'asteroid' || c.radius > 80));
+    // Stations, planets and the big rocks hide the sounds behind them (a rock as a sphere of about its mean size).
+    this.audio.setOccluders(
+      zone.colliders.flatMap((c) => {
+        if (c.kind !== 'asteroid') return [c];
+        const r = zone.asteroids[c.index!].radius;
+        return r > 94 ? [{ center: c.center, radius: r * 0.95 }] : [];
+      }),
+    );
+    this.rockColliders = [];
+    for (const c of zone.colliders) if (c.kind === 'asteroid' && c.index !== undefined) this.rockColliders[c.index] = c;
     this.asteroids = new Asteroids(zone.asteroids, zone.beltCenter);
     this.asteroids.setDetail(this.quality.level !== 'low');
     this.bodyViews = new BodyViews();
     this.worldRoot.add(this.planets.group, this.station.group, this.asteroids.group, this.bodyViews.group);
+    // The previous one went with the old world root.
+    this.colliderDebug = null;
+    if (this.opts.colliders) this.setColliderDebug(true);
     this.hud.setZoneName(zone.name);
     // Compile every shader now rather than stalling on the first shot, the
     // first kill or the first ship of a class.
@@ -639,7 +684,7 @@ export class Game {
         const mine = m.you !== null ? m.snap.ships.find((s) => s.id === m.you) : undefined;
         if (mine) {
           this.myPvp = mine.pvp;
-          this.predictor?.reconcile(mine, m.ackSeq);
+          this.predictor?.reconcile(mine, m.ackSeq, m.snap.time);
         } else this.predictor?.reset();
         break;
       }
@@ -866,6 +911,7 @@ export class Game {
     }
     this.updateBeams(ships, dt);
     this.bodyViews?.update(this.renderTime, this.time);
+    if (this.colliderDebug && this.bodyViews) this.colliderDebug.update(shipPoses(ships), this.bodyViews.bodies.values(), this.rockTime(), this.cam.camera.position);
 
     // 5) Events whose time has come
     this.eventQueue.sort((a, b) => a.time - b.time);
@@ -923,7 +969,7 @@ export class Game {
     this.sky?.update(this.cam.camera);
     for (const v of this.stationViews.values()) v.update(this.renderTime, this.cam.camera.position);
     this.planets?.update(this.renderTime);
-    this.asteroids?.update(this.renderTime);
+    this.asteroids?.update(this.rockTime());
     this.lasers.update(this.renderTime, this.cam.camera.position);
     this.effects.update(dt);
     this.dust.update(camPos, me ? me.velocity : _p.set(0, 0, 0));
@@ -1108,6 +1154,15 @@ export class Game {
     return this.pixelRatio;
   }
 
+  /**
+   * Whether an event is about our own ship. Events are shown at the render
+   * clock, ~100 ms behind the snapshots, so the blow that destroyed our ship
+   * is shown after the server has already told us we lost it.
+   */
+  private isMine(ship: number | null | undefined) {
+    return ship != null && (ship === this.myShipId || (this.myShipId === null && ship === this.lastMyShipId));
+  }
+
   private handleEvent(e: SimEvent, time: number) {
     this.debug.events++;
     const camPos = this.cam.camera.position;
@@ -1140,14 +1195,14 @@ export class Game {
           this.effects.hullHit(_p);
           view?.hullHit(_p);
         }
-        this.audio.hit(_p, e.shield, e.target === this.myShipId, e.damage);
-        if (e.target === this.myShipId) {
+        this.audio.hit(_p, e.shield, this.isMine(e.target), e.damage);
+        if (this.isMine(e.target)) {
           this.debug.hitsTaken++;
           this.hud.damageTaken(e.damage, e.shield);
           this.cam.addShake(e.shield ? 0.12 : 0.3);
           if (!e.shield) this.damageFx = Math.min(1, this.damageFx + 0.3);
         }
-        if (e.attacker === this.myShipId) {
+        if (this.isMine(e.attacker)) {
           this.debug.myHits++;
           this.hud.hitConfirm(e.shield);
           this.audio.hitMarker(e.shield);
@@ -1163,7 +1218,7 @@ export class Game {
         // v0.8: what was struck, how hard, where on the ship, and whether its shield took it.
         _p.set(...e.pos);
         _normal.set(...(e.n ?? [0, 1, 0]));
-        const mine = e.ship === this.myShipId;
+        const mine = this.isMine(e.ship);
         const speed = e.speed ?? 10;
         const k = impactScale(speed);
         const hard = e.damage > 0;
@@ -1173,11 +1228,11 @@ export class Game {
         else if (hard) view?.hullHit(_p);
         // Two ships report the same contact, one event each: the sparks and the sound once.
         const pair = e.other !== undefined;
-        if (!pair || mine || (e.other !== this.myShipId && e.ship < e.other!)) {
+        if (!pair || mine || (!this.isMine(e.other) && e.ship < e.other!)) {
           const mat = e.mat ?? 'rock';
           this.effects.collision(_p, _normal, k, mat, hard, shieldColor);
           const surface = mat === 'metal' ? 'metal' : mat === 'hull' || mat === 'debris' ? 'hull' : mat === 'ice' ? 'ice' : 'rock';
-          this.audio.collision(_p, { damage: e.damage, speed, surface, shield: !!e.shield, onMe: mine || e.other === this.myShipId });
+          this.audio.collision(_p, { damage: e.damage, speed, surface, shield: !!e.shield, onMe: mine || this.isMine(e.other) });
         }
         if (mine) {
           this.debug.collisions++;
@@ -1235,13 +1290,13 @@ export class Game {
         this.effects.explosion(_p, big ? 1.8 : 1, vel);
         this.debug.explosions++;
         const d = _p.distanceTo(camPos);
-        this.audio.explosion(_p, e.classId, e.ship === this.myShipId, e.by !== null && e.by === this.myShipId);
+        this.audio.explosion(_p, e.classId, this.isMine(e.ship), this.isMine(e.by));
         this.cam.addShake(Math.max(0, 1 - d / 900) * (big ? 1.2 : 0.8));
-        if (e.by !== null && e.by === this.myShipId) {
+        if (this.isMine(e.by)) {
           this.debug.myKills++;
           this.hud.killConfirm();
         }
-        if (e.ship === this.myShipId) {
+        if (this.isMine(e.ship)) {
           this.cam.addShake(1.5);
           this.hud.notice('Coque détruite — éjection', 'warn');
         }
@@ -1281,13 +1336,17 @@ export class Game {
       seg.from.set(0, 0, -statsOfPacked(s.snap.classId, s.snap.u).radius * 0.6).applyQuaternion(_q).add(view.group.position);
       _fwd.set(0, 0, -1).applyQuaternion(_q);
       _end.copy(seg.from).addScaledVector(_fwd, MINING_RANGE);
-      const t = segmentSphere(seg.from, _end, rock.position, rock.radius);
-      // Interpolation can drift the nose off the rock by a hair: aim at its nearest surface point then.
+      // The beam ends on the rock as drawn (v0.8: its collision shape is the drawn one).
+      const c = this.rockColliders[m!];
+      const time = this.rockTime();
+      const t = c ? rayCast(c, seg.from, _end, time) : segmentSphere(seg.from, _end, rock.position, rock.radius);
+      // Interpolation can drift the nose off the rock by a hair: aim at its centre's surface then.
       if (t >= 0) seg.to.copy(seg.from).addScaledVector(_fwd, t * MINING_RANGE);
-      else seg.to.copy(seg.from).sub(rock.position).setLength(rock.radius).add(rock.position);
+      else seg.to.copy(seg.from).sub(rock.position).setLength(c ? rock.radius * 0.9 : rock.radius).add(rock.position);
       n++;
       if (spark && seg.to.distanceTo(camPos) < 2500) {
-        _normal.copy(seg.to).sub(rock.position).normalize();
+        if (c) distanceTo(c, seg.to, time, _normal);
+        else _normal.copy(seg.to).sub(rock.position).normalize();
         this.effects.miningSpark(seg.to, _normal, Math.random() < 0.15);
       }
     }
@@ -1493,6 +1552,11 @@ export class Game {
     }
     this.targetId = best;
   }
+}
+
+/** The drawn pose of each ship, for the collision shapes. */
+function* shipPoses(ships: Map<number, InterpolatedShip>) {
+  for (const [id, s] of ships) yield { id, classId: s.snap.classId, position: s.position, rotation: s.rotation };
 }
 
 /** Frees the GPU side of a discarded part of the scene (geometries, materials, their textures). */

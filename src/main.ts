@@ -44,7 +44,7 @@ window.addEventListener('unhandledrejection', (e) => {
 
 let game: Game;
 try {
-  game = new Game(canvas, { quality: quality(), render }, settings);
+  game = new Game(canvas, { quality: quality(), render, colliders: params.has('colliders') }, settings);
 } catch (err) {
   showFatal(err);
   throw err;

@@ -57,6 +57,11 @@ export class Predictor {
   /** Velocity interpolated like the pose (camera pull-back, FOV and dust use it). */
   readonly renderVelocity = new Vector3();
   /**
+   * Server time of the predicted state (s): each replayed input is the
+   * server's next tick. The turning rocks are where they will be then.
+   */
+  time = 0;
+  /**
    * Simulated pose one tick earlier. The simulation runs at 60 Hz; on a
    * 120–240 Hz screen the rendered ship is interpolated between the last two
    * ticks, otherwise it moves only on some frames and visibly judders.
@@ -194,6 +199,9 @@ export class Predictor {
 
   private simulate(input: ShipInput) {
     const ship = this.ship!;
+    // The server steps its clock before it moves the ships (World.step).
+    this.time += TICK_DT;
+    this.grid.time = this.time;
     Object.assign(ship.input, input);
     _from.copy(ship.position);
     stepShipPhysics(ship, TICK_DT);
@@ -220,8 +228,9 @@ export class Predictor {
     }
   }
 
-  /** Server state for our ship (acknowledging inputs up to `ackSeq`). */
-  reconcile(s: ShipSnapshot, ackSeq: number) {
+  /** Server state for our ship at server time `time` (acknowledging inputs up to `ackSeq`). */
+  reconcile(s: ShipSnapshot, ackSeq: number, time: number) {
+    this.time = time;
     if (!this.ship || this.ship.id !== s.id) {
       this.adopt(s);
       this.load(s);

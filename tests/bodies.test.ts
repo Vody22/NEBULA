@@ -312,7 +312,7 @@ describe('loose bodies: the network', () => {
     const s = coasting(w, OPEN.clone().add(new Vector3(-40, 0, 0)), new Vector3(25, 0, 0), FACE_X);
     const b = body(w, 'crate', OPEN);
     const p = new Predictor(w.grid);
-    p.reconcile(snapshotShip(s), 0);
+    p.reconcile(snapshotShip(s), 0, w.time);
     p.setRestingBodies([{ id: b.id, kind: b.kind, scale: b.scale, position: b.position.clone(), rotation: b.rotation.clone() }]);
     const input = { ...neutralInput(), flightAssist: false };
     for (let i = 1; i <= 150; i++) {

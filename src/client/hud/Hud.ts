@@ -606,6 +606,14 @@ export class Hud {
     this.components(me?.snap.d, me ? me.snap.hull / statsOfPacked(me.snap.classId, me.snap.u).hull : 1, dt, !!me && !docked);
 
     if (!me) {
+      // Destroyed: the last state we drew can predate the blow (one violent crash from full hull).
+      if (!docked && !f.jumping) {
+        this.shieldTxt.textContent = this.hullTxt.textContent = '0%';
+        for (let i = 0; i < SEGMENTS; i++) {
+          this.shieldSeg.children[i].classList.remove('on');
+          this.hullSeg.children[i].classList.remove('on');
+        }
+      }
       this.crosshair.style.display = this.cursorEl.style.display = this.lead.style.display = this.bracket.style.display = this.arrow.style.display = 'none';
       this.cursorLine.setAttribute('x1', '0');
       this.cursorLine.setAttribute('x2', '0');

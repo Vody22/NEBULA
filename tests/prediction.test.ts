@@ -27,7 +27,7 @@ function run(latencyTicks: number, ticks = 360) {
       const mine = m.snap.ships.find((s) => s.id === m.you);
       if (mine) {
         const had = predictor.active;
-        predictor.reconcile(mine, m.ackSeq);
+        predictor.reconcile(mine, m.ackSeq, m.snap.time);
         if (had) corrections.push(predictor.lastCorrection);
       }
     }
@@ -68,6 +68,7 @@ describe('client-side prediction', () => {
     const predictor = new Predictor(new StaticGrid([]));
     predictor.reconcile(
       { id: 1, name: 'Pilote', classId: 'falcon', faction: 'union', owner: 'me', p: [0, 0, 0], q: [0, 0, 0, 1], v: [0, 0, -150], w: [0, 0, 0], hull: 100, shield: 100, energy: 100, throttle: 1, boosting: false, firing: false, weaponsLocked: false, pvp: false },
+      0,
       0,
     );
     // Mimic Game: a fixed 60 Hz input accumulator driven by 144 Hz frames.
@@ -112,6 +113,7 @@ describe('client-side prediction', () => {
     const predictor = new Predictor(new StaticGrid([]));
     predictor.reconcile(
       { id: 1, name: 'Pilote', classId: 'falcon', faction: 'union', owner: 'me', p: [0, 0, 0], q: [0, 0, 0, 1], v: [0, 0, 0], w: [0, 0, 0], hull: 100, shield: 100, energy: 100, throttle: 0, boosting: false, firing: false, weaponsLocked: false, pvp: false },
+      0,
       0,
     );
     const TICK = 1 / 60;
