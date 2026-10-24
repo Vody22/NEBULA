@@ -2,14 +2,16 @@ import type { Vector3 } from 'three';
 import type { StaticCollider } from './types';
 
 /**
- * Uniform hash grid for static colliders. Large colliders (planets) are kept
- * in a separate list and always tested.
+ * Uniform hash grid for static colliders, by bounding sphere. Large colliders
+ * (planets) are kept in a separate list and always tested.
  */
 export class StaticGrid {
   private cells = new Map<string, StaticCollider[]>();
   private large: StaticCollider[] = [];
   private result: StaticCollider[] = [];
   private seen = new Set<StaticCollider>();
+  /** Sim time, for the turning parts of a habitat ring (set by World.step and the client's predictor). */
+  time = 0;
 
   constructor(colliders: StaticCollider[], private cellSize = 500) {
     for (const c of colliders) {

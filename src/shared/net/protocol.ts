@@ -2,7 +2,10 @@ import { isItemId, type Cargo, type ItemId } from '../economy/items';
 import type { StationId } from '../economy/market';
 import type { Mission } from '../missions';
 import { isSectorId, type SectorId } from '../sectors';
+import { allIntact } from '../physics/damage';
+import type { ComponentId } from '../physics/hitboxes';
 import type { EntityId, FactionId, Ship, ShipClassId, ShipInput, SimEvent } from '../sim/types';
+import { intactParts } from '../sim/types';
 import { isUpgradeSlot, offerOf, packMods, type ShipMods, type UpgradeSlot } from '../sim/upgrades';
 
 /**
@@ -10,7 +13,7 @@ import { isUpgradeSlot, offerOf, packMods, type ShipMods, type UpgradeSlot } fro
  * plain JSON-serialisable data so it can travel over WebSocket unchanged
  * (a binary encoding can replace JSON later without touching game code).
  */
-export const PROTOCOL_VERSION = 7;
+export const PROTOCOL_VERSION = 8;
 
 export interface ShipSnapshot {
   id: EntityId;
@@ -35,6 +38,10 @@ export interface ShipSnapshot {
   m?: number;
   /** Upgrade levels packed by packMods (v0.5), absent for a ship without upgrades. */
   u?: string;
+  /** Spin from collisions (local frame, rad/s, v0.8), absent when none. */
+  s?: [number, number, number];
+  /** Component health in % (cockpit, left wing, right wing, engines; v0.8), absent when all intact. */
+  d?: [number, number, number, number];
 }
 
 export interface PlayerStats {
@@ -190,7 +197,22 @@ export function snapshotShip(s: Ship): ShipSnapshot {
     pvp: s.pvp,
     ...(s.mining !== null ? { m: s.mining } : {}),
     ...(u ? { u } : {}),
+    ...(s.spin.x !== 0 || s.spin.y !== 0 || s.spin.z !== 0 ? { s: [r3(s.spin.x), r3(s.spin.y), r3(s.spin.z)] as [number, number, number] } : {}),
+    ...(allIntact(s) ? {} : { d: packParts(s.parts) }),
   };
+}
+
+const pct = (h: number) => Math.round(Math.max(0, Math.min(1, h)) * 100);
+/** Component health as sent in snapshots (whole %). */
+export function packParts(p: Record<ComponentId, number>): [number, number, number, number] {
+  return [pct(p.cockpit), pct(p.wingL), pct(p.wingR), pct(p.engines)];
+}
+export function unpackParts(d: [number, number, number, number] | undefined, out: Record<ComponentId, number> = intactParts()) {
+  out.cockpit = d ? d[0] / 100 : 1;
+  out.wingL = d ? d[1] / 100 : 1;
+  out.wingR = d ? d[2] / 100 : 1;
+  out.engines = d ? d[3] / 100 : 1;
+  return out;
 }
 
 /** Validates and clamps untrusted client input (the server never trusts clients). */

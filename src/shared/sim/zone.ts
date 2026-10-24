@@ -2,7 +2,8 @@ import { Line3, Vector3 } from 'three';
 import type { StationId } from '../economy/market';
 import { mulberry32 } from '../rng';
 import { sectorSeed, type SectorId } from '../sectors';
-import { PLATINUM_CHANCE } from './mining';
+import { depotColliders, hubColliders } from '../physics/structures';
+import { oreOf, PLATINUM_CHANCE } from './mining';
 import type { StaticCollider } from './types';
 
 /**
@@ -327,28 +328,11 @@ function zoneColliders(asteroids: AsteroidDef[], hub: StationDef, depot: Station
   const colliders: StaticCollider[] = [];
   asteroids.forEach((a, index) => {
     // Rocks are displaced meshes; use ~85% of the nominal radius so contacts feel fair.
-    colliders.push({ kind: 'asteroid', center: a.position, radius: a.radius * 0.85, index });
+    colliders.push({ kind: 'asteroid', center: a.position, radius: a.radius * 0.85, material: oreOf(a.variant) === 'ironNickel' ? 'metalRock' : 'rock', index });
   });
-  colliders.push({ kind: 'station', center: hub.position.clone(), radius: hub.coreRadius });
-  for (let i = -4; i <= 4; i++) {
-    if (i === 0) continue;
-    colliders.push({
-      kind: 'station',
-      center: new Vector3(0, (i / 4) * (hub.spineLength / 2), 0).add(hub.position),
-      radius: 70,
-    });
-  }
-  const ringSegments = 40;
-  for (let i = 0; i < ringSegments; i++) {
-    const t = (i / ringSegments) * Math.PI * 2;
-    colliders.push({
-      kind: 'station',
-      center: new Vector3(Math.cos(t) * hub.ringRadius, 0, Math.sin(t) * hub.ringRadius).add(hub.position),
-      radius: hub.ringTube + 6,
-    });
-  }
-  for (const c of FERRO_PARTS) colliders.push({ kind: 'station', center: ferroPoint(depot, c[0], c[1], c[2]), radius: c[3] });
-  for (const p of planets) colliders.push({ kind: 'planet', center: p.position, radius: p.radius });
+  // v0.8: the stations' real shapes (walls, hangar, spine, turning ring), see physics/structures.ts.
+  colliders.push(...hubColliders(hub), ...depotColliders(depot, FERRO_MOUTH_Z));
+  for (const p of planets) colliders.push({ kind: 'planet', center: p.position, radius: p.radius, material: 'rock' });
   return colliders;
 }
 
@@ -356,20 +340,6 @@ function zoneColliders(asteroids: AsteroidDef[], hub: StationDef, depot: Station
 const FERRO_CLEARANCE = 520;
 /** Hangar mouth of the depot model (Outpost.ts), on local +Z. */
 export const FERRO_MOUTH_Z = 130;
-
-/**
- * Solid parts of the depot model, local coordinates (hangar on +Z) and
- * radius: habitat stack, refinery, ore silos and the drill head. The hangar
- * itself is open, like Aurora-7's.
- */
-const FERRO_PARTS: [number, number, number, number][] = [
-  [0, 0, -45, 62],
-  [0, 78, -45, 48],
-  [0, -78, -45, 48],
-  [-165, -10, -55, 72],
-  [140, 0, -85, 62],
-  [0, -70, -430, 30],
-];
 
 /** A point of the depot model in world coordinates. */
 export function ferroPoint(st: StationDef, x: number, y: number, z: number, out = new Vector3()) {

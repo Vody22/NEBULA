@@ -1,4 +1,6 @@
 import { Quaternion, Vector3 } from 'three';
+import { HITBOXES } from '../src/shared/physics/hitboxes';
+import { distanceTo } from '../src/shared/physics/shapes';
 import { describe, expect, it } from 'vitest';
 import { GameServer, REPAIR_COST, STARTING_CREDITS } from '../src/server/GameServer';
 import { createMarket, quote } from '../src/shared/economy/market';
@@ -142,7 +144,11 @@ describe('docking', () => {
     expect(quote('ironNickel', depot.ironNickel).buy).toBeLessThan(quote('ironNickel', aurora.ironNickel).sell);
     server.receive(session, { t: 'undock' });
     const out = me()!;
-    expect(server.world.grid.query(out.position, 40).every((c) => c.center.distanceTo(out.position) > c.radius + SHIP_CLASSES.falcon.radius)).toBe(true);
+    // Every collision sphere of the ship is clear of the depot's real shapes (v0.8).
+    for (const h of HITBOXES[out.classId]) {
+      const at = h.at.clone().applyQuaternion(out.rotation).add(out.position);
+      for (const c of server.world.grid.query(at, 40)) expect(distanceTo(c, at, server.world.time)).toBeGreaterThan(h.r);
+    }
   });
 
   it('keeps rocks off the depot and its approach lane', () => {

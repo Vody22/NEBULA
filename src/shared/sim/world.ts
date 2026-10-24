@@ -1,11 +1,16 @@
 import { Quaternion, Vector3 } from 'three';
 import { segmentSphere } from '../math';
+import { collideShips, impactDamage, type StaticContactReport } from '../physics/collide';
+import { componentOf, WEAPON_WEAR, wearComponent } from '../physics/damage';
+import { HITBOXES, massOf, type PartId } from '../physics/hitboxes';
+import { contactOf, SHIP_MATERIAL } from '../physics/materials';
+import { rayCast } from '../physics/shapes';
 import { stepMining } from './mining';
 import { stepShipPhysics } from './shipPhysics';
 import { stepShipSystems } from './shipSystems';
 import { StaticGrid } from './spatialGrid';
 import type { EntityId, FactionId, Projectile, Ship, ShipClassId, ShipInput, SimEvent } from './types';
-import { canDamage, neutralInput } from './types';
+import { canDamage, intactParts, neutralInput } from './types';
 import { noMods, statsOf, type ShipMods } from './upgrades';
 import type { ZoneDef } from './zone';
 
@@ -16,10 +21,22 @@ export { ENERGY_REGEN_DELAY, WEAPON_UNLOCK_FRACTION } from './shipSystems';
 const _p0 = new Vector3();
 const _muzzle = new Vector3();
 const _dir = new Vector3();
-const _n = new Vector3();
 const _rel = new Vector3();
 
 const arr = (v: Vector3): [number, number, number] => [v.x, v.y, v.z];
+const r2 = (n: number) => Math.round(n * 100) / 100;
+const arr2 = (v: Vector3): [number, number, number] => [r2(v.x), r2(v.y), r2(v.z)];
+
+/** Ships farther than this from every player collide as a single sphere (physics level of detail). */
+export const PHYSICS_LOD_RANGE = 3000;
+/** Grazing contacts that do no damage report at most this often per ship (s). */
+const SCRAPE_EVENT_INTERVAL = 0.25;
+/** A shield takes a collision's blow, but spreads a quarter of its energy. */
+const SHIELD_COLLISION_ABSORB = 0.25;
+/** Nose-first impacts hit the structure this much harder. */
+const FRONTAL_FACTOR = 1.25;
+/** Cell size of the broad phase between ships (m). */
+const SHIP_CELL = 80;
 
 export interface SpawnOptions {
   classId: ShipClassId;
@@ -45,6 +62,12 @@ export class World {
   readonly grid: StaticGrid;
   private events: SimEvent[] = [];
   private nextId = 1;
+  /** Each ship's position before this tick's move: the start of its continuous collision sweep. */
+  private from = new Map<EntityId, Vector3>();
+  /** Ships far from every player, collided as one sphere (refreshed twice a second). */
+  private coarse = new Set<EntityId>();
+  private lastScrape = new Map<EntityId, number>();
+  private shipCells = new Map<string, Ship[]>();
 
   constructor(readonly zone: ZoneDef) {
     this.grid = new StaticGrid(zone.colliders);
@@ -64,6 +87,8 @@ export class World {
       velocity: o.velocity?.clone() ?? new Vector3(),
       rotation: o.rotation?.clone() ?? new Quaternion(),
       angularVelocity: new Vector3(),
+      spin: new Vector3(),
+      parts: intactParts(),
       hull: cls.hull,
       shield: cls.shield,
       energy: cls.energy,
@@ -88,6 +113,8 @@ export class World {
 
   removeShip(id: EntityId) {
     this.ships.delete(id);
+    this.from.delete(id);
+    this.lastScrape.delete(id);
   }
 
   setInput(id: EntityId, input: ShipInput) {
@@ -110,27 +137,75 @@ export class World {
   step(dt = TICK_DT) {
     this.tick++;
     this.time += dt;
+    this.grid.time = this.time;
+    if (this.tick % 30 === 1) this.physicsLod();
 
     for (const ship of this.ships.values()) {
       if (!ship.alive) continue;
+      let from = this.from.get(ship.id);
+      if (!from) this.from.set(ship.id, (from = new Vector3()));
+      from.copy(ship.position);
       stepShipPhysics(ship, dt);
-      this.updateSystems(ship, dt);
+      this.updateSystems(ship, dt, from);
       this.fireWeapons(ship, dt);
       stepMining(ship, dt, this.grid, this.zone.asteroids);
     }
-    this.collideShips();
+    this.collideShips(dt);
     this.stepProjectiles(dt);
 
     for (const ship of [...this.ships.values()]) {
-      if (!ship.alive) this.ships.delete(ship.id);
+      if (!ship.alive) this.removeShip(ship.id);
     }
   }
 
-  private updateSystems(ship: Ship, dt: number) {
-    stepShipSystems(ship, dt, this.grid, (damage) => {
-      this.events.push({ type: 'collision', ship: ship.id, pos: arr(ship.position), damage });
-      this.applyDamage(ship, damage, null);
+  /**
+   * Physics level of detail: ships farther than PHYSICS_LOD_RANGE from every
+   * player collide as a single sphere. Near a player, every ship uses its
+   * full set of hit spheres.
+   */
+  private physicsLod() {
+    this.coarse.clear();
+    const players = [...this.ships.values()].filter((s) => s.ownerId !== null);
+    const r2 = PHYSICS_LOD_RANGE * PHYSICS_LOD_RANGE;
+    for (const s of this.ships.values()) {
+      if (s.ownerId !== null) continue;
+      if (!players.some((p) => p.position.distanceToSquared(s.position) < r2)) this.coarse.add(s.id);
+    }
+  }
+
+  /** Ships currently on the coarse physics level (for tests and the status page). */
+  get coarseShips() {
+    return this.coarse.size;
+  }
+
+  private updateSystems(ship: Ship, dt: number, from: Vector3) {
+    stepShipSystems(ship, dt, this.grid, from, (i) => this.staticImpact(ship, i), this.coarse.has(ship.id));
+  }
+
+  /** A ship struck the static world: damage from the velocity change, then the event for the clients. */
+  private staticImpact(ship: Ship, i: StaticContactReport) {
+    let damage = impactDamage(i.dv, i.hardness) * (i.frontal ? FRONTAL_FACTOR : 1);
+    if (damage <= 0) {
+      // A scrape: sparks and sound, rate-limited.
+      if (i.speed < 1.5) return;
+      const last = this.lastScrape.get(ship.id) ?? -1;
+      if (this.time - last < SCRAPE_EVENT_INTERVAL) return;
+    }
+    this.lastScrape.set(ship.id, this.time);
+    const shield = damage > 0 && ship.shield > 0;
+    if (shield) damage *= 1 - SHIELD_COLLISION_ABSORB;
+    this.events.push({
+      type: 'collision',
+      ship: ship.id,
+      pos: arr2(i.point),
+      damage,
+      part: i.part,
+      mat: i.material,
+      n: arr2(i.normal),
+      speed: r2(i.speed),
+      shield,
     });
+    if (damage > 0) this.applyDamage(ship, damage, null, i.part, 1);
   }
 
   private fireWeapons(ship: Ship, dt: number) {
@@ -196,7 +271,7 @@ export class World {
       const segLen = _p0.distanceTo(p.position);
       _rel.addVectors(_p0, p.position).multiplyScalar(0.5);
       for (const c of this.grid.query(_rel, segLen / 2 + 1)) {
-        const t = segmentSphere(_p0, p.position, c.center, c.radius);
+        const t = c.shape ? (segmentSphere(_p0, p.position, c.center, c.radius) < 0 ? -1 : rayCast(c, _p0, p.position, this.time)) : segmentSphere(_p0, p.position, c.center, c.radius);
         if (t >= 0 && t < hitT) {
           hitT = t;
           hitShip = null;
@@ -213,7 +288,7 @@ export class World {
             const shooter = this.ships.get(p.ownerId);
             if (shooter) shooter.lastPvpCombat = this.time;
           }
-          const shield = this.applyDamage(hitShip, p.damage, p.ownerId);
+          const shield = this.applyDamage(hitShip, p.damage, p.ownerId, partHit(hitShip, hitPos));
           this.events.push({
             type: 'hit',
             target: hitShip.id,
@@ -233,43 +308,82 @@ export class World {
     }
   }
 
-  private collideShips() {
-    const ships = [...this.ships.values()];
-    for (let i = 0; i < ships.length; i++) {
-      const a = ships[i];
-      if (!a.alive) continue;
-      const ra = statsOf(a).radius;
-      for (let j = i + 1; j < ships.length; j++) {
-        const b = ships[j];
-        if (!b.alive) continue;
-        const rb = statsOf(b).radius;
-        _n.subVectors(a.position, b.position);
-        const d = _n.length();
-        const min = ra + rb;
-        if (d >= min || d < 1e-6) continue;
-        _n.divideScalar(d);
-        const push = (min - d) / 2;
-        a.position.addScaledVector(_n, push);
-        b.position.addScaledVector(_n, -push);
-        _rel.subVectors(a.velocity, b.velocity);
-        const vn = _rel.dot(_n);
-        if (vn < 0) {
-          a.velocity.addScaledVector(_n, -vn * 0.6);
-          b.velocity.addScaledVector(_n, vn * 0.6);
-          const impact = -vn;
-          if (impact > 30) {
-            const dmg = (impact - 30) * 0.6;
-            this.applyDamage(a, dmg, b.id);
-            this.applyDamage(b, dmg, a.id);
-            this.events.push({ type: 'collision', ship: a.id, pos: arr(a.position), damage: dmg });
+  /**
+   * Ship against ship: a hash grid of the swept volumes finds the pairs that
+   * may touch this tick, then each pair is swept continuously (collide.ts).
+   * Both ships take damage from their own velocity change.
+   */
+  private collideShips(dt: number) {
+    const cells = this.shipCells;
+    for (const list of cells.values()) list.length = 0;
+    const cellOf = (v: number) => Math.floor(v / SHIP_CELL);
+    for (const s of this.ships.values()) {
+      if (!s.alive) continue;
+      const from = this.from.get(s.id) ?? s.position;
+      const r = massOf(s.classId).reach;
+      const x0 = cellOf(Math.min(from.x, s.position.x) - r), x1 = cellOf(Math.max(from.x, s.position.x) + r);
+      const y0 = cellOf(Math.min(from.y, s.position.y) - r), y1 = cellOf(Math.max(from.y, s.position.y) + r);
+      const z0 = cellOf(Math.min(from.z, s.position.z) - r), z1 = cellOf(Math.max(from.z, s.position.z) + r);
+      for (let x = x0; x <= x1; x++)
+        for (let y = y0; y <= y1; y++)
+          for (let z = z0; z <= z1; z++) {
+            const key = `${x},${y},${z}`;
+            let list = cells.get(key);
+            if (!list) cells.set(key, (list = []));
+            list.push(s);
           }
+    }
+    const tested = new Set<number>();
+    for (const list of cells.values()) {
+      if (list.length < 2) continue;
+      for (let i = 0; i < list.length; i++) {
+        for (let j = i + 1; j < list.length; j++) {
+          const a = list[i].id < list[j].id ? list[i] : list[j];
+          const b = a === list[i] ? list[j] : list[i];
+          const key = a.id * 1048576 + b.id;
+          if (tested.has(key) || !a.alive || !b.alive) continue;
+          tested.add(key);
+          const fa = this.from.get(a.id) ?? a.position;
+          const fb = this.from.get(b.id) ?? b.position;
+          const coarse = this.coarse.has(a.id) && this.coarse.has(b.id);
+          const c = collideShips(a, b, fa, fb, dt, coarse);
+          if (!c) continue;
+          // The sweeps of later pairs start where this contact left the ships.
+          fa.copy(a.position);
+          fb.copy(b.position);
+          this.shipImpact(c.a, c.b, c.partA, c.dvA, c.point, c.normal, c.speed);
+          this.shipImpact(c.b, c.a, c.partB, c.dvB, c.point, c.normal.clone().negate(), c.speed);
         }
       }
     }
   }
 
-  /** Applies damage through shields then hull. Returns true if the shield took it. */
-  applyDamage(ship: Ship, amount: number, attacker: EntityId | null): boolean {
+  private shipImpact(ship: Ship, other: Ship, part: PartId, dv: number, point: Vector3, normal: Vector3, speed: number) {
+    let damage = impactDamage(dv, contactOf(SHIP_MATERIAL, SHIP_MATERIAL).hardness);
+    if (damage <= 0 && speed < 1.5) return;
+    const shield = damage > 0 && ship.shield > 0;
+    if (shield) damage *= 1 - SHIELD_COLLISION_ABSORB;
+    this.events.push({
+      type: 'collision',
+      ship: ship.id,
+      pos: arr2(point),
+      damage,
+      part,
+      mat: 'hull',
+      n: arr2(normal),
+      speed: r2(speed),
+      shield,
+      other: other.id,
+    });
+    if (damage > 0) this.applyDamage(ship, damage, other.id, part, 1);
+  }
+
+  /**
+   * Applies damage through shields then hull. Returns true if the shield took it.
+   * `part`: where the blow landed (v0.8): what gets past the shield also wears
+   * that component, at rate `wear` (collisions 1, weapons WEAPON_WEAR).
+   */
+  applyDamage(ship: Ship, amount: number, attacker: EntityId | null, part?: PartId, wear = WEAPON_WEAR): boolean {
     if (!ship.alive) return false;
     ship.sinceDamage = 0;
     if (attacker !== null) ship.lastAttacker = attacker;
@@ -281,6 +395,11 @@ export class World {
       amount -= s;
     }
     if (amount > 0) {
+      const c = part ? componentOf(part) : null;
+      if (c) {
+        const state = wearComponent(ship, c, amount * wear, statsOf(ship).hull);
+        if (state) this.events.push({ type: 'partDamaged', ship: ship.id, part: c, state });
+      }
       ship.hull -= amount;
       if (ship.hull <= 0) {
         ship.hull = 0;
@@ -298,4 +417,19 @@ export class World {
     }
     return absorbedByShield;
   }
+}
+
+const _hs = new Vector3();
+/** The part of `ship` nearest to a hit at `pos` (bolts are tested against the ship's bounding sphere). */
+export function partHit(ship: Ship, pos: Vector3): PartId {
+  let best: PartId = 'hull';
+  let bestD = Infinity;
+  for (const h of HITBOXES[ship.classId]) {
+    const d = _hs.copy(h.at).applyQuaternion(ship.rotation).add(ship.position).distanceTo(pos) - h.r;
+    if (d < bestD) {
+      bestD = d;
+      best = h.part;
+    }
+  }
+  return best;
 }

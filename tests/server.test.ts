@@ -94,7 +94,7 @@ describe('server & protocol', () => {
   it('AI pilot steers around an asteroid in its path', () => {
     const zone = buildZone(3);
     zone.colliders.length = 0;
-    zone.colliders.push({ kind: 'asteroid', center: new Vector3(0, 0, -900), radius: 220 });
+    zone.colliders.push({ kind: 'asteroid', center: new Vector3(0, 0, -900), radius: 220, material: 'rock' });
     const w = new World(zone);
     w.spawnShip({ classId: 'falcon', faction: 'union', name: 'target', position: new Vector3(0, 0, -2200) });
     const npc = w.spawnShip({ classId: 'raider', faction: 'raiders', name: 'npc', position: new Vector3(0, 0, 0) });

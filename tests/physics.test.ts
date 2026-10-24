@@ -1,3 +1,4 @@
+import { HITBOXES } from '../src/shared/physics/hitboxes';
 import { describe, expect, it } from 'vitest';
 import { Vector3 } from 'three';
 import { World, TICK_DT } from '../src/shared/sim/world';
@@ -117,12 +118,18 @@ describe('ship physics', () => {
   it('bounces off asteroids and takes impact damage', () => {
     const zone = buildZone(1);
     zone.colliders.length = 0;
-    zone.colliders.push({ kind: 'asteroid', center: new Vector3(0, 0, -300), radius: 50 });
+    zone.colliders.push({ kind: 'asteroid', center: new Vector3(0, 0, -300), radius: 50, material: 'rock' });
     const w = new World(zone);
-    const s = w.spawnShip({ classId: 'falcon', faction: 'union', name: 't', position: new Vector3(0, 0, 0), velocity: new Vector3(0, 0, -200) });
-    s.input.throttle = 1;
-    run(w, 2);
-    expect(s.position.distanceTo(new Vector3(0, 0, -300))).toBeGreaterThanOrEqual(50 + SHIP_CLASSES.falcon.radius - 0.01);
+    // A player's ship (full hit spheres) at 60 m/s: it survives, damaged (v0.8: 200 m/s into rock is fatal).
+    const s = w.spawnShip({ classId: 'falcon', faction: 'union', name: 't', position: new Vector3(0, 0, 0), velocity: new Vector3(0, 0, -60), ownerId: 'p' });
+    s.input.throttle = 0.3;
+    run(w, 6);
+    expect(s.alive).toBe(true);
+    // No collision sphere of the ship ended up inside the rock (v0.8: the ship is a cluster of spheres).
+    for (const h of HITBOXES.falcon) {
+      const at = h.at.clone().applyQuaternion(s.rotation).add(s.position);
+      expect(at.distanceTo(new Vector3(0, 0, -300))).toBeGreaterThanOrEqual(50 + h.r - 0.01);
+    }
     expect(s.shield + s.hull).toBeLessThan(SHIP_CLASSES.falcon.shield + SHIP_CLASSES.falcon.hull);
     expect(w.drainEvents().some((e) => e.type === 'collision')).toBe(true);
   });

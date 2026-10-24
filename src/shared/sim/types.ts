@@ -1,4 +1,7 @@
 import type { Quaternion, Vector3 } from 'three';
+import type { ComponentId, PartId } from '../physics/hitboxes';
+import type { MaterialId } from '../physics/materials';
+import type { Shape } from '../physics/shapes';
 import type { ShipMods } from './upgrades';
 
 export type EntityId = number;
@@ -55,6 +58,10 @@ export interface Ship {
   rotation: Quaternion;
   /** Local-frame angular velocity (rad/s): x = pitch, y = yaw, z = roll axis. */
   angularVelocity: Vector3;
+  /** Spin knocked into the ship by collisions (local frame, rad/s), on top of the piloted rotation; the stabilisers damp it (v0.8). */
+  spin: Vector3;
+  /** Health of the damageable components, 0..1 (v0.8). The structure is `hull`. */
+  parts: Record<ComponentId, number>;
   hull: number;
   shield: number;
   energy: number;
@@ -103,17 +110,46 @@ export function canDamage(attacker: { id: EntityId; faction: FactionId; pvp: boo
 
 export interface StaticCollider {
   kind: 'asteroid' | 'station' | 'planet';
+  /** Origin of the shape (world). */
   center: Vector3;
+  /** Bounding sphere around `center`: the exact shape when `shape` is absent. */
   radius: number;
+  material: MaterialId;
+  /** Exact shape in the collider's frame (v0.8); absent = a sphere of `radius`. */
+  shape?: Shape;
+  /** Orientation of the shape (absent = world axes). */
+  rot?: Quaternion;
+  /** Turning parts (the habitat ring): rad/s about the world Y axis through `center`. */
+  spin?: number;
   /** Asteroids: index in zone.asteroids. */
   index?: number;
 }
+
+/** A fresh set of components. */
+export const intactParts = (): Record<ComponentId, number> => ({ cockpit: 1, wingL: 1, wingR: 1, engines: 1 });
 
 export type SimEvent =
   | { type: 'shot'; shooter: EntityId; projectile: EntityId; faction: FactionId; pos: [number, number, number]; vel: [number, number, number]; life: number }
   | { type: 'hit'; target: EntityId; attacker: EntityId; projectile: EntityId; pos: [number, number, number]; damage: number; shield: boolean }
   | { type: 'impact'; projectile: EntityId; pos: [number, number, number] }
-  | { type: 'collision'; ship: EntityId; pos: [number, number, number]; damage: number }
+  /**
+   * A ship struck something (v0.8: with the part hit, the material, the contact normal,
+   * the closing speed, and whether its shield took the blow). `other`: the ship it hit.
+   */
+  | {
+      type: 'collision';
+      ship: EntityId;
+      pos: [number, number, number];
+      damage: number;
+      part?: PartId;
+      mat?: MaterialId;
+      n?: [number, number, number];
+      speed?: number;
+      shield?: boolean;
+      other?: EntityId;
+    }
+  /** A component fell below a damage threshold (v0.8): 'damaged' under 50 %, 'destroyed' at 0. */
+  | { type: 'partDamaged'; ship: EntityId; part: ComponentId; state: 'damaged' | 'destroyed' }
   | { type: 'destroyed'; ship: EntityId; by: EntityId | null; pos: [number, number, number]; classId: ShipClassId; faction: FactionId; name: string }
   | { type: 'spawned'; ship: EntityId }
   /** A ship left the sector by hyperspace jump (v0.7): it is gone from the next snapshot. */

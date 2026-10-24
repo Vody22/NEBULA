@@ -6,6 +6,7 @@ import { PROTOCOL_VERSION, validateClientMessage, type ServerMessage } from '../
 import { mulberry32 } from '../src/shared/rng';
 import { SAVE_VERSION, validateSave, type PilotSave } from '../src/shared/save';
 import { JUMP_CHARGE, JUMP_CLEARANCE, JUMP_COOLDOWN, JUMP_ENERGY, SECTOR_IDS, sectorSeed, STATION_NAMES, STATION_SECTOR } from '../src/shared/sectors';
+import { distanceTo } from '../src/shared/physics/shapes';
 import { SHIP_CLASSES } from '../src/shared/sim/shipClasses';
 import type { Ship } from '../src/shared/sim/types';
 import { noMods } from '../src/shared/sim/upgrades';
@@ -81,11 +82,11 @@ describe('the Kepler sector', () => {
     for (const z of [a, aurora]) {
       // Hangar mouths and the jump arrival point are in open space.
       for (const st of z.stations) {
-        for (const c of z.colliders) expect(c.center.distanceTo(st.dock.mouth)).toBeGreaterThan(c.radius);
+        for (const c of z.colliders) expect(distanceTo(c, st.dock.mouth, 0)).toBeGreaterThan(20);
         // A ship that just arrived may jump again without flying anywhere first.
         expect(st.position.distanceTo(z.jumpPoint)).toBeGreaterThan(JUMP_CLEARANCE + 400);
       }
-      for (const c of z.colliders) expect(c.center.distanceTo(z.jumpPoint)).toBeGreaterThan(c.radius + 300);
+      for (const c of z.colliders) expect(distanceTo(c, z.jumpPoint, 0)).toBeGreaterThan(300);
     }
   });
 
@@ -93,7 +94,9 @@ describe('the Kepler sector', () => {
     // v0.6 values: the asteroid indices are part of the saves and of the client's rock meshes.
     const z = buildSector('aurora', 1337);
     expect(z.asteroids.length).toBe(518);
-    expect(z.colliders.length).toBe(576);
+    // v0.8 replaced the stations' spheres by their real shapes; the rocks and planets are unchanged.
+    expect(z.colliders.filter((c) => c.kind === 'asteroid').length).toBe(518);
+    expect(z.colliders.filter((c) => c.kind === 'planet').length).toBe(z.planets.length);
     expect(z.seed).toBe(1337);
   });
 
@@ -348,7 +351,7 @@ describe('trade and contracts across sectors', () => {
 
 describe('protocol 7', () => {
   it('validates jump requests', () => {
-    expect(PROTOCOL_VERSION).toBe(7);
+    expect(PROTOCOL_VERSION).toBeGreaterThanOrEqual(7);
     expect(validateClientMessage({ t: 'jump', to: 'kepler' })).toEqual({ t: 'jump', to: 'kepler' });
     expect(validateClientMessage({ t: 'jump', to: null })).toEqual({ t: 'jump', to: null });
     expect(validateClientMessage({ t: 'jump', to: 'mars' })).toBeNull();

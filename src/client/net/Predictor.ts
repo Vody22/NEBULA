@@ -1,9 +1,9 @@
 import { Quaternion, Vector3 } from 'three';
-import type { ShipSnapshot } from '../../shared/net/protocol';
+import { unpackParts, type ShipSnapshot } from '../../shared/net/protocol';
 import { stepShipPhysics } from '../../shared/sim/shipPhysics';
 import { stepShipSystems } from '../../shared/sim/shipSystems';
 import type { StaticGrid } from '../../shared/sim/spatialGrid';
-import { neutralInput, type Ship, type ShipInput } from '../../shared/sim/types';
+import { intactParts, neutralInput, type Ship, type ShipInput } from '../../shared/sim/types';
 import { unpackMods } from '../../shared/sim/upgrades';
 import { TICK_DT } from '../../shared/sim/world';
 
@@ -20,6 +20,7 @@ const _beforeRot = new Quaternion();
 const _oldPos = new Vector3();
 const _oldRot = new Quaternion();
 const _oldVel = new Vector3();
+const _from = new Vector3();
 
 /**
  * Client-side prediction for the local player's ship. Every input tick the
@@ -75,6 +76,8 @@ export class Predictor {
       velocity: new Vector3(),
       rotation: new Quaternion(),
       angularVelocity: new Vector3(),
+      spin: new Vector3(),
+      parts: intactParts(),
       hull: s.hull,
       shield: s.shield,
       energy: s.energy,
@@ -110,6 +113,9 @@ export class Predictor {
     ship.velocity.set(s.v[0], s.v[1], s.v[2]);
     ship.rotation.set(s.q[0], s.q[1], s.q[2], s.q[3]).normalize();
     ship.angularVelocity.set(s.w[0], s.w[1], s.w[2]);
+    if (s.s) ship.spin.set(s.s[0], s.s[1], s.s[2]);
+    else ship.spin.set(0, 0, 0);
+    unpackParts(s.d, ship.parts);
     ship.energy = s.energy;
     ship.boosting = s.boosting;
     ship.hull = s.hull;
@@ -134,8 +140,10 @@ export class Predictor {
   private simulate(input: ShipInput) {
     const ship = this.ship!;
     Object.assign(ship.input, input);
+    _from.copy(ship.position);
     stepShipPhysics(ship, TICK_DT);
-    stepShipSystems(ship, TICK_DT, this.grid);
+    // Collisions with the static world are predicted (the server decides the damage).
+    stepShipSystems(ship, TICK_DT, this.grid, _from);
     if (input.fire) ship.sinceFire = 0;
   }
 

@@ -77,7 +77,7 @@ describe('combat', () => {
   it('lasers are stopped by asteroids', () => {
     const zone = buildZone(2);
     zone.colliders.length = 0;
-    zone.colliders.push({ kind: 'asteroid', center: new Vector3(0, 0, -200), radius: 40 });
+    zone.colliders.push({ kind: 'asteroid', center: new Vector3(0, 0, -200), radius: 40, material: 'rock' });
     const w = new World(zone);
     const a = w.spawnShip({ classId: 'falcon', faction: 'union', name: 'a', position: new Vector3(), rotation: new Quaternion() });
     const b = w.spawnShip({ classId: 'raider', faction: 'raiders', name: 'b', position: new Vector3(0, 0, -500) });
