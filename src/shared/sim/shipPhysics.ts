@@ -43,10 +43,16 @@ export function stepShipPhysics(ship: Ship, dt: number) {
   }
 
   // --- Energy & boost
-  const wantsBoost = input.boost && ship.energy > 1;
+  // An emptied capacitor locks the boost with the guns (weaponsLocked) until it is back to
+  // WEAPON_UNLOCK_FRACTION: without it the boost cut in and out on every trickle of recharge.
+  const wantsBoost = input.boost && ship.energy > 1 && !ship.weaponsLocked;
   ship.boosting = wantsBoost;
   if (wantsBoost) {
     ship.energy = Math.max(0, ship.energy - cls.boostCost * dt);
+    if (ship.energy <= 1) {
+      ship.weaponsLocked = true;
+      ship.boosting = false;
+    }
   }
 
   // --- Translation, computed in the ship's local frame.

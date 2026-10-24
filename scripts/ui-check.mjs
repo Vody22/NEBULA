@@ -196,7 +196,7 @@ for (const [w, h] of [[568, 1244], [1280, 720], [1920, 1080]]) {
   const chip = await page.evaluate(() => document.getElementById('hud').textContent);
   await page.screenshot({ path: `${out}/weapons-locked-1280x720.png` });
   await page.keyboard.up('KeyF');
-  check(/ARMES EN RECHARGE/.test(chip), 'empty capacitor shows "ARMES EN RECHARGE"');
+  check(/ÉNERGIE ÉPUISÉE/.test(chip), 'empty capacitor shows "ÉNERGIE ÉPUISÉE"');
   check(errors.length === 0, `combat: no console errors/warnings ${errors.join(' | ')}`);
   await ctx.close();
 }

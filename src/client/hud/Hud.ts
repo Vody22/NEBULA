@@ -469,7 +469,7 @@ export class Hud {
       (me.snap.boosting ? '<span class="chip boost">BOOST</span>' : '') +
       (me.snap.pvp ? '<span class="chip pvp">⚔ PvP</span>' : '') +
       (me.snap.weaponsLocked
-        ? '<span class="chip off">⚠ ARMES EN RECHARGE</span>'
+        ? '<span class="chip off">⚠ ÉNERGIE ÉPUISÉE · RECHARGE</span>'
         : me.snap.energy < cls.energy * 0.2
           ? '<span class="chip off">⚠ ÉNERGIE BASSE</span>'
           : '') +
