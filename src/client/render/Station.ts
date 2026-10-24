@@ -5,6 +5,7 @@ import { GlowField, type Glow } from './batches';
 import { mergeByMaterial } from './merge';
 import { makeShipSheet } from './shipTextures';
 import { bayBanner, furnishHangar } from './hangarKit';
+import { hullSkin } from './hullSkin';
 import { beam, makeWindowTexture, plating, truss } from './stationKit';
 import { makeRadialTexture, makeSolarTexture } from './textures';
 
@@ -285,6 +286,32 @@ export class Station {
       b.translate(x, y, z);
       add(b, hullMat, hangar);
     }
+    // Outer skin of the shell and its side fins: plates, livery, name, lights.
+    {
+      const style = { base: kepler ? [158, 168, 182] : [172, 175, 180], accent: kepler ? '#2f9c8c' : '#c8862a', seed: kepler ? 61 : 23 };
+      const tagName = def.name.replace(/^Station\s+/i, '').toUpperCase();
+      const face = (m: THREE.Mesh, rx: number, ry: number, x: number, y: number, z: number) => {
+        m.geometry.rotateX(rx);
+        m.geometry.rotateY(ry);
+        m.geometry.translate(x, y, z);
+        hangar.add(m);
+      };
+      face(hullSkin({ w: HW, h: HD, maxPx: 1536, name: tagName, nameSize: 22 }, style), -Math.PI / 2, 0, 0, HH / 2 + 0.05, 0);
+      face(hullSkin({ w: HW, h: HD, maxPx: 512 }, { ...style, seed: style.seed + 1 }), Math.PI / 2, 0, 0, -HH / 2 - 0.05, 0);
+      for (const sx of [-1, 1]) {
+        // Left faces −x with the mouth on the canvas's right; right the other way.
+        const ry = sx < 0 ? -Math.PI / 2 : Math.PI / 2;
+        face(hullSkin({ w: HD, h: HH, maxPx: 768, mouth: sx < 0 ? 'right' : 'left' }, { ...style, seed: style.seed + 2 + sx }), 0, ry, sx * (HW / 2 + 0.05), 0, 0);
+        face(
+          hullSkin({ w: HD * 0.7, h: HH * 0.8, maxPx: 1024, band: 0.62, windows: true, name: tagName, nameSize: 9, lights: true, mouth: sx < 0 ? 'right' : 'left' }, { ...style, seed: style.seed + 5 + sx }),
+          0,
+          ry,
+          sx * (HW / 2 + 8.05),
+          0,
+          -HD * 0.1,
+        );
+      }
+    }
     // Interior: painted deck, panelled walls, light troughs, ribs, control room.
     const innerH = HH - wall * 2;
     const tag = def.name.replace(/^Station\s+/i, '').toUpperCase();
@@ -354,6 +381,10 @@ export class Station {
       const deckGeo = plating(new THREE.BoxGeometry(70, 5, 110), 70, 110);
       deckGeo.translate(px, py, pz);
       add(deckGeo, darkMat);
+      const deckTop = hullSkin({ w: 70, h: 110, maxPx: 512, mouth: 'bottom', lights: true }, { base: [96, 100, 106], accent: '#c8862a', seed: 30 + sx });
+      deckTop.geometry.rotateX(-Math.PI / 2);
+      deckTop.geometry.translate(px, py + 2.55, pz);
+      this.detail.add(deckTop);
       // Support truss from the deck into the core, clear of the hangar.
       for (const g of truss(new THREE.Vector3(px - sx * 35, py, pz - 30), new THREE.Vector3(sx * 110, py + 5, R * 0.75), 8, 16, 0.8)) add(g, strutMat);
       // Gantry crane: two legs and a lattice boom.

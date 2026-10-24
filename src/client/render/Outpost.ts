@@ -3,6 +3,7 @@ import { FERRO_MOUTH_Z, type StationDef } from '../../shared/sim/zone';
 import { GlowField, type Glow } from './batches';
 import { mergeByMaterial } from './merge';
 import { bayBanner, furnishHangar } from './hangarKit';
+import { hullSkin } from './hullSkin';
 import { makeShipSheet } from './shipTextures';
 import { makeWindowTexture, plating, truss } from './stationKit';
 import { makeRadialTexture } from './textures';
@@ -137,6 +138,28 @@ export class Outpost {
     const innerH = HH - WALL * 2;
     const kepler = def.livery === 'kepler';
     const tag = def.name.replace(/^Dépôt\s+/i, '').toUpperCase();
+    // Outer skin of the shell: plates, livery, name, lights.
+    {
+      const style = { base: kepler ? [150, 160, 172] : [160, 158, 152], accent: kepler ? '#2f78a8' : '#b5822e', seed: kepler ? 71 : 37 };
+      const face = (m: THREE.Mesh, rx: number, ry: number, x: number, y: number, z: number) => {
+        m.geometry.rotateX(rx);
+        m.geometry.rotateY(ry);
+        m.geometry.translate(x, y, z);
+        hangar.add(m);
+      };
+      face(hullSkin({ w: HW, h: HD, maxPx: 1024, name: tag, nameSize: 16 }, style), -Math.PI / 2, 0, 0, HH / 2 + 0.05, 0);
+      face(hullSkin({ w: HW, h: HD, maxPx: 512 }, { ...style, seed: style.seed + 1 }), Math.PI / 2, 0, 0, -HH / 2 - 0.05, 0);
+      for (const sx of [-1, 1]) {
+        face(
+          hullSkin({ w: HD, h: HH, maxPx: 1024, band: 0.6, windows: true, name: tag, nameSize: 8, lights: true, mouth: sx < 0 ? 'right' : 'left' }, { ...style, seed: style.seed + 3 + sx }),
+          0,
+          sx < 0 ? -Math.PI / 2 : Math.PI / 2,
+          sx * (HW / 2 + 0.05),
+          0,
+          0,
+        );
+      }
+    }
     hangar.add(
       furnishHangar(
         {

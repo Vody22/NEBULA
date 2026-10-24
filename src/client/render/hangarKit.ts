@@ -32,7 +32,7 @@ export interface HangarSpec {
   seed: number;
 }
 
-interface Painter {
+export interface Painter {
   c: HTMLCanvasElement;
   g: CanvasRenderingContext2D;
   /** Pixels per meter. */
@@ -42,7 +42,7 @@ interface Painter {
 /** Phones and tablets get half the texels: GPU memory and load time. */
 const TEXEL_SCALE = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches ? 0.5 : 1;
 
-function painter(wM: number, hM: number, maxPx: number): Painter {
+export function painter(wM: number, hM: number, maxPx: number): Painter {
   const k = Math.min(maxPx / wM, maxPx / hM) * TEXEL_SCALE;
   const c = document.createElement('canvas');
   c.width = Math.round(wM * k);
@@ -50,7 +50,7 @@ function painter(wM: number, hM: number, maxPx: number): Painter {
   return { c, g: c.getContext('2d')!, k };
 }
 
-function texture(p: Painter, color: boolean) {
+export function texture(p: Painter, color: boolean) {
   const t = new THREE.CanvasTexture(p.c);
   if (color) t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 8;
@@ -60,7 +60,7 @@ function texture(p: Painter, color: boolean) {
 const FONT = '"Exo 2", "Arial Black", Arial, sans-serif';
 
 /** Diagonal yellow and black hazard stripes in a rectangle (meters). */
-function hazard(p: Painter, x: number, y: number, w: number, h: number, stripe = 1.2) {
+export function hazard(p: Painter, x: number, y: number, w: number, h: number, stripe = 1.2) {
   const { g, k } = p;
   g.save();
   g.beginPath();
@@ -82,7 +82,7 @@ function hazard(p: Painter, x: number, y: number, w: number, h: number, stripe =
 }
 
 /** Scuffs, chips and grime over everything painted so far. */
-function wear(p: Painter, rand: () => number, amount: number) {
+export function wear(p: Painter, rand: () => number, amount: number) {
   const { g, c } = p;
   const n = Math.round((c.width * c.height) / 900 * amount);
   for (let i = 0; i < n; i++) {
@@ -97,14 +97,14 @@ function wear(p: Painter, rand: () => number, amount: number) {
 }
 
 /** Plates with seams and bolts, `pw` × `ph` meters, slightly varied in tone. */
-function plates(p: Painter, rand: () => number, x0: number, y0: number, w: number, h: number, pw: number, ph: number, base: number[], vary: number) {
+export function plates(p: Painter, rand: () => number, x0: number, y0: number, w: number, h: number, pw: number, ph: number, base: number[], vary: number, seam = 0.55) {
   const { g, k } = p;
   for (let y = y0; y < y0 + h - 1e-6; y += ph) {
     for (let x = x0; x < x0 + w - 1e-6; x += pw) {
       const t = 1 + (rand() - 0.5) * vary;
       g.fillStyle = `rgb(${base.map((v) => Math.round(Math.min(255, v * t))).join(',')})`;
       g.fillRect(x * k, y * k, Math.min(pw, x0 + w - x) * k, Math.min(ph, y0 + h - y) * k);
-      g.strokeStyle = 'rgba(0,0,0,0.55)';
+      g.strokeStyle = `rgba(0,0,0,${seam})`;
       g.lineWidth = Math.max(1, 0.08 * k);
       g.strokeRect(x * k, y * k, Math.min(pw, x0 + w - x) * k, Math.min(ph, y0 + h - y) * k);
       g.fillStyle = 'rgba(0,0,0,0.35)';
@@ -114,7 +114,7 @@ function plates(p: Painter, rand: () => number, x0: number, y0: number, w: numbe
   }
 }
 
-function stencil(p: Painter, text: string, x: number, y: number, sizeM: number, color: string, align: CanvasTextAlign = 'center', angle = 0) {
+export function stencil(p: Painter, text: string, x: number, y: number, sizeM: number, color: string, align: CanvasTextAlign = 'center', angle = 0) {
   const { g, k } = p;
   g.save();
   g.translate(x * k, y * k);
@@ -166,7 +166,7 @@ function bakeLight(src: Painter, rows: number[], along: 'x' | 'y', reach: number
 }
 
 /** Glowing dots (guide lights, indicators) drawn on an emissive canvas. */
-function dot(p: Painter, x: number, y: number, rM: number, color: string) {
+export function dot(p: Painter, x: number, y: number, rM: number, color: string) {
   const { g, k } = p;
   const grad = g.createRadialGradient(x * k, y * k, 0, x * k, y * k, rM * 2.5 * k);
   grad.addColorStop(0, color);
