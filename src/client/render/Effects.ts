@@ -127,6 +127,175 @@ class ParticlePool {
   }
 }
 
+
+// Sparks: quads stretched along their motion (a few hundredths of a second of
+// travel), so hot metal reads as streaks rather than round blobs.
+const streakVert = /* glsl */ `
+attribute vec3 iHead;
+attribute vec3 iTail;
+attribute vec4 iColor;
+attribute float iWidth;
+uniform float uScale;
+varying vec4 vColor;
+varying vec2 vCorner;
+void main(){
+  vColor = iColor;
+  vCorner = position.xy; // x: 0 tail .. 1 head, y: -1 .. 1 across
+  vec3 h = (modelViewMatrix * vec4(iHead, 1.0)).xyz;
+  vec3 t = (modelViewMatrix * vec4(iTail, 1.0)).xyz;
+  vec3 d = h - t;
+  vec3 p = mix(t, h, position.x);
+  vec3 across = cross(d, p);
+  float l = length(across);
+  across = l > 1e-6 ? across / l : vec3(1.0, 0.0, 0.0);
+  // At least 1.5 px wide at any distance.
+  float w = max(iWidth, 1.5 * max(-p.z, 0.1) / uScale);
+  vec3 dn = length(d) > 1e-6 ? normalize(d) : vec3(0.0);
+  p += dn * (position.x * 2.0 - 1.0) * w * 0.5;
+  p += across * position.y * w * 0.5;
+  gl_Position = projectionMatrix * vec4(p, 1.0);
+}`;
+const streakFrag = /* glsl */ `
+varying vec4 vColor;
+varying vec2 vCorner;
+void main(){
+  float across = 1.0 - vCorner.y * vCorner.y;
+  float along = mix(0.2, 1.0, vCorner.x * vCorner.x);
+  gl_FragColor = vec4(vColor.rgb * vColor.a * across * along, 1.0);
+}`;
+
+interface Streak {
+  alive: boolean;
+  p: THREE.Vector3;
+  v: THREE.Vector3;
+  c0: THREE.Color;
+  c1: THREE.Color;
+  width: number;
+  life: number;
+  age: number;
+  drag: number;
+}
+
+/** CPU-simulated sparks, one instanced draw call; only live ones are drawn. */
+class StreakPool {
+  readonly mesh: THREE.Mesh;
+  readonly material: THREE.ShaderMaterial;
+  private parts: Streak[] = [];
+  private cursor = 0;
+  private head: Float32Array;
+  private tail: Float32Array;
+  private col: Float32Array;
+  private wid: Float32Array;
+  private geo: THREE.InstancedBufferGeometry;
+
+  constructor(private max: number) {
+    for (let i = 0; i < max; i++) {
+      this.parts.push({ alive: false, p: new THREE.Vector3(), v: new THREE.Vector3(), c0: new THREE.Color(), c1: new THREE.Color(), width: 0.2, life: 1, age: 0, drag: 0 });
+    }
+    this.head = new Float32Array(max * 3);
+    this.tail = new Float32Array(max * 3);
+    this.col = new Float32Array(max * 4);
+    this.wid = new Float32Array(max);
+    const geo = new THREE.InstancedBufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute([0, -1, 0, 0, 1, 0, 1, -1, 0, 1, 1, 0], 3));
+    geo.setIndex([0, 2, 1, 1, 2, 3]);
+    geo.setAttribute('iHead', new THREE.InstancedBufferAttribute(this.head, 3).setUsage(THREE.DynamicDrawUsage));
+    geo.setAttribute('iTail', new THREE.InstancedBufferAttribute(this.tail, 3).setUsage(THREE.DynamicDrawUsage));
+    geo.setAttribute('iColor', new THREE.InstancedBufferAttribute(this.col, 4).setUsage(THREE.DynamicDrawUsage));
+    geo.setAttribute('iWidth', new THREE.InstancedBufferAttribute(this.wid, 1).setUsage(THREE.DynamicDrawUsage));
+    geo.instanceCount = 0;
+    this.geo = geo;
+    this.material = new THREE.ShaderMaterial({
+      vertexShader: streakVert,
+      fragmentShader: streakFrag,
+      uniforms: { uScale: { value: 600 } },
+      blending: THREE.AdditiveBlending,
+      transparent: true,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    this.mesh = new THREE.Mesh(geo, this.material);
+    this.mesh.frustumCulled = false;
+  }
+
+  /** `width` in meters (never thinner than 1.5 px on screen). */
+  emit(p: THREE.Vector3, v: THREE.Vector3, c0: THREE.Color, c1: THREE.Color, width: number, life: number, drag = 0) {
+    const s = this.parts[this.cursor];
+    this.cursor = (this.cursor + 1) % this.max;
+    s.alive = true;
+    s.p.copy(p);
+    s.v.copy(v);
+    s.c0.copy(c0);
+    s.c1.copy(c1);
+    s.width = width;
+    s.life = life;
+    s.age = 0;
+    s.drag = drag;
+  }
+
+  update(dt: number) {
+    const c = new THREE.Color();
+    let n = 0;
+    for (const s of this.parts) {
+      if (!s.alive) continue;
+      s.age += dt;
+      if (s.age >= s.life) {
+        s.alive = false;
+        continue;
+      }
+      const t = s.age / s.life;
+      if (s.drag) s.v.multiplyScalar(Math.exp(-s.drag * dt));
+      s.p.addScaledVector(s.v, dt);
+      // The streak covers the last 25 ms of travel, at most 8 m.
+      const speed = s.v.length();
+      const len = Math.min(speed * 0.025, 8);
+      const k = speed > 1e-3 ? len / speed : 0;
+      this.head.set([s.p.x, s.p.y, s.p.z], n * 3);
+      this.tail.set([s.p.x - s.v.x * k, s.p.y - s.v.y * k, s.p.z - s.v.z * k], n * 3);
+      c.copy(s.c0).lerp(s.c1, t);
+      this.col.set([c.r, c.g, c.b, (1 - t) * Math.min(1, t * 20 + 0.3)], n * 4);
+      this.wid[n] = s.width;
+      n++;
+    }
+    this.geo.instanceCount = n;
+    for (const name of ['iHead', 'iTail', 'iColor', 'iWidth']) {
+      const a = this.geo.getAttribute(name) as THREE.InstancedBufferAttribute;
+      a.needsUpdate = true;
+      a.clearUpdateRanges();
+      a.addUpdateRange(0, n * a.itemSize);
+    }
+  }
+}
+
+// A ship's death throws out a shell of hot gas: a sphere seen mostly by its
+// glowing rim, expanding fast and fading.
+const shockVert = /* glsl */ `
+varying vec3 vN;
+varying vec3 vV;
+void main(){
+  vN = normalize(normalMatrix * normal);
+  vec4 mv = modelViewMatrix * vec4(position, 1.0);
+  vV = normalize(-mv.xyz);
+  gl_Position = projectionMatrix * mv;
+}`;
+const shockFrag = /* glsl */ `
+uniform vec3 uColor;
+uniform float uFade;
+varying vec3 vN;
+varying vec3 vV;
+void main(){
+  float rim = 1.0 - abs(dot(normalize(vN), normalize(vV)));
+  gl_FragColor = vec4(uColor * pow(rim, 20.0) * uFade, 1.0);
+}`;
+
+interface Shock {
+  mesh: THREE.Mesh;
+  mat: THREE.ShaderMaterial;
+  age: number;
+  life: number;
+  radius: number;
+}
+
 interface Debris {
   mesh: THREE.Mesh;
   v: THREE.Vector3;
@@ -179,6 +348,8 @@ export class Effects {
   readonly group = new THREE.Group();
   private glow: ParticlePool;
   private smoke: ParticlePool;
+  private sparks: StreakPool;
+  private shocks: Shock[] = [];
   private debris: Debris[] = [];
   private pending: Pending[] = [];
   /** Lights 0-2 flash for explosions and hits, light 3 for the player's own guns. */
@@ -205,7 +376,23 @@ export class Effects {
     ], 128);
     this.glow = new ParticlePool(6000, true, soft);
     this.smoke = new ParticlePool(1800, false, puff);
-    this.group.add(this.smoke.points, this.glow.points);
+    this.sparks = new StreakPool(3000);
+    this.group.add(this.smoke.points, this.glow.points, this.sparks.mesh);
+    const shockGeo = new THREE.SphereGeometry(1, 32, 16);
+    for (let i = 0; i < 4; i++) {
+      const mat = new THREE.ShaderMaterial({
+        vertexShader: shockVert,
+        fragmentShader: shockFrag,
+        uniforms: { uColor: { value: new THREE.Color() }, uFade: { value: 0 } },
+        blending: THREE.AdditiveBlending,
+        transparent: true,
+        depthWrite: false,
+      });
+      const mesh = new THREE.Mesh(shockGeo, mat);
+      mesh.visible = false;
+      this.group.add(mesh);
+      this.shocks.push({ mesh, mat, age: 1, life: 1, radius: 1 });
+    }
 
     // Torn hull plates and structural chunks.
     this.debrisMat = new THREE.MeshStandardMaterial({ color: 0x8a8580, metalness: 0.7, roughness: 0.5, emissive: new THREE.Color(0.25, 0.07, 0.015) });
@@ -241,6 +428,17 @@ export class Effects {
     const s = heightPx / (2 * Math.tan((fovDeg * Math.PI) / 360));
     this.glow.material.uniforms.uScale.value = s;
     this.smoke.material.uniforms.uScale.value = s;
+    this.sparks.material.uniforms.uScale.value = s;
+  }
+
+  private shockwave(pos: THREE.Vector3, radius: number, life: number, color: THREE.Color) {
+    const sh = this.shocks.reduce((a, b) => (a.age / a.life > b.age / b.life ? a : b));
+    sh.mesh.position.copy(pos);
+    sh.mesh.visible = true;
+    sh.mat.uniforms.uColor.value.copy(color);
+    sh.age = 0;
+    sh.life = life;
+    sh.radius = radius;
   }
 
   private flashLight(pos: THREE.Vector3, peak: number, life: number, color: THREE.Color, distance = 900, slot?: number) {
@@ -270,7 +468,7 @@ export class Effects {
     for (let i = 0; i < 80 * scale * n; i++) {
       randDir(this.d);
       this.v.copy(this.d).multiplyScalar(120 + Math.random() * 300).add(vel);
-      this.glow.emit(pos, this.v, spark, sparkEnd, 1.3, 0.5, 0.5 + Math.random() * 1.4, 0.5);
+      this.sparks.emit(pos, this.v, spark, sparkEnd, 0.22, 0.5 + Math.random() * 1.4, 0.5);
     }
     // Secondary blasts as fuel and ammunition go up.
     const extra = 1 + Math.floor(Math.random() * 2 + (scale > 1.4 ? 2 : 0));
@@ -307,6 +505,7 @@ export class Effects {
       const c0 = new THREE.Color(0.32, 0.27, 0.23);
       this.smoke.emit(pos, this.v, c0, new THREE.Color(0.1, 0.1, 0.11), 10 * scale, (40 + Math.random() * 30) * scale, 4 + Math.random() * 4, 0.35, 0.55, 0.08 + Math.random() * 0.25);
     }
+    this.shockwave(pos, 70 * scale, 0.6, new THREE.Color(1.6, 1.15, 0.75));
     this.flashLight(pos, 4e4 * scale, 1.1, new THREE.Color(1, 0.62, 0.32), 900 * Math.sqrt(scale));
   }
 
@@ -332,7 +531,7 @@ export class Effects {
     for (let i = 0; i < 10; i++) {
       randDir(this.d);
       this.v.copy(this.d).multiplyScalar(30 + Math.random() * 60);
-      this.glow.emit(pos, this.v, color, new THREE.Color(0, 0, 0), 1.6, 0.4, 0.25 + Math.random() * 0.25, 2);
+      this.sparks.emit(pos, this.v, color, _black, 0.08, 0.25 + Math.random() * 0.25, 2);
     }
     this.glow.emit(pos, this.v.set(0, 0, 0), color.clone().multiplyScalar(1.5), new THREE.Color(0, 0, 0), 6, 14, 0.18);
   }
@@ -342,7 +541,7 @@ export class Effects {
     for (let i = 0; i < 16; i++) {
       randDir(this.d);
       this.v.copy(this.d).multiplyScalar(40 + Math.random() * 120);
-      this.glow.emit(pos, this.v, hot, new THREE.Color(1, 0.2, 0), 1.0, 0.4, 0.3 + Math.random() * 0.5, 1);
+      this.sparks.emit(pos, this.v, hot, _sparkEnd, 0.07, 0.3 + Math.random() * 0.5, 1);
     }
     this.glow.emit(pos, this.v.set(0, 0, 0), new THREE.Color(5, 2.5, 1), new THREE.Color(0.5, 0.1, 0), 5, 12, 0.25);
     this.smoke.emit(pos, this.v.set(rnd(), rnd(), rnd()).multiplyScalar(5), new THREE.Color(0.15, 0.13, 0.12), new THREE.Color(0.06, 0.06, 0.06), 3, 14, 1.2, 0.5, 0.5);
@@ -358,7 +557,7 @@ export class Effects {
     for (let i = 0; i < 50 * this.density; i++) {
       randDir(this.d);
       this.v.copy(this.d).multiplyScalar(250 + Math.random() * 450);
-      this.glow.emit(pos, this.v, spark, end, 1.6, 0.4, 0.35 + Math.random() * 0.5, 1.5);
+      this.sparks.emit(pos, this.v, spark, end, 0.3, 0.35 + Math.random() * 0.5, 1.5);
     }
     this.flashLight(pos, 3e4 * scale, 0.8, new THREE.Color(0.55, 0.7, 1), 1200);
   }
@@ -367,7 +566,7 @@ export class Effects {
     for (let i = 0; i < 8; i++) {
       randDir(this.d);
       this.v.copy(this.d).multiplyScalar(20 + Math.random() * 50);
-      this.glow.emit(pos, this.v, color, new THREE.Color(0, 0, 0), 1.2, 0.3, 0.3, 2);
+      this.sparks.emit(pos, this.v, color, _black, 0.16, 0.3, 2);
     }
     this.smoke.emit(pos, this.v.set(rnd(), rnd(), rnd()).multiplyScalar(4), new THREE.Color(0.35, 0.3, 0.27), new THREE.Color(0.2, 0.18, 0.16), 4, 18, 1.5, 0.4, 0.35);
   }
@@ -381,7 +580,7 @@ export class Effects {
     for (let i = 0; i < 2; i++) {
       randDir(this.d).addScaledVector(normal, 1.4).normalize();
       this.v.copy(this.d).multiplyScalar(15 + Math.random() * 45);
-      this.glow.emit(pos, this.v, _miningSpark, _black, 1.1, 0.3, 0.3 + Math.random() * 0.3, 1.5);
+      this.sparks.emit(pos, this.v, _miningSpark, _black, 0.14, 0.3 + Math.random() * 0.3, 1.5);
     }
     if (dust) this.smoke.emit(pos, this.v.copy(normal).multiplyScalar(4 + Math.random() * 4), new THREE.Color(0.32, 0.28, 0.24), new THREE.Color(0.16, 0.15, 0.14), 2.5, 12, 1.8, 0.6, 0.3);
   }
@@ -418,7 +617,7 @@ export class Effects {
         // Sparks skate along the surface; the faster the blow, the further they fly.
         this.spray(normal, 0.35, this.d);
         this.v.copy(this.d).multiplyScalar(25 + Math.random() * (60 + 260 * k));
-        this.glow.emit(pos, this.v, _sparkHot, _sparkEnd, 0.8 + 0.7 * k, 0.25, 0.2 + Math.random() * (0.35 + 0.5 * k), 1.4);
+        this.sparks.emit(pos, this.v, _sparkHot, _sparkEnd, 0.12 + 0.12 * k, 0.2 + Math.random() * (0.35 + 0.5 * k), 1.4);
       }
     }
     if (rocky) {
@@ -499,7 +698,7 @@ export class Effects {
       // A short circuit: a few blue-white sparks.
       for (let i = 0; i < 4; i++) {
         this.v.copy(vel).add(this.d.set(rnd(), rnd(), rnd()).multiplyScalar(18));
-        this.glow.emit(pos, this.v, _arc, _arcEnd, 0.7, 0.2, 0.12 + Math.random() * 0.15, 2);
+        this.sparks.emit(pos, this.v, _arc, _arcEnd, 0.08, 0.12 + Math.random() * 0.15, 2);
       }
     }
   }
@@ -563,6 +762,18 @@ export class Effects {
     }
     this.glow.update(dt);
     this.smoke.update(dt);
+    this.sparks.update(dt);
+    for (const sh of this.shocks) {
+      if (!sh.mesh.visible) continue;
+      sh.age += dt;
+      const t = sh.age / sh.life;
+      if (t >= 1) {
+        sh.mesh.visible = false;
+        continue;
+      }
+      sh.mesh.scale.setScalar(Math.max(0.01, sh.radius * (1 - Math.pow(1 - t, 3))));
+      sh.mat.uniforms.uFade.value = (1 - t) * (1 - t) * (1 - t);
+    }
     for (const l of this.lights) {
       l.age += dt;
       const t = Math.min(1, l.age / l.life);
