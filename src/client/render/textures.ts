@@ -164,6 +164,72 @@ export function makeFlareRing(size = 256) {
   return t;
 }
 
+/**
+ * A star seen through a camera: hundreds of fine glare rays of random length
+ * around a soft core, and six faint diffraction spikes. Drawn additively.
+ */
+export function makeStarGlare(seed: number, size = 512) {
+  const { c, ctx } = canvas(size, size);
+  const rand = mulberry32(seed);
+  const m = size / 2;
+  ctx.globalCompositeOperation = 'lighter';
+  for (let i = 0; i < 140; i++) {
+    const a = rand() * Math.PI * 2;
+    const len = m * (0.18 + Math.pow(rand(), 3) * 0.8);
+    const g = ctx.createLinearGradient(m, m, m + Math.cos(a) * len, m + Math.sin(a) * len);
+    const al = 0.05 + rand() * 0.1;
+    g.addColorStop(0, `rgba(255,240,220,${al})`);
+    g.addColorStop(1, 'rgba(255,220,190,0)');
+    ctx.strokeStyle = g;
+    ctx.lineWidth = 1 + rand() * 2;
+    ctx.beginPath();
+    ctx.moveTo(m, m);
+    ctx.lineTo(m + Math.cos(a) * len, m + Math.sin(a) * len);
+    ctx.stroke();
+  }
+  const a0 = rand() * Math.PI;
+  for (let k = 0; k < 6; k++) {
+    const a = a0 + (k * Math.PI) / 3;
+    const len = m * 0.98;
+    const g = ctx.createLinearGradient(m, m, m + Math.cos(a) * len, m + Math.sin(a) * len);
+    g.addColorStop(0, 'rgba(255,245,230,0.5)');
+    g.addColorStop(0.3, 'rgba(255,235,210,0.12)');
+    g.addColorStop(1, 'rgba(255,230,200,0)');
+    ctx.strokeStyle = g;
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(m, m);
+    ctx.lineTo(m + Math.cos(a) * len, m + Math.sin(a) * len);
+    ctx.stroke();
+  }
+  const core = ctx.createRadialGradient(m, m, 0, m, m, m * 0.45);
+  core.addColorStop(0, 'rgba(255,250,240,0.4)');
+  core.addColorStop(0.15, 'rgba(255,225,190,0.12)');
+  core.addColorStop(1, 'rgba(255,190,140,0)');
+  ctx.fillStyle = core;
+  ctx.fillRect(0, 0, size, size);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+/** Thin horizontal streak (anamorphic lens), for the sun's flare. */
+export function makeFlareStreak(size = 512) {
+  const { c, ctx } = canvas(size, size);
+  const m = size / 2;
+  const g = ctx.createLinearGradient(0, 0, size, 0);
+  g.addColorStop(0, 'rgba(150,190,255,0)');
+  g.addColorStop(0.5, 'rgba(200,220,255,0.9)');
+  g.addColorStop(1, 'rgba(150,190,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, m - 1.5, size, 3);
+  ctx.globalAlpha = 0.35;
+  ctx.fillRect(0, m - 5, size, 10);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
 /** Soft cloud puff for nebula dust sprites. */
 export function makeCloudTexture(seed: number, size = 256) {
   const { c, ctx } = canvas(size, size);

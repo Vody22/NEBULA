@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { MaterialId } from '../../shared/physics/materials';
+import { NOISE_GLSL } from './glsl';
 import { makeRadialTexture } from './textures';
 
 const pointVert = /* glsl */ `
@@ -288,6 +289,64 @@ void main(){
   gl_FragColor = vec4(uColor * pow(rim, 20.0) * uFade, 1.0);
 }`;
 
+// The fireball itself: a camera-facing disc shaded as a ball of turbulent
+// gas. Billows roll outward, the heat runs from white through yellow and
+// orange to dull red as it cools, and the dying fire leaves dark smoke.
+// Premultiplied output: fire adds light, smoke hides what is behind it.
+const fireVert = /* glsl */ `
+uniform float uSize;
+varying vec2 vUv;
+void main(){
+  vUv = position.xy;
+  vec4 mv = modelViewMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+  mv.xy += position.xy * uSize;
+  gl_Position = projectionMatrix * mv;
+}`;
+const fireFrag = /* glsl */ `
+uniform float uT;
+uniform float uSeed;
+uniform float uGain;
+varying vec2 vUv;
+${NOISE_GLSL}
+vec3 heatColor(float h){
+  vec3 c = mix(vec3(0.0), vec3(0.55, 0.05, 0.0), smoothstep(0.0, 0.3, h));
+  c = mix(c, vec3(2.2, 0.62, 0.1), smoothstep(0.3, 0.7, h));
+  c = mix(c, vec3(4.0, 2.4, 0.8), smoothstep(0.7, 1.1, h));
+  return mix(c, vec3(6.0, 5.2, 4.2), smoothstep(1.1, 1.6, h));
+}
+void main(){
+  float r = length(vUv);
+  if (r > 1.0) discard;
+  float z = sqrt(1.0 - r*r);
+  vec3 dir = vec3(vUv, z);
+  vec3 p = dir * 1.7 + vec3(uSeed, uSeed*1.7, -uSeed);
+  // Billows roll outward as the ball grows.
+  float n = fbm4(p * 1.6 - dir * uT * 1.8);
+  float d = snoise(p * 5.5 + vec3(0.0, 0.0, uT * 3.0));
+  float edge = 0.55 + 0.3 * smoothstep(0.0, 0.35, uT);
+  float shape = smoothstep(0.0, 0.3, edge - r * 1.05 + n * 0.62 + d * 0.1);
+  // Heat: hottest in the middle of the ball, broken up by the billows,
+  // cooling over the life.
+  float cool = 1.0 - smoothstep(0.0, 0.7, uT);
+  float heat = (0.2 + z * 0.7 + n * 1.0 + d * 0.15) * (cool * 1.3 + 0.08);
+  vec3 fire = heatColor(clamp(heat, 0.0, 1.6)) * shape;
+  // Smoke takes over where the fire has cooled, and thins out at the end.
+  float smoke = shape * smoothstep(0.12, 0.55, uT) * (1.0 - smoothstep(0.6, 1.0, uT)) * (0.55 + 0.45 * (n + 0.5));
+  // Dense fire is opaque too: it hides the hull behind it.
+  float alpha = clamp(smoke * 0.8 + shape * cool * 0.6, 0.0, 0.9);
+  vec3 col = fire * uGain * (1.0 - smoothstep(0.55, 0.95, uT)) + vec3(0.05, 0.045, 0.04) * alpha;
+  gl_FragColor = vec4(col, alpha);
+}`;
+
+interface Fire {
+  mesh: THREE.Mesh;
+  mat: THREE.ShaderMaterial;
+  vel: THREE.Vector3;
+  age: number;
+  life: number;
+  radius: number;
+}
+
 interface Shock {
   mesh: THREE.Mesh;
   mat: THREE.ShaderMaterial;
@@ -350,6 +409,7 @@ export class Effects {
   private smoke: ParticlePool;
   private sparks: StreakPool;
   private shocks: Shock[] = [];
+  private fires: Fire[] = [];
   private debris: Debris[] = [];
   private pending: Pending[] = [];
   /** Lights 0-2 flash for explosions and hits, light 3 for the player's own guns. */
@@ -392,6 +452,24 @@ export class Effects {
       mesh.visible = false;
       this.group.add(mesh);
       this.shocks.push({ mesh, mat, age: 1, life: 1, radius: 1 });
+    }
+    const fireGeo = new THREE.PlaneGeometry(2, 2);
+    for (let i = 0; i < 6; i++) {
+      const mat = new THREE.ShaderMaterial({
+        vertexShader: fireVert,
+        fragmentShader: fireFrag,
+        uniforms: { uSize: { value: 1 }, uT: { value: 1 }, uSeed: { value: 0 }, uGain: { value: 1 } },
+        blending: THREE.CustomBlending,
+        blendSrc: THREE.OneFactor,
+        blendDst: THREE.OneMinusSrcAlphaFactor,
+        transparent: true,
+        depthWrite: false,
+      });
+      const mesh = new THREE.Mesh(fireGeo, mat);
+      mesh.visible = false;
+      mesh.frustumCulled = false;
+      this.group.add(mesh);
+      this.fires.push({ mesh, mat, vel: new THREE.Vector3(), age: 1, life: 1, radius: 1 });
     }
 
     // Torn hull plates and structural chunks.
@@ -441,6 +519,18 @@ export class Effects {
     sh.radius = radius;
   }
 
+  private fireBall(pos: THREE.Vector3, vel: THREE.Vector3, radius: number, life: number, gain = 1) {
+    const f = this.fires.reduce((a, b) => (a.age / a.life > b.age / b.life ? a : b));
+    f.mesh.position.copy(pos);
+    f.mesh.visible = true;
+    f.vel.copy(vel).multiplyScalar(0.5);
+    f.mat.uniforms.uSeed.value = Math.random() * 50;
+    f.mat.uniforms.uGain.value = gain;
+    f.age = 0;
+    f.life = life;
+    f.radius = radius;
+  }
+
   private flashLight(pos: THREE.Vector3, peak: number, life: number, color: THREE.Color, distance = 900, slot?: number) {
     const l = slot !== undefined ? this.lights[slot] : this.lights.slice(0, 3).reduce((a, b) => (a.age / a.life > b.age / b.life ? a : b));
     l.light.position.copy(pos);
@@ -459,8 +549,9 @@ export class Effects {
   explosion(pos: THREE.Vector3, scale: number, vel = new THREE.Vector3()) {
     const n = this.density;
     // Flash: blinding for a few frames, then the light it casts fades.
-    this.glow.emit(pos, vel, new THREE.Color(6, 5, 4), new THREE.Color(1.5, 0.6, 0.2), 30 * scale, 90 * scale, 0.16);
+    this.glow.emit(pos, vel, new THREE.Color(6, 5, 4), new THREE.Color(1.5, 0.6, 0.2), 20 * scale, 60 * scale, 0.14);
     this.glow.emit(pos, vel, new THREE.Color(3, 2.4, 1.6), new THREE.Color(0.6, 0.2, 0.05), 14 * scale, 50 * scale, 0.45);
+    this.fireBall(pos, vel, 30 * scale, 3.2, 0.8);
     this.fireball(pos, vel, scale);
     // Sparks: hot metal flung out fast.
     const spark = new THREE.Color(6, 3.4, 1.2);
@@ -517,7 +608,7 @@ export class Effects {
     const ember = new THREE.Color(0.4, 0.06, 0.01);
     // Many overlapping puffs with a dense core, so it reads as one billowing
     // mass rather than separate balls.
-    for (let i = 0; i < 110 * scale * n + 10; i++) {
+    for (let i = 0; i < 45 * scale * n + 6; i++) {
       randDir(this.d);
       const r = Math.pow(Math.random(), 0.8);
       this.v.copy(this.d).multiplyScalar((6 + r * 42) * scale).add(vel.clone().multiplyScalar(0.5));
@@ -730,6 +821,7 @@ export class Effects {
       if (b.delay > 0) continue;
       this.pending.splice(i, 1);
       this.glow.emit(b.pos, b.vel, new THREE.Color(4, 3, 2), new THREE.Color(0.8, 0.25, 0.05), 12 * b.scale, 40 * b.scale, 0.22);
+      this.fireBall(b.pos, b.vel, 30 * b.scale, 2.2, 0.7);
       this.fireball(b.pos, b.vel, b.scale);
       this.flashLight(b.pos, 1.5e4 * b.scale, 0.5, new THREE.Color(1, 0.55, 0.25));
     }
@@ -773,6 +865,18 @@ export class Effects {
       }
       sh.mesh.scale.setScalar(Math.max(0.01, sh.radius * (1 - Math.pow(1 - t, 3))));
       sh.mat.uniforms.uFade.value = (1 - t) * (1 - t) * (1 - t);
+    }
+    for (const f of this.fires) {
+      if (!f.mesh.visible) continue;
+      f.age += dt;
+      const t = f.age / f.life;
+      if (t >= 1) {
+        f.mesh.visible = false;
+        continue;
+      }
+      f.mesh.position.addScaledVector(f.vel, dt);
+      f.mat.uniforms.uT.value = t;
+      f.mat.uniforms.uSize.value = f.radius * (0.3 + 0.7 * (1 - Math.pow(1 - Math.min(1, t * 1.6), 3)));
     }
     for (const l of this.lights) {
       l.age += dt;

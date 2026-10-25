@@ -152,9 +152,13 @@ void main(){
     if (tt > 0.0) {
       float rr = (length(vPosW + uSunDir*tt - uCenter) - uRingIn) / (uRingOut - uRingIn);
       if (rr > 0.0 && rr < 1.0) {
-        float dens = smoothstep(0.0, 0.05, rr) * (1.0 - smoothstep(0.92, 1.0, rr)) * (0.7 + 0.3*sin(rr*70.0));
-        dens *= smoothstep(0.018, 0.026, abs(rr - 0.52));
-        day *= 1.0 - 0.7*dens;
+        // Same regions as the ring shader: faint C, dense B, Cassini gap, A.
+        float dens = mix(0.12, 0.3, smoothstep(0.0, 0.2, rr)) * (1.0 - step(0.2, rr))
+                   + 0.88 * step(0.2, rr) * (1.0 - step(0.615, rr))
+                   + 0.05 * step(0.615, rr) * (1.0 - step(0.668, rr))
+                   + 0.6 * step(0.668, rr) * (1.0 - step(0.955, rr));
+        dens *= 0.85 + 0.15*sin(rr*90.0);
+        day *= 1.0 - 0.85*dens;
       }
     }
   }
@@ -211,38 +215,56 @@ void main(){
   float r = length(vPosW - uPlanetPos);
   float t = (r - uInner) / (uOuter - uInner);
   if (t < 0.0 || t > 1.0) discard;
-  // Ringlets: value noise over the radius. Each octave fades out once its
-  // bands get thinner than a couple of pixels, which removes the moiré.
   float w = max(fwidth(t), 1e-5);
-  float dens = 0.0;
+  // Named regions, inside out: a faint grey C ring, the bright dense B ring,
+  // the Cassini division, the A ring with the Encke gap, and a thin F ring.
+  // Edges are antialiased by the pixel footprint so they stay crisp far away.
+  #define BAND(a, b) (smoothstep(a - w, a + w, t) * (1.0 - smoothstep(b - w, b + w, t)))
+  float cRing = BAND(0.0, 0.2);
+  float bRing = BAND(0.2, 0.615);
+  float aRing = BAND(0.668, 0.955);
+  float fRing = BAND(0.978, 0.986);
+  float base = cRing * mix(0.12, 0.3, smoothstep(0.0, 0.2, t))
+             + bRing * mix(0.72, 0.95, smoothstep(0.2, 0.45, t)) * mix(1.0, 0.85, smoothstep(0.5, 0.615, t))
+             + aRing * 0.6 * (1.0 - 0.9 * BAND(0.9, 0.906))
+             + fRing * 0.7
+             + BAND(0.615, 0.668) * 0.05;
+  // Ringlets: value noise over the radius. Each octave fades out once its
+  // bands get thinner than a couple of pixels, which removes the moire.
+  float fine = 0.0;
   float amp = 0.5;
-  float freq = 7.0;
+  float freq = 9.0;
   float norm = 0.0;
   for (int i = 0; i < 7; i++) {
     float aa = 1.0 - smoothstep(0.12, 0.45, w * freq);
-    dens += amp * mix(0.5, vnoise(t*freq + float(i)*17.0), aa);
+    fine += amp * mix(0.5, vnoise(t*freq + float(i)*17.0), aa);
     norm += amp;
-    amp *= 0.62;
-    freq *= 2.2;
+    amp *= 0.6;
+    freq *= 2.3;
   }
-  dens = smoothstep(0.22, 0.78, dens / norm);
-  dens *= smoothstep(0.0, 0.05, t) * (1.0 - smoothstep(0.92, 1.0, t));
-  // Divisions with crisp, antialiased edges.
-  dens *= smoothstep(0.022 - w, 0.022 + w, abs(t - 0.52));
-  dens *= mix(0.25, 1.0, smoothstep(0.004 - w, 0.004 + w, abs(t - 0.83)));
-  dens *= 0.55 + 0.45 * smoothstep(0.0, 0.4, t);
+  fine = fine / norm - 0.5;
+  // Plateaus in the C ring, sharp ringlets in the B ring, gentler in the A ring.
+  float dens = clamp(base * (1.0 + fine * (cRing * 1.8 + bRing * 1.5 + aRing * 1.0)), 0.0, 1.0);
+  dens *= smoothstep(0.0, 0.03, t);
   // Planet shadow.
   vec3 toP = uPlanetPos - vPosW;
   float proj = dot(toP, -uSunDir);
   float shadow = 1.0;
   if (proj < 0.0) { vec3 closest = toP + uSunDir*proj; shadow = smoothstep(uPlanetR*0.97, uPlanetR*1.03, length(closest)); }
-  // Lit face vs. the far face, where only light scattered through the ice reaches the eye.
+  // Lit face: the ice reflects. Far face: only light passing through thin
+  // regions reaches the eye, so the dense B ring turns dark while the C and
+  // A rings glow, brighter still looking toward the sun.
   vec3 v = normalize(cameraPosition - vPosW);
   float sameSide = step(0.0, dot(uRingN, uSunDir) * dot(uRingN, v));
-  float bright = mix(0.35 + 0.5 * pow(max(dot(-v, uSunDir), 0.0), 4.0), 1.0, sameSide);
-  vec3 tone = mix(vec3(0.5, 0.43, 0.37), vec3(0.8, 0.72, 0.62), vnoise(t*13.0 + 5.0));
-  vec3 col = tone * (0.05 + 0.95*shadow) * bright * 0.8;
-  gl_FragColor = vec4(haze(col), clamp(dens*0.85, 0.0, 0.85));
+  float through = dens * (1.0 - dens) * 2.6 * (0.45 + 1.4 * pow(max(dot(-v, uSunDir), 0.0), 6.0));
+  float bright = mix(through + 0.04, 0.4 + 0.6 * dens, sameSide);
+  // Colour: grey-blue C ring, warm tan B ring, cooler A ring, with faint
+  // tinted bands.
+  vec3 tone = cRing * vec3(0.52, 0.52, 0.55) + bRing * vec3(0.88, 0.72, 0.55) + aRing * vec3(0.72, 0.67, 0.6) + fRing * vec3(0.8);
+  tone += BAND(0.615, 0.668) * vec3(0.5);
+  tone *= mix(0.82, 1.12, vnoise(t*37.0 + 5.0)) * mix(0.9, 1.08, vnoise(t*11.0 + 2.0));
+  vec3 col = tone * (0.04 + 0.96*shadow) * bright * 0.68;
+  gl_FragColor = vec4(haze(col), clamp(dens*0.92, 0.0, 0.92));
 }`;
 
 /** Atmospheric haze by apparent distance: farther, larger worlds read as far away. */

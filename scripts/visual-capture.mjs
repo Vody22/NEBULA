@@ -150,6 +150,16 @@ await shot('22-rock-close', () => {
   window.__place({ pos: [p.x + (dir[0] / n) * d, p.y + (dir[1] / n) * d, p.z + (dir[2] / n) * d], target: [p.x, p.y, p.z], fov: 50 });
 });
 
+// Looking toward the sun past the station's ring.
+await shot('23-sun', () => {
+  const { g } = window.__shot;
+  const s = g.zone.sunDirection;
+  const side = [s.z, 0, -s.x];
+  const pos = [-s.x * 700 + side[0] * 650, -s.y * 700 - 60, -s.z * 700 + side[2] * 650];
+  const aim = [s.x - side[0] * 0.25, s.y - 0.12, s.z - side[2] * 0.25];
+  window.__place({ pos, target: [pos[0] + aim[0] * 1000, pos[1] + aim[1] * 1000, pos[2] + aim[2] * 1000], fov: 60 });
+});
+
 console.log(errors.length ? `errors: ${errors.join(' | ')}` : 'no page errors');
 await browser.close();
 console.log(`VISUAL CAPTURE DONE → ${out}`);

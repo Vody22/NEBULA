@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { Lensflare, LensflareElement } from 'three/examples/jsm/objects/Lensflare.js';
 import { NOISE_GLSL } from './glsl';
-import { makeFlareRing, makeRadialTexture } from './textures';
+import { makeFlareRing, makeFlareStreak, makeRadialTexture, makeStarGlare } from './textures';
 import { mulberry32 } from '../../shared/rng';
 import type { SkyDef } from '../../shared/sim/zone';
 
@@ -270,11 +270,27 @@ export function buildSky(renderer: THREE.WebGLRenderer, sunDir: THREE.Vector3, r
       toneMapped: false,
     }),
   );
-  core.scale.setScalar(5500);
+  core.scale.setScalar(4200);
   sun.add(core);
+  // Camera glare around the star: fine rays and faint diffraction spikes.
+  const glareTex = makeStarGlare(sky?.stars ?? 4242);
+  const glare = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map: glareTex,
+      color: new THREE.Color(2.4 * tint.x, 2.2 * tint.y, 2.0 * tint.z),
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      toneMapped: false,
+    }),
+  );
+  glare.scale.setScalar(90000);
+  sun.add(glare);
+  // Falls off steeply so the glow has no visible rim.
   const flareMain = makeRadialTexture([
     [0, 'rgba(255,255,255,1)'],
-    [0.2, 'rgba(255,230,200,0.6)'],
+    [0.06, 'rgba(255,240,215,0.55)'],
+    [0.2, 'rgba(255,225,190,0.16)'],
+    [0.5, 'rgba(255,210,170,0.04)'],
     [1, 'rgba(255,200,150,0)'],
   ]);
   const flareHex = makeRadialTexture([
@@ -283,9 +299,11 @@ export function buildSky(renderer: THREE.WebGLRenderer, sunDir: THREE.Vector3, r
     [1, 'rgba(140,180,255,0)'],
   ]);
   const ring = makeFlareRing();
+  const streak = makeFlareStreak();
   // Cinematic Realism: the star glows, the lens barely shows (no row of ghosts).
   const lens = new Lensflare();
-  lens.addElement(new LensflareElement(flareMain, 300, 0, new THREE.Color(0.7, 0.62, 0.55)));
+  lens.addElement(new LensflareElement(flareMain, 520, 0, new THREE.Color(0.8, 0.7, 0.6)));
+  lens.addElement(new LensflareElement(streak, 900, 0, new THREE.Color(0.22, 0.26, 0.34)));
   lens.addElement(new LensflareElement(ring, 90, 0.35, new THREE.Color(0.08, 0.11, 0.16)));
   lens.addElement(new LensflareElement(flareHex, 70, 0.8, new THREE.Color(0.08, 0.09, 0.12)));
   sun.add(lens);
@@ -306,7 +324,8 @@ export function buildSky(renderer: THREE.WebGLRenderer, sunDir: THREE.Vector3, r
       (stars.material as THREE.Material).dispose();
       (core.material as THREE.SpriteMaterial).map?.dispose();
       core.material.dispose();
-      for (const t of [flareMain, flareHex, ring]) t.dispose();
+      glare.material.dispose();
+      for (const t of [flareMain, flareHex, ring, streak, glareTex]) t.dispose();
       lens.dispose();
     },
   };
