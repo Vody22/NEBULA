@@ -29,6 +29,11 @@ uniform float uKind; // 0 gas, 1 rocky, 2 ice
 uniform float uSeed;
 uniform float uTime;
 uniform float uCity;
+uniform float uRingOn;
+uniform vec3 uRingN;
+uniform vec3 uCenter;
+uniform float uRingIn;
+uniform float uRingOut;
 varying vec3 vObj;
 varying vec3 vNormalW;
 varying vec3 vPosW;
@@ -45,18 +50,47 @@ void main(){
   float cloudShadow = 0.0;
   float land = 0.0;
   if (uKind < 0.5) {
-    // Gas giant: latitude bands at two scales, sheared by turbulence, one storm.
+    // Gas giant: many belts and zones of different widths, edges churned by
+    // turbulence (stronger where neighbouring bands shear), fine striations
+    // along the flow, white ovals riding the belts and one great storm.
     float lat = vObj.y;
-    float turb = fbm(p*2.6 + vec3(uTime*0.002, 0.0, 0.0));
-    float turbFine = fbm4(p*9.0 + vec3(uTime*0.004, 0.0, 0.0));
-    float wide = sin(lat*13.0 + turb*1.8) * 0.5 + 0.5;
-    float narrow = sin(lat*41.0 + turb*3.2 + turbFine*0.8) * 0.5 + 0.5;
-    vec3 mid = mix(uColA, uColB, 0.5) * 1.1;
-    albedo = mix(uColB, uColA, smoothstep(0.15, 0.85, wide));
-    albedo = mix(albedo, mid, narrow*0.3);
-    albedo *= 0.92 + turbFine*0.1;
-    float storm = smoothstep(0.75, 0.92, 1.0 - length((vObj - normalize(vec3(0.6,-0.25,0.75)))*vec3(1.0,2.2,1.0))*3.0);
-    albedo = mix(albedo, vec3(0.92,0.72,0.58), storm*0.75);
+    vec3 flow = vec3(uTime*0.002, 0.0, 0.0);
+    float w1 = fbm(p*3.0 + flow);
+    float wl = lat + w1*0.035;
+    float edge = 1.0 - abs(sin(wl*22.0));
+    wl += fbm4(p*11.0 + flow*2.0 + w1)*0.018*(0.4 + edge);
+    float b1 = sin(wl*22.0);
+    float b2 = sin(wl*57.0 + 1.3);
+    float b3 = sin(wl*9.0 + 0.4);
+    vec3 zone = mix(uColA, vec3(0.95, 0.9, 0.82), 0.45);
+    vec3 belt = uColB;
+    vec3 mid = uColA;
+    albedo = mix(belt, zone, smoothstep(-0.35, 0.35, b1));
+    albedo = mix(albedo, mid, 0.4*smoothstep(0.1, 0.9, b2));
+    albedo *= 0.85 + 0.15*b3;
+    float stri = fbm4(vec3(p.x*5.0, p.y*70.0, p.z*5.0) + flow*3.0);
+    albedo *= 0.92 + stri*0.16;
+    // White ovals along the band edges.
+    for (int i = 0; i < 6; i++) {
+      float fi = float(i);
+      float la = sin(fi*2.3 + 0.5)*0.55;
+      float lo = fi*1.05 + 0.3;
+      vec3 c = normalize(vec3(cos(lo)*sqrt(1.0 - la*la), la, sin(lo)*sqrt(1.0 - la*la)));
+      float d = length((vObj - c)*vec3(1.0, 2.4, 1.0));
+      float r = 0.035 + 0.02*fract(fi*0.618);
+      float oval = smoothstep(r, r*0.5, d);
+      float ring = smoothstep(r*1.4, r, d) - oval;
+      albedo = mix(albedo, vec3(0.97, 0.94, 0.88), oval*0.85);
+      albedo *= 1.0 - ring*0.25;
+    }
+    // The great storm: a red oval with a darker swirling collar.
+    vec3 sc = normalize(vec3(0.6, -0.25, 0.75));
+    float sd = length((vObj - sc)*vec3(1.0, 2.2, 1.0));
+    float sw = fbm4((vObj - sc)*18.0 + vec3(sd*30.0));
+    float storm = smoothstep(0.12, 0.07, sd + sw*0.012);
+    float collar = smoothstep(0.17, 0.12, sd) - storm;
+    albedo = mix(albedo, vec3(0.78, 0.42, 0.3), storm*0.8);
+    albedo = mix(albedo, albedo*0.75 + vec3(0.1, 0.06, 0.04), collar*0.7);
   } else if (uKind < 1.5) {
     // Rocky ocean world: warped continents with ragged coasts, biomes by
     // latitude and height, shallow seas, ice caps, and cloud bands stretched
@@ -111,6 +145,19 @@ void main(){
   // Sharp terminator: the night side is black. Sunlight reddens where it
   // grazes through the atmosphere.
   float day = max(ndl, 0.0);
+  // The rings' shadow across the disc: where the way to the sun crosses them.
+  if (uRingOn > 0.5) {
+    float denom = dot(uSunDir, uRingN);
+    float tt = abs(denom) > 1e-4 ? dot(uCenter - vPosW, uRingN) / denom : -1.0;
+    if (tt > 0.0) {
+      float rr = (length(vPosW + uSunDir*tt - uCenter) - uRingIn) / (uRingOut - uRingIn);
+      if (rr > 0.0 && rr < 1.0) {
+        float dens = smoothstep(0.0, 0.05, rr) * (1.0 - smoothstep(0.92, 1.0, rr)) * (0.7 + 0.3*sin(rr*70.0));
+        dens *= smoothstep(0.018, 0.026, abs(rr - 0.52));
+        day *= 1.0 - 0.7*dens;
+      }
+    }
+  }
   float hasAtmo = step(uKind, 1.5);
   vec3 sunCol = mix(vec3(1.0, 0.5, 0.3), vec3(1.0), mix(1.0, smoothstep(0.0, 0.28, ndl), hasAtmo));
   vec3 col = albedo * sunCol * day * 1.55;
@@ -225,6 +272,11 @@ export class Planets {
           uTime: { value: 0 },
           uCity: { value: kind === 1 ? 1 : 0 },
           uHaze: { value: haze },
+          uRingOn: { value: 0 },
+          uRingN: { value: new THREE.Vector3(0, 1, 0) },
+          uCenter: { value: d.position.clone() },
+          uRingIn: { value: 1 },
+          uRingOut: { value: 2 },
         },
       });
       this.mats.push(mat);
@@ -257,6 +309,10 @@ export class Planets {
         ring.rotation.y = 0.18;
         ring.updateMatrixWorld();
         const normal = new THREE.Vector3(0, 0, 1).applyQuaternion(ring.quaternion).normalize();
+        mat.uniforms.uRingOn.value = 1;
+        mat.uniforms.uRingN.value.copy(normal);
+        mat.uniforms.uRingIn.value = inner;
+        mat.uniforms.uRingOut.value = outer;
         ring.material = new THREE.ShaderMaterial({
           vertexShader: planetVert,
           fragmentShader: ringFrag,

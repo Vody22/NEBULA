@@ -116,6 +116,7 @@ await shot('05-combat', () => {
 await shot('06-station-wide', () => window.__place({ pos: [2300, 700, 2600], target: [0, 0, 0], fov: 55 }));
 await shot('07-station-close', () => window.__place({ pos: [760, 90, 330], target: [0, 60, 0], fov: 60 }));
 await shot('08-planet-kerys', () => window.__place({ pos: [600, 300, 1500], target: [-26000, -6500, -52000], fov: 50 }));
+await shot('21-kerys-close', () => window.__place({ pos: [-8520, -2130, -17040], target: [-26000, -6500, -52000], fov: 50 }));
 await shot('09-thalassa-nyx', () => window.__place({ pos: [1200, 300, 600], target: [30000, 7000, -26000], fov: 45 }));
 await shot('20-thalassa-close', () => window.__place({ pos: [18840, 4390, -16325], target: [30000, 7000, -26000], fov: 45 }));
 await shot('10-nebula-sky', () => window.__place({ pos: [0, 2000, 3000], target: [0, 4000, 9000], fov: 70 }));
