@@ -58,20 +58,47 @@ void main(){
     float storm = smoothstep(0.75, 0.92, 1.0 - length((vObj - normalize(vec3(0.6,-0.25,0.75)))*vec3(1.0,2.2,1.0))*3.0);
     albedo = mix(albedo, vec3(0.92,0.72,0.58), storm*0.75);
   } else if (uKind < 1.5) {
-    // Rocky ocean world: continents at several scales, ice caps, clouds.
-    float h = fbm(p*2.2) + 0.5*ridged(p*4.0)*0.35;
-    land = smoothstep(0.02, 0.05, h);
-    vec3 ocean = mix(uColA*0.35, uColA*0.8, smoothstep(-0.45, 0.02, h));
-    vec3 ground = mix(vec3(0.16,0.26,0.1), uColB, smoothstep(0.05, 0.4, h + fbm4(p*12.0)*0.08));
+    // Rocky ocean world: warped continents with ragged coasts, biomes by
+    // latitude and height, shallow seas, ice caps, and cloud bands stretched
+    // by the winds, with a few cyclones.
+    vec3 cw = vec3(fbm4(p*1.6 + 3.0), fbm4(p*1.6 - 5.0), fbm4(p*1.6 + 9.0));
+    float h = fbm(p*2.2 + cw*0.3) + ridged(p*4.0 + cw*0.2)*0.12 + fbm4(p*16.0)*0.04;
+    // The ridges lift the mean height: the sea level follows so oceans stay the larger part.
+    land = smoothstep(0.19, 0.215, h);
+    float shelf = smoothstep(0.13, 0.19, h);
+    vec3 ocean = mix(uColA*0.16, uColA*0.55, smoothstep(-0.4, 0.05, h));
+    ocean = mix(ocean, mix(uColA, vec3(0.25, 0.65, 0.68), 0.5), shelf*0.55);
+    float lat = abs(vObj.y);
+    float moist = fbm4(p*3.5 + 17.0);
+    vec3 forest = vec3(0.1, 0.2, 0.08);
+    vec3 grass = vec3(0.26, 0.33, 0.14);
+    vec3 desert = uColB * 1.05;
+    vec3 rock = vec3(0.35, 0.3, 0.26);
+    vec3 ground = mix(grass, forest, smoothstep(-0.1, 0.25, moist));
+    ground = mix(ground, desert, smoothstep(-0.02, -0.25, moist) * smoothstep(0.5, 0.15, lat));
+    ground = mix(ground, rock, smoothstep(0.42, 0.62, h + fbm4(p*12.0)*0.06));
+    ground = mix(ground, vec3(0.42, 0.4, 0.36), smoothstep(0.55, 0.72, lat));
     albedo = mix(ocean, ground, land);
-    float ice = smoothstep(0.78, 0.86, abs(vObj.y) + fbm4(p*5.0)*0.08);
+    float ice = smoothstep(0.8, 0.87, lat + fbm4(p*5.0)*0.08);
     albedo = mix(albedo, vec3(0.88), ice);
     spec = (1.0 - land) * (1.0 - ice);
     vec3 drift = vec3(uTime*0.004, 0.0, uTime*0.002);
-    clouds = smoothstep(0.08, 0.6, fbm(p*3.0 + drift));
+    vec3 cp = p + drift;
+    vec3 cwarp = vec3(fbm4(cp*2.0 + 1.0), fbm4(cp*2.0 + 6.0), fbm4(cp*2.0 - 3.0));
+    vec3 cq = vec3(cp.x*3.0, cp.y*7.5, cp.z*3.0) + cwarp*0.9;
+    float cl = fbm(cq) + fbm4(cp*14.0 + cwarp)*0.18;
+    // Cyclones: spirals around two low-pressure centres.
+    for (int i = 0; i < 2; i++) {
+      vec3 c = normalize(vec3(i == 0 ? 0.5 : -0.7, i == 0 ? 0.35 : -0.3, i == 0 ? 0.8 : 0.6));
+      float dc = length(vObj - c);
+      float ang = atan(dot(vObj - c, cross(c, vec3(0.0, 1.0, 0.0))), (vObj - c).y);
+      cl += smoothstep(0.25, 0.0, dc) * 0.35 * sin(ang*2.0 + dc*40.0);
+    }
+    clouds = smoothstep(0.05, 0.55, cl);
     // Soft shadow of the cloud layer, offset away from the sun.
     vec3 sunObj = normalize(uSunDir); // planets are not rotated much: world ≈ object here
-    cloudShadow = smoothstep(0.08, 0.6, fbm4((p - sunObj*0.025)*3.0 + drift)) * 0.5;
+    vec3 sq = vec3((cp.x - sunObj.x*0.025)*3.0, (cp.y - sunObj.y*0.025)*7.5, (cp.z - sunObj.z*0.025)*3.0) + cwarp*0.9;
+    cloudShadow = smoothstep(0.05, 0.55, fbm4(sq)) * 0.5;
   } else {
     float h = ridged(p*3.0);
     albedo = mix(uColB, uColA, smoothstep(0.3, 0.9, h));

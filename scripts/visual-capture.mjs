@@ -43,6 +43,8 @@ await page.evaluate(() => {
 });
 
 async function shot(name, setup) {
+  // ONLY=10,20 captures just the shots whose names start with those prefixes.
+  if (process.env.ONLY && !process.env.ONLY.split(',').some((k) => name.startsWith(k))) return;
   await page.evaluate(setup);
   // Two rendered frames so every pass (bloom, sky) sees the new camera.
   const f0 = await page.evaluate(() => window.__shot.g.debug.frames);
@@ -115,6 +117,7 @@ await shot('06-station-wide', () => window.__place({ pos: [2300, 700, 2600], tar
 await shot('07-station-close', () => window.__place({ pos: [760, 90, 330], target: [0, 60, 0], fov: 60 }));
 await shot('08-planet-kerys', () => window.__place({ pos: [600, 300, 1500], target: [-26000, -6500, -52000], fov: 50 }));
 await shot('09-thalassa-nyx', () => window.__place({ pos: [1200, 300, 600], target: [30000, 7000, -26000], fov: 45 }));
+await shot('20-thalassa-close', () => window.__place({ pos: [18840, 4390, -16325], target: [30000, 7000, -26000], fov: 45 }));
 await shot('10-nebula-sky', () => window.__place({ pos: [0, 2000, 3000], target: [0, 4000, 9000], fov: 70 }));
 // Station details (added in step 4, no v0.2 "before").
 await shot('12-hangar-approach', () => window.__place({ pos: [70, -15, 470], target: [0, -5, 300], fov: 60 }));

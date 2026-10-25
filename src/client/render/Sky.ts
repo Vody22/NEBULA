@@ -153,30 +153,35 @@ void main(){
   float mass = smoothstep(-0.45, 0.22, fbm4(dir*0.85 + 5.3));
   mass = clamp(max(mass, core*1.3), 0.0, 1.0);
 
-  // Medium scale: warped gas and filaments. Fine scale near the core.
-  vec3 warp = vec3(fbm4(q*1.2 + 2.0), fbm4(q*1.2 + 7.5), fbm4(q*1.2 - 4.0));
-  float gas = smoothstep(-0.25, 0.9, fbm(q*1.1 + warp*0.7));
-  float fil = pow(max(0.0, 1.0 - abs(fbm4(q*3.2 + warp*1.4))), 12.0);
-  float fine = 0.5 + 0.5*fbm4(q*9.0 + warp*3.0);
-  float dens = gas * mass * (0.45 + 1.5*core);
-  dens += fil * mass * 0.3 * (0.35 + core);
-  dens *= mix(1.0, fine*1.3, 0.12 + 0.15*core);
+  // Gas: a gentle domain warp gives billowing clouds rather than marble
+  // veins; three scales of noise, bright fronts where clouds thin out, and
+  // filaments only along their edges. Baked once, so it can afford octaves.
+  vec3 warp = vec3(fbm4(q*0.9 + 2.0), fbm4(q*0.9 + 7.5), fbm4(q*0.9 - 4.0));
+  vec3 wq = q + warp*0.35;
+  float d1 = fbm(wq*1.1);
+  float d2 = fbm(wq*3.3 + 13.0);
+  float d3 = fbm4(wq*9.5 - 7.0);
+  float shape = d1 + d2*0.35;
+  float gas = smoothstep(-0.2, 0.75, shape + d3*0.12);
+  float front = smoothstep(0.35, 0.0, abs(shape - 0.22)) * (0.6 + 0.4*d3);
+  float fil = pow(clamp(ridged(wq*2.4 + 5.0)*1.25 - 0.35, 0.0, 1.0), 4.0) * gas * (1.0 - gas) * 4.0;
+  float dens = gas * mass * (0.4 + 1.6*core);
+  dens += front * mass * 0.22 * (0.4 + core);
+  dens += fil * mass * 0.3;
 
-  // Natural chromatic gradient away from the core: hot cyan-white,
-  // then magenta (H-alpha), then amber dust at the edges.
+  // Colour by ionisation: hot near the core, then the mid tint, then dust
+  // colour at the edges, broken into patches; the densest gas looks whiter.
   float k = 1.0 - coreD;
-  vec3 cCore = uCCore;
-  vec3 cMid = uCMid;
-  vec3 cOut = uCOut;
-  vec3 neb = mix(cCore, cMid, smoothstep(0.02, 0.4, k + fbm4(q*2.0)*0.15));
-  neb = mix(neb, cOut, smoothstep(0.5, 1.0, k + fbm4(q*2.5 + 9.0)*0.25));
+  vec3 neb = mix(uCCore, uCMid, smoothstep(0.05, 0.45, k + fbm4(q*1.7 + 21.0)*0.25));
+  neb = mix(neb, uCOut, smoothstep(0.45, 1.0, k + fbm4(q*2.3 + 9.0)*0.3));
+  neb = mix(neb, vec3(0.92, 0.96, 1.0) * length(neb) * 0.75, clamp(dens*0.25, 0.0, 0.3));
   col += neb * dens * 0.42;
-  col += vec3(0.85, 0.95, 1.0) * coreTight * gas * 0.3;
+  col += vec3(0.85, 0.95, 1.0) * coreTight * gas * 0.35;
 
-  // Absorption: dark dust lanes in front of the glowing gas give depth.
-  float lanes = smoothstep(0.02, 0.5, fbm4(q*2.6 + warp*0.6 + 11.0));
-  float lanesFine = smoothstep(0.15, 0.65, fbm4(q*5.0 + warp*0.8 - 3.0));
-  col *= 1.0 - clamp(lanes*0.45 + lanesFine*0.12*mass, 0.0, 0.85);
+  // Dust in front of the gas: soft dark lanes and small dense knots.
+  float lane = smoothstep(0.05, 0.42, fbm(q*2.1 + warp*0.5 + 11.0));
+  float knots = smoothstep(0.35, 0.6, fbm4(q*7.0 + warp - 3.0)) * lane;
+  col *= 1.0 - clamp(lane*0.6*mass + knots*0.3, 0.0, 0.9);
 
   // Faint unresolved stars (bright stars are live points, see StarField).
   col += starLayer(dir, 330.0, mix(0.985, 0.9, band), 0.05, 0.14) * (0.35 + band);
