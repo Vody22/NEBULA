@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { FERRO_MOUTH_Z, type StationDef } from '../../shared/sim/zone';
 import { GlowField, type Glow } from './batches';
 import { mergeByMaterial } from './merge';
+import { radiatorSkin, siloSkin } from './depotSkins';
 import { bayBanner, furnishHangar } from './hangarKit';
 import { hullSkin } from './hullSkin';
 import { makeShipSheet } from './shipTextures';
@@ -78,8 +79,19 @@ export class Outpost {
     // Hazard-painted structure: the depot's signature colour.
     // Kepler's ice depot wears blue hazard paint where Ferro-9 wears ochre.
     const ochreMat = new THREE.MeshStandardMaterial({ color: def.livery === 'kepler' ? 0x2f78a8 : 0xb5822e, metalness: 0.3, roughness: 0.65 });
+    // The same paint on plated surfaces: worn panels, chipped edges.
+    const paintSheet = makeShipSheet({ seed: 31, base: def.livery === 'kepler' ? '#3a7fae' : '#bf8a34', size: 512 });
+    const paintMat = new THREE.MeshStandardMaterial({
+      map: paintSheet.map,
+      normalMap: paintSheet.normalMap,
+      normalScale: new THREE.Vector2(0.6, 0.6),
+      roughnessMap: paintSheet.orm,
+      metalnessMap: paintSheet.orm,
+      roughness: 1,
+      metalness: 0.5,
+    });
     const strutMat = new THREE.MeshStandardMaterial({ color: 0x6f747a, metalness: 0.85, roughness: 0.5 });
-    const radiatorMat = new THREE.MeshStandardMaterial({ color: 0xbfc2c4, metalness: 0.2, roughness: 0.75, side: THREE.DoubleSide });
+    const radiatorMat = radiatorSkin(17);
     const amber = new THREE.MeshBasicMaterial({ color: new THREE.Color(1.7, 0.9, 0.35), toneMapped: false });
     const field = new THREE.MeshBasicMaterial({
       color: new THREE.Color(0.7, 0.4, 0.1),
@@ -183,14 +195,14 @@ export class Outpost {
     hangar.add(banner);
     // Ochre mouth frame.
     for (const sx of [-1, 1]) {
-      const post = new THREE.BoxGeometry(8, HH + 10, 8);
+      const post = plating(new THREE.BoxGeometry(8, HH + 10, 8), 8, HH + 10);
       post.translate(sx * (HW / 2 + 2), 0, HD / 2 - 2);
-      add(post, ochreMat, hangar);
+      add(post, paintMat, hangar);
     }
-    const lintel = new THREE.BoxGeometry(HW + 12, 8, 8);
+    const lintel = plating(new THREE.BoxGeometry(HW + 12, 8, 8), HW + 12, 8);
     lintel.translate(0, HH / 2 + 2, HD / 2 - 2);
-    add(lintel, ochreMat, hangar);
-    add(lintel.clone().translate(0, -HH - 4, 0), ochreMat, hangar);
+    add(lintel, paintMat, hangar);
+    add(lintel.clone().translate(0, -HH - 4, 0), paintMat, hangar);
     const fieldPlane = new THREE.PlaneGeometry(innerW, innerH);
     fieldPlane.translate(0, 0, HD / 2 - 1);
     add(fieldPlane, field, hangar);
@@ -214,7 +226,7 @@ export class Outpost {
     add(ref, darkMat);
     const hopper = new THREE.CylinderGeometry(34, 14, 40, 8, 1);
     hopper.translate(-165, 42, -55);
-    add(plating(hopper, 180, 40), ochreMat);
+    add(plating(hopper, 180, 40), paintMat);
     for (let i = 0; i < 3; i++) cyl(6, 46, -205 + i * 40, 40, -92, strutMat, this.group, 12);
     // Furnace vents: a dull amber glow on the side facing the belt.
     for (let i = 0; i < 4; i++) {
@@ -225,15 +237,31 @@ export class Outpost {
     for (const g of truss(new THREE.Vector3(-105, 0, -50), new THREE.Vector3(-56, 0, -45), 10, 12, 0.9)) add(g, strutMat);
 
     // ── Ore silos (collider at 140, 0, -85) ───────────────────────────
-    for (const [dx, dz] of [
+    // Two painted variants, so neighbours differ; the wall texture wraps
+    // once around (no plating rescale).
+    const siloMats = [1, 2].map((n) =>
+      siloSkin({
+        circumference: Math.PI * 2 * 19,
+        height: 108,
+        code: `${kepler ? 'GL' : 'FE'}-0${n}`,
+        cargo: kepler ? 'GLACE BRUTE' : 'MINERAI BRUT',
+        accent: kepler ? '#3a7fae' : '#bf8a34',
+        bands: [14, 54, 94],
+        seed: (kepler ? 140 : 40) + n,
+      }),
+    );
+    [
       [-24, -24],
       [24, -24],
       [-24, 24],
       [24, 24],
-    ]) {
-      cyl(19, 108, 140 + dx, 0, -85 + dz, hullMat);
-      for (const y of [-40, 0, 40]) cyl(20, 3, 140 + dx, y, -85 + dz, ochreMat);
-    }
+    ].forEach(([dx, dz], i) => {
+      const g = new THREE.CylinderGeometry(19, 19, 108, 40, 1);
+      g.rotateY(i * 1.3);
+      g.translate(140 + dx, 0, -85 + dz);
+      add(g, siloMats[i % 2]);
+      for (const y of [-40, 0, 40]) cyl(20, 3, 140 + dx, y, -85 + dz, paintMat);
+    });
     for (const g of truss(new THREE.Vector3(55, 10, -55), new THREE.Vector3(100, 10, -75), 10, 12, 0.9)) add(g, strutMat);
 
     // ── Radiators on the habitat's flanks ─────────────────────────────

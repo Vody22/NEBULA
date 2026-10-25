@@ -160,6 +160,17 @@ await shot('23-sun', () => {
   window.__place({ pos, target: [pos[0] + aim[0] * 1000, pos[1] + aim[1] * 1000, pos[2] + aim[2] * 1000], fov: 60 });
 });
 
+// Ferro-9's ore silos up close, and Aurora-7's solar arrays and radiators.
+await shot('24-depot-silos', () => {
+  const { g, T } = window.__shot;
+  const st = g.zone.stations[1];
+  const toWorld = (x, y, z) => new T(x, y, z).applyAxisAngle(new T(0, 1, 0), st.yaw).add(st.position);
+  const p = toWorld(330, 40, 60);
+  const t = toWorld(140, -5, -85);
+  window.__place({ pos: [p.x, p.y, p.z], target: [t.x, t.y, t.z], fov: 55 });
+});
+await shot('25-solar-arrays', () => window.__place({ pos: [260, 640, 320], target: [190, 440, 0], fov: 55 }));
+
 console.log(errors.length ? `errors: ${errors.join(' | ')}` : 'no page errors');
 await browser.close();
 console.log(`VISUAL CAPTURE DONE → ${out}`);

@@ -122,22 +122,6 @@ export function makeHullTextures(opts: {
   };
 }
 
-/** Dark-blue photovoltaic cells. */
-export function makeSolarTexture() {
-  const { c, ctx } = canvas(512, 512);
-  ctx.fillStyle = '#0b1830';
-  ctx.fillRect(0, 0, 512, 512);
-  for (let x = 0; x < 512; x += 32)
-    for (let y = 0; y < 512; y += 32) {
-      const g = ctx.createLinearGradient(x, y, x + 32, y + 32);
-      g.addColorStop(0, '#1d3a6e');
-      g.addColorStop(1, '#0a1630');
-      ctx.fillStyle = g;
-      ctx.fillRect(x + 2, y + 2, 28, 28);
-    }
-  return toTexture(c);
-}
-
 /** Soft radial sprite (glows, flares, particles). */
 export function makeRadialTexture(stops: [number, string][], size = 256) {
   const { c, ctx } = canvas(size, size);

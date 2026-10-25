@@ -6,8 +6,9 @@ import { mergeByMaterial } from './merge';
 import { makeShipSheet } from './shipTextures';
 import { bayBanner, furnishHangar } from './hangarKit';
 import { hullSkin } from './hullSkin';
-import { beam, makeWindowTexture, plating, truss } from './stationKit';
-import { makeRadialTexture, makeSolarTexture } from './textures';
+import { containerSkin, radiatorSkin, solarSkin } from './depotSkins';
+import { beam, makeWindowTexture, plating, STATION_TILE, truss } from './stationKit';
+import { makeRadialTexture } from './textures';
 
 interface Blinker {
   glow: Glow;
@@ -92,7 +93,8 @@ export class Station {
       color: 0xa4a8b0,
     });
     const strutMat = new THREE.MeshStandardMaterial({ color: 0x7d838a, metalness: 0.85, roughness: 0.45 });
-    const solarMat = new THREE.MeshStandardMaterial({ map: makeSolarTexture(), metalness: 0.9, roughness: 0.25, envMapIntensity: 1.4 });
+    const solarMat = solarSkin(9, STATION_TILE);
+    const radPanelMat = radiatorSkin(13);
     const radiatorMat = new THREE.MeshStandardMaterial({ color: 0xc9ccd0, metalness: 0.2, roughness: 0.7, side: THREE.DoubleSide });
     const glassMat = new THREE.MeshPhysicalMaterial({
       color: 0x0c1c28,
@@ -191,7 +193,7 @@ export class Station {
     for (const sgn of [-1, 1]) {
       for (let k = 0; k < 3; k++) {
         for (const g of truss(new THREE.Vector3(sgn * 44, 380 + k * 55, 0), new THREE.Vector3(sgn * 300, 380 + k * 55, 0), 6, 18, 0.7)) add(g, strutMat);
-        const panel = new THREE.BoxGeometry(220, 1.2, 48);
+        const panel = plating(new THREE.BoxGeometry(220, 1.2, 48), 220, 48);
         panel.rotateX(0.35);
         panel.translate(sgn * 200, 380 + k * 55, 0);
         add(panel, solarMat);
@@ -204,7 +206,7 @@ export class Station {
         const rad = new THREE.PlaneGeometry(180, 46);
         rad.rotateY(Math.PI / 2);
         rad.translate(0, y + 28, sgn * 140);
-        add(rad, radiatorMat);
+        add(rad, radPanelMat);
         for (let r = 0; r < 12; r++) {
           const rib = new THREE.BoxGeometry(1.2, 46, 1.2);
           rib.translate(0, y + 28, sgn * (54 + r * 15.6));
@@ -413,7 +415,7 @@ export class Station {
         }
       }
     }
-    const boxMat = new THREE.MeshStandardMaterial({ map: darkSheet.map, color: 0xffffff, metalness: 0.4, roughness: 0.6 });
+    const boxMat = containerSkin(5);
     const crates = new THREE.InstancedMesh(new THREE.BoxGeometry(12, 2.6, 2.6), boxMat, containers.length);
     const m4 = new THREE.Matrix4();
     containers.forEach((ct, i) => {
