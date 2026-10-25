@@ -88,8 +88,13 @@ uniform float uDetail;
 varying vec3 vRockPos;
 varying float vRockScale;
 ${NOISE_GLSL}
-float rockHeight(vec3 p){
-  return snoise(p*4.0)*0.5 + snoise(p*9.5)*0.25 + snoise(p*23.0)*0.12;
+// px: the object-space size of a pixel. Finer octaves (gravel, sharp
+// fractures) fade in only once they span a few pixels, so they never shimmer.
+float rockHeight(vec3 p, float px){
+  float h = snoise(p*4.0)*0.5 + snoise(p*9.5)*0.25 + snoise(p*23.0)*0.12;
+  h += snoise(p*55.0)*0.06 * (1.0 - smoothstep(0.004, 0.012, px));
+  h += (1.0 - abs(snoise(p*130.0)))*0.025 * (1.0 - smoothstep(0.0015, 0.005, px));
+  return h;
 }
 vec3 rockBump(vec3 surf_pos, vec3 surf_norm, float h, float faceDir){
   vec3 dpx = dFdx(surf_pos);
@@ -110,8 +115,12 @@ vec3 rockBump(vec3 surf_pos, vec3 surf_norm, float h, float faceDir){
         `#include <color_fragment>
 float rockH = 0.0;
 if (uDetail > 0.5) {
-  rockH = rockHeight(vRockPos);
-  diffuseColor.rgb *= 0.86 + 0.28 * (rockH * 0.5 + 0.5);
+  rockH = rockHeight(vRockPos, length(fwidth(vRockPos)));
+  // Space weathering: broad lighter and darker patches, a faint warm or
+  // cool tint, and the relief itself.
+  float patches = snoise(vRockPos*2.3 + 3.0)*0.5 + 0.5;
+  vec3 tint = mix(vec3(1.06, 0.98, 0.9), vec3(0.94, 0.98, 1.05), snoise(vRockPos*1.3 + 7.0)*0.5 + 0.5);
+  diffuseColor.rgb *= mix(0.78, 1.22, patches) * tint * (0.84 + 0.32 * (rockH * 0.5 + 0.5));
 }`,
       )
       .replace(
@@ -137,10 +146,10 @@ export class Asteroids {
 
   constructor(defs: AsteroidDef[], beltCenter: THREE.Vector3) {
     const mats: Record<RockFamily, THREE.MeshStandardMaterial> = {
-      carbon: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.96, metalness: 0, envMapIntensity: 0.25 }),
-      rubble: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, metalness: 0, envMapIntensity: 0.25 }),
-      silicate: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.86, metalness: 0.02, envMapIntensity: 0.3 }),
-      metal: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.42, metalness: 0.65, envMapIntensity: 0.7 }),
+      carbon: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.96, metalness: 0, envMapIntensity: 0.4 }),
+      rubble: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, metalness: 0, envMapIntensity: 0.4 }),
+      silicate: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.86, metalness: 0.02, envMapIntensity: 0.45 }),
+      metal: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0.65, envMapIntensity: 0.6 }),
     };
     for (const m of Object.values(mats)) addRockDetail(m, this.detail);
     for (const big of [false, true]) {

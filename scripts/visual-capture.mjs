@@ -136,6 +136,19 @@ await shot('11-asteroids', () => {
   const d = big.radius * 2.6;
   window.__place({ pos: [p.x + d * 0.7, p.y + d * 0.35, p.z + d * 0.6], target: [p.x, p.y, p.z], fov: 60 });
 });
+// Same rock, close, from the sunlit side and a little off the sun line so
+// the relief throws shadows.
+await shot('22-rock-close', () => {
+  const { g } = window.__shot;
+  const big = g.zone.asteroids.filter((a) => a.radius > 150).sort((a, b) => a.position.length() - b.position.length())[0];
+  const p = big.position;
+  const s = g.zone.sunDirection;
+  const d = big.radius * 2.3;
+  const side = [s.z, 0, -s.x];
+  const dir = [s.x + side[0] * 0.8, s.y + 0.25, s.z + side[2] * 0.8];
+  const n = Math.hypot(...dir);
+  window.__place({ pos: [p.x + (dir[0] / n) * d, p.y + (dir[1] / n) * d, p.z + (dir[2] / n) * d], target: [p.x, p.y, p.z], fov: 50 });
+});
 
 console.log(errors.length ? `errors: ${errors.join(' | ')}` : 'no page errors');
 await browser.close();
