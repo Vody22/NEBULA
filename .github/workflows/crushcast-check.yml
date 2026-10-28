@@ -19,6 +19,8 @@ jobs:
         run: |
           node --check crushcast-live/server.js
           node --check crushcast-live/app.js
+      - name: Verify real matching and safety API flow
+        run: node crushcast-live/tests/smoke.cjs
       - name: Start server and check health
         run: |
           PORT=33120 DATA_DIR=/tmp/crushcast-ci node crushcast-live/server.js > /tmp/crushcast-ci.log 2>&1 &
