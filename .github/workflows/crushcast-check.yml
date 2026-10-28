@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - crushcast-launch
+      - crushcast-v6
     paths:
       - 'crushcast-live/**'
       - '.github/workflows/crushcast-check.yml'
