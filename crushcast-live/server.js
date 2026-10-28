@@ -23,6 +23,7 @@ db.exec([
 "CREATE INDEX IF NOT EXISTS message_order ON messages(match,at);",
 "CREATE INDEX IF NOT EXISTS invite_order ON date_invites(match,at);"
 ].join('\n'));
+db.exec("CREATE TABLE IF NOT EXISTS conversation_reads(match_id TEXT NOT NULL REFERENCES matches(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,seen_at INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(match_id,user_id));");
 const limits=new Map(),id=()=>crypto.randomUUID(),now=()=>Date.now(),hash=v=>crypto.createHash('sha256').update(v).digest('hex');
 function rate(k,max,period){const t=now(),b=limits.get(k)||{n:0,until:0};if(b.until<t){b.n=0;b.until=t+period}b.n++;limits.set(k,b);return b.n<=max}
 setInterval(()=>{for(const [k,b]of limits)if(b.until<now())limits.delete(k);db.prepare('DELETE FROM sessions WHERE expires<?').run(now())},60000).unref();
@@ -37,6 +38,10 @@ function cookie(req){const c=(req.headers.cookie||'').split(';').find(s=>s.trim(
 function current(req){const raw=cookie(req);if(!/^[0-9a-f]{64}$/.test(raw))return null;const s=db.prepare('SELECT user_id FROM sessions WHERE hash=? AND expires>?').get(hash(raw),now());return s?db.prepare('SELECT * FROM users WHERE id=?').get(s.user_id):null}
 function profile(u){return {id:u.id,name:u.name,age:age(u.birth),city:u.city,bio:u.bio,interests:u.interests,intent:u.intent,avatar:u.avatar}}
 function me(u){return {...profile(u),email:u.email,birth:u.birth,paused:!!u.paused,shared:!!u.shared}}
+function interestList(t){return [...new Set(str(t||'',180).split(',').map(x=>x.trim().toLocaleLowerCase('fr')).filter(Boolean))].slice(0,8)}
+function commonInterests(a,b){const keys=new Set(interestList(b.interests));return interestList(a.interests).filter(x=>keys.has(x))}
+const unreadStmt=db.prepare('SELECT COUNT(*) AS n FROM messages WHERE match=? AND sender<>? AND at>COALESCE((SELECT seen_at FROM conversation_reads WHERE match_id=? AND user_id=?),0)');
+function unreadFor(matchId,userId){return unreadStmt.get(matchId,userId,matchId,userId).n}
 function login(res,u){const raw=crypto.randomBytes(32).toString('hex');db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(hash(raw),u.id,now()+1209600000);res.setHeader('Set-Cookie','cc_token='+raw+'; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=1209600')}
 function otherBlocked(a,b){return !!db.prepare('SELECT 1 FROM blocks WHERE (sender=? AND target=?) OR (sender=? AND target=?)').get(a,b,b,a)}
 function body(req){return new Promise((ok,no)=>{let s='';req.on('data',c=>{s+=c;if(s.length>8192){no(Error('Taille maximale dépassée'));req.destroy()}});req.on('end',()=>{try{ok(JSON.parse(s||'{}'))}catch{no(Error('JSON incorrect'))}});req.on('error',no)})}
@@ -85,8 +90,8 @@ function safeHtml(t){return String(t??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<
   const minAge=Math.min(100,Math.max(18,parseInt(query.get('minAge')||'18',10)||18));
   const maxAge=Math.min(100,Math.max(minAge,parseInt(query.get('maxAge')||'100',10)||100));
   const list=db.prepare('SELECT * FROM users WHERE id<>? AND paused=0 AND NOT EXISTS(SELECT 1 FROM blocks WHERE (sender=? AND target=users.id) OR (target=? AND sender=users.id)) AND NOT EXISTS(SELECT 1 FROM likes WHERE sender=? AND target=users.id) AND NOT EXISTS(SELECT 1 FROM passes WHERE sender=? AND target=users.id) ORDER BY created DESC LIMIT 500').all(u.id,u.id,u.id,u.id,u.id);
-  const users=(u.paused?[]:list.filter(x=>age(x.birth)>=minAge&&age(x.birth)<=maxAge&&(!city||x.city.toLowerCase().includes(city))&&(!interest||x.interests.toLowerCase().includes(interest)))).slice(0,50);
-  return respond(res,200,{users:users.map(profile)});
+  const users=(u.paused?[]:list.filter(x=>age(x.birth)>=minAge&&age(x.birth)<=maxAge&&(!city||x.city.toLowerCase().includes(city))&&(!interest||x.interests.toLowerCase().includes(interest)))).sort((a,b)=>commonInterests(u,b).length-commonInterests(u,a).length||b.created-a.created).slice(0,50);
+  return respond(res,200,{users:users.map(x=>({...profile(x),commonInterests:commonInterests(u,x)}))});
  }
  if(p==='/api/pass'&&m==='POST'){
   const target=str((await body(req)).id,50);
@@ -178,17 +183,26 @@ function safeHtml(t){return String(t??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<
  }
  if(p==='/api/matches'&&m==='GET'){
   const mm=db.prepare('SELECT * FROM matches WHERE a=? OR b=?').all(u.id,u.id);
-  return respond(res,200,{matches:mm.flatMap(x=>{const o=db.prepare('SELECT * FROM users WHERE id=?').get(x.a===u.id?x.b:x.a);return o&&!o.paused&&!otherBlocked(u.id,o.id)?[{id:x.id,person:profile(o)}]:[]})});
+  return respond(res,200,{matches:mm.flatMap(x=>{const o=db.prepare('SELECT * FROM users WHERE id=?').get(x.a===u.id?x.b:x.a);return o&&!o.paused&&!otherBlocked(u.id,o.id)?[{id:x.id,person:{...profile(o),commonInterests:commonInterests(u,o)},unread:unreadFor(x.id,u.id)}]:[]})});
  }
  if(p==='/api/messages'&&(m==='GET'||m==='POST')){
   const d=m==='POST'?await body(req):{},matchId=str(m==='GET'?url.searchParams.get('match'):d.match,50);
   const x=db.prepare('SELECT * FROM matches WHERE id=? AND (a=? OR b=?)').get(matchId,u.id,u.id);
   if(!x||otherBlocked(x.a,x.b))return err(res,403,'Conversation indisponible');
-  if(m==='GET')return respond(res,200,{messages:db.prepare('SELECT id,sender,text,at FROM messages WHERE match=? ORDER BY at DESC LIMIT 100').all(matchId).reverse()});
+  if(m==='GET'){
+    const messages=db.prepare('SELECT id,sender,text,at FROM messages WHERE match=? ORDER BY at DESC LIMIT 100').all(matchId).reverse();
+    db.prepare('INSERT INTO conversation_reads(match_id,user_id,seen_at) VALUES(?,?,?) ON CONFLICT(match_id,user_id) DO UPDATE SET seen_at=excluded.seen_at').run(matchId,u.id,now());
+    return respond(res,200,{messages});
+  }
   if(!rate(u.id+':msg',20,60000))return err(res,429,'Trop de messages');
   const msg=str(d.text,1000);if(!msg)return err(res,400,'Écris un message');
   db.prepare('INSERT INTO messages VALUES(?,?,?,?,?)').run(id(),matchId,u.id,msg,now());
   return respond(res,201,{ok:true});
+ }
+ if(p==='/api/unread'&&m==='GET'){
+  const mm=db.prepare('SELECT id,a,b FROM matches WHERE a=? OR b=?').all(u.id,u.id);
+  const byMatch={},total=mm.reduce((sum,x)=>{if(otherBlocked(x.a,x.b))return sum;const other=db.prepare('SELECT paused FROM users WHERE id=?').get(x.a===u.id?x.b:x.a);if(!other||other.paused)return sum;const unread=unreadFor(x.id,u.id);byMatch[x.id]=unread;return sum+unread},0);
+  return respond(res,200,{total,byMatch});
  }
  if(p==='/api/block'&&m==='POST'){
   const target=str((await body(req)).id,50);if(target===u.id||!db.prepare('SELECT 1 FROM users WHERE id=?').get(target))return err(res,400,'Profil invalide');
