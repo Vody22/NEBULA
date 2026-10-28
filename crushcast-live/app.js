@@ -36,7 +36,7 @@ function profileMeter(u){
  const percent=Math.round((complete/tasks.length)*100);
  $('#profile-pct').textContent=percent+'%';
  $('#profile-bar').style.width=percent+'%';
- $('#profile-advice').textContent=complete===5?'Ton profil est complet !':'Pour améliorer ton profil : '+tasks.find(t=>!t.done).tip+'.';
+ $('#profile-advice').textContent=complete===tasks.length?'Ton profil est complet !':'Pour améliorer ton profil : '+tasks.find(t=>!t.done).tip+'.';
 }
 async function updateUnread(){
  if(!state.user)return;
