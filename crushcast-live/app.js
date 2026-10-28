@@ -2,6 +2,7 @@
 const $=s=>document.querySelector(s);
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const state={user:null,tab:'register',page:'discover',matches:[],conversation:null,mode:'deck',discovered:[]};
+const casting={recorder:null,stream:null,chunks:[],url:null,blob:null,clock:null,timeout:null,start:0};
 async function api(route,method='GET',data){
  const r=await fetch('/api/'+route,{method,credentials:'same-origin',headers:{...(data?{'Content-Type':'application/json'}:{})},body:data?JSON.stringify(data):undefined});
  const d=await r.json().catch(()=>({error:'Réponse inconnue'}));if(!r.ok)throw Error(d.error||'Erreur réseau');return d;
@@ -48,10 +49,11 @@ function drawMe(){
  $('#p-avatar').value=u.avatar||'💜';$('#p-intent').value=u.intent||'Rencontrer quelqu’un';$('#p-paused').checked=!!u.paused;$('#p-shared').checked=!!u.shared;$('#p-prompt').value=u.prompt||'';$('#p-answer').value=u.answer||'';profileMeter(u);
 }
 function navigate(page){
+ if(state.page==='casting'&&page!=='casting')stopCasting();
  state.page=page;
  document.querySelectorAll('.page').forEach(e=>e.classList.toggle('hidden',e.id!=='page-'+page));
  document.querySelectorAll('[data-page]').forEach(e=>e.classList.toggle('active',e.dataset.page===page));
- $('#page-title').textContent={discover:'À découvrir',favorites:'Tes favoris',matches:'Tes matchs',messages:'Vos conversations',profile:'Ton profil'}[page];
+ $('#page-title').textContent={discover:'À découvrir',favorites:'Tes favoris',casting:'Ton casting vidéo',matches:'Tes matchs',messages:'Vos conversations',profile:'Ton profil'}[page];
  if(page==='discover')discover();if(page==='favorites')favorites();if(page==='matches')matches();if(page==='messages')chatPage();if(page==='messages'||page==='matches')updateUnread();if(page==='profile'){drawMe();blockedList();profileStats()}
 }
 function empty(icon,title,description){
@@ -248,6 +250,71 @@ $('#delete').addEventListener('click',async()=>{
  if(!confirm('Confirmer la suppression définitive ?'))return;
  try{await api('delete','DELETE');leave()}catch(e){flash(e.message,true)}
 });
+
+
+function castingStatus(t){$('#casting-status').textContent=t}
+function castingClock(){
+ const remain=Math.max(0,15-Math.floor((Date.now()-casting.start)/1000));
+ $('#casting-time').textContent='00:'+String(remain).padStart(2,'0');
+}
+function stopCasting(){
+ clearInterval(casting.clock);clearTimeout(casting.timeout);
+ if(casting.recorder?.state==='recording')casting.recorder.stop();
+ if(casting.stream){casting.stream.getTracks().forEach(t=>t.stop());casting.stream=null}
+ $('#casting-live').srcObject=null;
+ $('#casting-live').classList.add('hidden');
+ $('#casting-stop').classList.add('hidden');
+ $('#casting-start').disabled=false;
+}
+async function startCasting(){
+ if(!navigator.mediaDevices?.getUserMedia||!window.MediaRecorder){castingStatus('Ton navigateur ne permet pas cet enregistrement. Essaie Chrome, Firefox ou Safari à jour.');return}
+ stopCasting();
+ if(casting.url){URL.revokeObjectURL(casting.url);casting.url=null}
+ casting.blob=null;casting.chunks=[];
+ $('#casting-result').classList.add('hidden');$('#casting-result').removeAttribute('src');
+ $('#casting-download').classList.add('hidden');$('#casting-share').classList.add('hidden');
+ try{
+  const stream=await navigator.mediaDevices.getUserMedia({audio:true,video:{facingMode:'user',width:{ideal:720},height:{ideal:1280}}});
+  casting.stream=stream;
+  const mime=['video/webm;codecs=vp8,opus','video/webm','video/mp4'].find(x=>MediaRecorder.isTypeSupported(x));
+  const recorder=new MediaRecorder(stream,mime?{mimeType:mime}:{});
+  casting.recorder=recorder;
+  recorder.ondataavailable=e=>{if(e.data?.size)casting.chunks.push(e.data)};
+  recorder.onerror=()=>{castingStatus('Enregistrement interrompu. Réessaie.');stopCasting()};
+  recorder.onstop=()=>{
+   if(casting.recorder!==recorder)return;
+   const blob=new Blob(casting.chunks,{type:recorder.mimeType||'video/webm'});
+   casting.chunks=[];stopCasting();
+   if(!blob.size){castingStatus('Aucune vidéo enregistrée. Réessaie.');return}
+   casting.blob=blob;casting.url=URL.createObjectURL(blob);
+   const result=$('#casting-result');result.src=casting.url;result.classList.remove('hidden');
+   $('#casting-placeholder').classList.add('hidden');
+   const extension=blob.type.includes('mp4')?'mp4':'webm';
+   const dl=$('#casting-download');dl.href=casting.url;dl.download='crushcast-casting.'+extension;dl.classList.remove('hidden');
+   $('#casting-share').classList.remove('hidden');
+   castingStatus('Vidéo prête ! Télécharge-la ou partage-la volontairement. Elle reste sur ton appareil.');
+  };
+  $('#casting-placeholder').classList.add('hidden');$('#casting-live').classList.remove('hidden');$('#casting-live').srcObject=stream;
+  $('#casting-start').disabled=true;$('#casting-stop').classList.remove('hidden');
+  recorder.start(300);casting.start=Date.now();castingClock();
+  casting.clock=setInterval(castingClock,200);casting.timeout=setTimeout(stopCasting,15000);
+  castingStatus('Enregistrement en cours. La vidéo s’arrêtera après 15 secondes.');
+ }catch(e){
+  stopCasting();$('#casting-placeholder').classList.remove('hidden');
+  castingStatus(e.name==='NotAllowedError'?'Autorisation caméra ou micro refusée. Tu peux la modifier dans les réglages du navigateur.':'Caméra indisponible. Vérifie les autorisations et réessaie.');
+ }
+}
+$('#casting-start').addEventListener('click',startCasting);
+$('#casting-stop').addEventListener('click',stopCasting);
+$('#casting-share').addEventListener('click',async()=>{
+ if(!casting.blob)return;
+ const ext=casting.blob.type.includes('mp4')?'mp4':'webm';
+ const file=new File([casting.blob],'crushcast-casting.'+ext,{type:casting.blob.type});
+ try{if(navigator.canShare?.({files:[file]})){await navigator.share({files:[file],title:'Mon casting CRUSHCAST'})}
+ else castingStatus('Le partage direct n’est pas disponible ici. Télécharge la vidéo puis importe-la dans l’application de ton choix.')}
+ catch(e){if(e.name!=='AbortError')castingStatus('Partage impossible. Tu peux télécharger le fichier à la place.')}
+});
+window.addEventListener('pagehide',()=>{stopCasting();if(casting.url)URL.revokeObjectURL(casting.url)});
 
 /* Swipe is an alternative to the accessible Like / Pass buttons. */
 $('#view-deck').addEventListener('click',()=>{state.mode='deck';renderDiscovery()});
