@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - crushcast-launch
+      - crushcast-v9
       - crushcast-v8
       - crushcast-v7
       - crushcast-v6

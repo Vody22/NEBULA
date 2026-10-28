@@ -3,6 +3,7 @@ const $=s=>document.querySelector(s);
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const state={user:null,tab:'register',page:'discover',matches:[],conversation:null,mode:'deck',discovered:[]};
 const casting={recorder:null,stream:null,chunks:[],url:null,blob:null,clock:null,timeout:null,start:0};
+let chatMessages=[];
 async function api(route,method='GET',data){
  const r=await fetch('/api/'+route,{method,credentials:'same-origin',headers:{...(data?{'Content-Type':'application/json'}:{})},body:data?JSON.stringify(data):undefined});
  const d=await r.json().catch(()=>({error:'Réponse inconnue'}));if(!r.ok)throw Error(d.error||'Erreur réseau');return d;
@@ -115,24 +116,40 @@ async function matches(){
 async function chatPage(){
  try{state.matches=(await api('matches')).matches;const box=$('#chat-matches');
  box.innerHTML=state.matches.length?state.matches.map(m=>'<button data-chat="'+esc(m.id)+'" class="'+(state.conversation===m.id?'active':'')+'">♡ '+esc(m.person.name)+(m.unread?' <span class="unread-bubble">'+m.unread+'</span>':'')+'</button>').join(''):'<p class="subhead">Aucun match pour le moment.</p>';
- if(state.conversation&&!state.matches.some(x=>x.id===state.conversation)){state.conversation=null;$('#chat-thread').innerHTML='';$('#chat-form').classList.add('hidden');$('#chat-actions').classList.add('hidden');$('#icebreakers').classList.add('hidden');$('#date-area').classList.add('hidden')}
+ if(state.conversation&&!state.matches.some(x=>x.id===state.conversation)){state.conversation=null;chatMessages=[];$('#chat-thread').innerHTML='';$('#chat-form').classList.add('hidden');$('#chat-actions').classList.add('hidden');$('#icebreakers').classList.add('hidden');$('#chat-search-panel').classList.add('hidden');$('#chat-reactions').classList.add('hidden');$('#date-area').classList.add('hidden')}
  if(state.conversation){await conversation();await loadDateInvites();}
  }catch(e){flash(e.message,true)}
 }
 async function selectChat(id){
+ if(state.conversation!==id){chatMessages=[];$('#chat-search').value='';}
  state.conversation=id;navigate('messages');
 }
+function renderChat(){
+ const thread=$('#chat-thread'),query=$('#chat-search').value.trim().toLocaleLowerCase('fr');
+ const showing=query?chatMessages.filter(m=>m.text.toLocaleLowerCase('fr').includes(query)):chatMessages;
+ const atEnd=thread.scrollHeight-thread.scrollTop-thread.clientHeight<55;
+ const formatTime=timestamp=>{
+  const d=new Date(timestamp);
+  return Number.isFinite(d.getTime())?new Intl.DateTimeFormat('fr-FR',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}).format(d):'';
+ };
+ thread.innerHTML=showing.length?showing.map(m=>{
+  const own=m.sender===state.user.id;
+  return '<div class="message-line '+(own?'own':'')+'"><div class="bubble '+(own?'me':'')+'">'+esc(m.text)+'</div><div class="message-meta"><time>'+esc(formatTime(m.at))+'</time><button type="button" class="message-action" data-copymsg="'+esc(m.id)+'" aria-label="Copier ce message">Copier</button>'+(own?'<button type="button" class="message-action danger" data-delmsg="'+esc(m.id)+'" aria-label="Supprimer ce message pour les deux personnes">Supprimer</button>':'')+'</div></div>';
+ }).join(''):(query?empty('⌕','Aucun résultat','Essaie un autre mot parmi les 100 derniers messages.'):empty('✉','Dis bonjour !','La conversation commence ici.'));
+ $('#chat-search-count').textContent=query?showing.length+' message'+(showing.length>1?'s':'')+' trouvé'+(showing.length>1?'s':'')+' parmi les '+chatMessages.length+' chargés':'Recherche parmi les '+chatMessages.length+' dernier'+(chatMessages.length>1?'s':'')+' message'+(chatMessages.length>1?'s':'')+' chargé'+(chatMessages.length>1?'s':'');
+ if(atEnd&&!query)thread.scrollTop=thread.scrollHeight;
+}
 async function conversation(){
- const m=state.matches.find(x=>x.id===state.conversation);if(!m)return;
+ const matchId=state.conversation;
+ const m=state.matches.find(x=>x.id===matchId);if(!m)return;
  $('#chat-heading').textContent='♥ Discussion avec '+m.person.name;
- $('#chat-form').classList.remove('hidden');$('#date-area').classList.remove('hidden');$('#chat-actions').classList.remove('hidden');$('#icebreakers').classList.remove('hidden');
- document.querySelectorAll('[data-chat]').forEach(x=>x.classList.toggle('active',x.dataset.chat===state.conversation));
+ $('#chat-form').classList.remove('hidden');$('#date-area').classList.remove('hidden');$('#chat-actions').classList.remove('hidden');$('#icebreakers').classList.remove('hidden');$('#chat-search-panel').classList.remove('hidden');$('#chat-reactions').classList.remove('hidden');
+ document.querySelectorAll('[data-chat]').forEach(x=>x.classList.toggle('active',x.dataset.chat===matchId));
  try{
-  const {messages}=await api('messages?match='+encodeURIComponent(state.conversation));
-  const thread=$('#chat-thread');const atEnd=thread.scrollHeight-thread.scrollTop-thread.clientHeight<55;
-  thread.innerHTML=messages.length?messages.map(x=>'<div class="bubble '+(x.sender===state.user.id?'me':'')+'">'+esc(x.text)+'</div>').join(''):empty('✉','Dis bonjour !','La conversation commence ici.');
-  if(atEnd)thread.scrollTop=thread.scrollHeight;updateUnread();
- }catch(e){flash(e.message,true)}
+  const {messages}=await api('messages?match='+encodeURIComponent(matchId));
+  if(state.conversation!==matchId||state.page!=='messages')return;
+  chatMessages=messages;renderChat();updateUnread();
+ }catch(e){if(state.conversation===matchId)flash(e.message,true)}
 }
 async function block(id){
  if(!confirm('Bloquer cette personne et supprimer un éventuel match ?'))return;
@@ -320,6 +337,8 @@ document.addEventListener('click',e=>{
  if(b.dataset.block)block(b.dataset.block);
  if(b.dataset.report)report(b.dataset.report);
  if(b.dataset.chat)selectChat(b.dataset.chat);
+ if(b.dataset.copymsg)copyMessage(b.dataset.copymsg);
+ if(b.dataset.delmsg)deleteMessage(b.dataset.delmsg);
 });
 
 $('#report-chat').addEventListener('click',()=>{
@@ -349,6 +368,34 @@ $('#profile-form').addEventListener('submit',async e=>{
   state.user=d.user;drawMe();flash('Profil enregistré !');
  }catch(ex){flash(ex.message,true)}
 });
+
+async function copyMessage(id){
+ const msg=chatMessages.find(x=>x.id===id);
+ if(!msg)return;
+ try{await navigator.clipboard.writeText(msg.text);flash('Message copié.')}catch{prompt('Copie ton message :',msg.text)}
+}
+async function deleteMessage(id){
+ const msg=chatMessages.find(x=>x.id===id),matchId=state.conversation;
+ if(!msg||msg.sender!==state.user.id||!matchId)return;
+ if(!confirm('Supprimer ce message de cette conversation pour les deux personnes ?'))return;
+ try{
+  await api('messages/delete','POST',{match:matchId,id});
+  chatMessages=chatMessages.filter(x=>x.id!==id);
+  renderChat();flash('Message supprimé de la conversation.');
+ }catch(e){flash(e.message,true)}
+}
+$('#chat-search').addEventListener('input',renderChat);
+$('#chat-search-clear').addEventListener('click',()=>{
+ $('#chat-search').value='';renderChat();$('#chat-search').focus();
+});
+document.querySelectorAll('[data-reaction]').forEach(b=>b.addEventListener('click',()=>{
+ if(!state.conversation)return;
+ const input=$('#chat-input'),emoji=b.dataset.reaction;
+ if(input.value.length+emoji.length>1000)return;
+ input.value+=(input.value?' ':'')+emoji;
+ input.focus();
+}));
+
 $('#chat-form').addEventListener('submit',async e=>{
  e.preventDefault();const input=$('#chat-input'),text=input.value.trim();if(!text||!state.conversation)return;
  try{await api('messages','POST',{match:state.conversation,text});input.value='';conversation()}catch(ex){flash(ex.message,true)}

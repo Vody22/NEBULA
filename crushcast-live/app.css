@@ -560,3 +560,34 @@ footer strong{color:#f9d8e6;letter-spacing:-.04em}
  .report-modal-top h2{font-size:25px}
  .report-actions{display:grid;grid-template-columns:1fr}
 }
+
+/* CRUSHCAST V9 — readable, searchable, controllable chat */
+.chat-search-panel{padding:14px 17px 12px;border-bottom:1px solid var(--line);background:#241b30}
+.chat-search-label{display:block;margin:0 0 7px;color:#d1b8d3;font-size:11px;font-weight:750}
+.chat-search-bar{display:flex;gap:10px;align-items:center}
+.chat-search-bar>span{font-size:25px;color:#f2a0c3;line-height:1}
+.chat-search-bar input{margin:0;background:#151020;border:1px solid #ffffff2c;border-radius:11px;min-width:0;flex:1;font-size:13px;padding:11px 13px}
+.chat-search-bar .soft-button{background:#ffffff12;padding:10px 14px;white-space:nowrap}
+.chat-search-count{display:block;color:#a99bb4;font-size:11px;margin-top:7px}
+.chat-reactions{padding:10px 15px;display:flex;align-items:center;flex-wrap:wrap;gap:7px;border-top:1px solid #ffffff1c;background:#221a2f}
+.chat-reactions>span{font-size:11px;color:#c0adc8;margin-right:5px}
+.chat-reactions button{font-size:20px;border-radius:11px;background:#ffffff0c;border:1px solid #ffffff1d;padding:5px 9px;transition:transform .15s ease,background .15s ease}
+.chat-reactions button:hover{transform:translateY(-2px);background:#ffffff1c}
+.chat-thread{gap:12px}
+.message-line{max-width:82%;display:flex;flex-direction:column;align-items:flex-start;gap:5px;align-self:flex-start}
+.message-line.own{align-self:flex-end;align-items:flex-end}
+.message-line .bubble{max-width:100%;white-space:pre-wrap}
+.message-meta{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:0 4px}
+.message-meta time{font-size:10px;color:#9586a3}
+.message-action{border:0;background:transparent;color:#c3a5c9;padding:2px 4px;font-size:10px;font-weight:650}
+.message-action:hover{text-decoration:underline;color:#ffd4e8}
+.message-action.danger{color:#fca0b1}
+.chat-thread .empty{width:100%;max-width:none;margin:auto 0}
+:root[data-theme="light"] .chat-search-panel,:root[data-theme="light"] .chat-reactions{background:#fff;border-color:#ead9e8}
+:root[data-theme="light"] .chat-search-label,:root[data-theme="light"] .chat-reactions>span{color:#68516e}
+:root[data-theme="light"] .chat-search-bar input{background:#fff9fe;color:#3d2946;border-color:#e2cfdf}
+:root[data-theme="light"] .chat-reactions button{background:#f5e9f3;border-color:#e8d4e3}
+:root[data-theme="light"] .message-meta time{color:#806b87}
+:root[data-theme="light"] .message-action{color:#9d5586}
+:root[data-theme="light"] .message-action.danger{color:#b83d62}
+@media(max-width:700px){.chat-search-panel{padding:10px}.chat-search-bar{gap:6px}.chat-search-bar .soft-button{padding:9px 10px;font-size:11px}.chat-search-bar input{font-size:12px;padding:10px}.message-line{max-width:93%}.chat-reactions{padding:8px 10px}.message-meta{gap:5px}}

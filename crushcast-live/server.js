@@ -223,6 +223,17 @@ function safeHtml(t){return String(t??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<
   db.prepare('INSERT INTO messages VALUES(?,?,?,?,?)').run(id(),matchId,u.id,msg,now());
   return respond(res,201,{ok:true});
  }
+ if(p==='/api/messages/delete'&&m==='POST'){
+  if(!rate(u.id+':delete-msg',30,60000))return err(res,429,'Trop de suppressions');
+  const d=await body(req),messageId=str(d.id,50),matchId=str(d.match,50);
+  const x=db.prepare('SELECT * FROM matches WHERE id=? AND (a=? OR b=?)').get(matchId,u.id,u.id);
+  if(!x||otherBlocked(x.a,x.b))return err(res,403,'Conversation indisponible');
+  const msg=db.prepare('SELECT id,sender FROM messages WHERE id=? AND match=?').get(messageId,matchId);
+  if(!msg)return err(res,404,'Message introuvable');
+  if(msg.sender!==u.id)return err(res,403,'Tu peux supprimer uniquement tes messages');
+  db.prepare('DELETE FROM messages WHERE id=? AND match=? AND sender=?').run(messageId,matchId,u.id);
+  return respond(res,200,{ok:true});
+ }
  if(p==='/api/unread'&&m==='GET'){
   const mm=db.prepare('SELECT id,a,b FROM matches WHERE a=? OR b=?').all(u.id,u.id);
   const byMatch={},total=mm.reduce((sum,x)=>{if(otherBlocked(x.a,x.b))return sum;const other=db.prepare('SELECT paused FROM users WHERE id=?').get(x.a===u.id?x.b:x.a);if(!other||other.paused)return sum;const unread=unreadFor(x.id,u.id);byMatch[x.id]=unread;return sum+unread},0);
@@ -252,7 +263,11 @@ function safeHtml(t){return String(t??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<
   if(duplicate)return respond(res,200,{ok:true,duplicate:true,moderationAvailable:false});
   db.prepare('INSERT INTO reports VALUES(?,?,?,?,?)').run(id(),u.id,target,reason,now());return respond(res,201,{ok:true,moderationAvailable:false});
  }
- if(p==='/api/export'&&m==='GET')return respond(res,200,{profile:me(u),messages:db.prepare('SELECT id,match,sender,text,at FROM messages WHERE sender=?').all(u.id),likes:db.prepare('SELECT target FROM likes WHERE sender=?').all(u.id),favorites:db.prepare('SELECT target FROM favorites WHERE sender=?').all(u.id),blocks:db.prepare('SELECT target FROM blocks WHERE sender=?').all(u.id),dateInvites:db.prepare('SELECT * FROM date_invites WHERE sender=?').all(u.id),reports:db.prepare('SELECT id,target,reason,at FROM reports WHERE sender=?').all(u.id)});
+ if(p==='/api/export'&&m==='GET'){
+  const allowedMatches=db.prepare('SELECT id FROM matches WHERE a=? OR b=?').all(u.id,u.id).map(x=>x.id);
+  const messages=allowedMatches.flatMap(mid=>db.prepare('SELECT id,match,sender,text,at FROM messages WHERE match=? ORDER BY at').all(mid));
+  return respond(res,200,{exportedAt:new Date().toISOString(),temporaryStorage:true,profile:me(u),messages,likes:db.prepare('SELECT target FROM likes WHERE sender=?').all(u.id),favorites:db.prepare('SELECT target FROM favorites WHERE sender=?').all(u.id),blocks:db.prepare('SELECT target FROM blocks WHERE sender=?').all(u.id),dateInvites:db.prepare('SELECT * FROM date_invites WHERE match IN (SELECT id FROM matches WHERE a=? OR b=?)').all(u.id,u.id),reports:db.prepare('SELECT id,target,reason,at FROM reports WHERE sender=?').all(u.id)});
+ }
  if(p==='/api/delete'&&m==='DELETE'){db.prepare('DELETE FROM users WHERE id=?').run(u.id);res.setHeader('Set-Cookie','cc_token=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0');return respond(res,200,{ok:true})}
  return err(res,404,'Action inconnue');
  }catch(e){console.error('CRUSHCAST',e.message);if(!res.writableEnded)err(res,400,'Impossible de traiter la requête')}
