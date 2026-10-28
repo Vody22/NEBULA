@@ -43,10 +43,16 @@ async function updateUnread(){
  if(!state.user)return;
  try{const d=await api('unread');const el=$('#unread-pill');el.textContent=d.total>99?'99+':String(d.total);el.classList.toggle('hidden',!d.total);document.querySelectorAll('#bottom-nav [data-page="messages"]').forEach(b=>b.classList.toggle('has-notification',d.total>0));document.title=d.total?'('+d.total+') CRUSHCAST — Rencontres':'CRUSHCAST — Les rencontres autrement';}catch{}
 }
+function updateOnboarding(){
+ const banner=$('#onboarding-banner');
+ if(!state.user){banner.classList.add('hidden');return}
+ const u=state.user;
+ banner.classList.toggle('hidden',(u.bio||'').trim().length>=20&&(u.interests||'').trim().length>=3);
+}
 function drawMe(){
  const u=state.user;$('#miniuser').innerHTML='<span class="avatar">'+esc(u.avatar)+'</span><span><b>'+esc(u.name)+'</b><br><small>'+esc(u.city)+'</small></span>';
  $('#p-name').value=u.name;$('#p-city').value=u.city;$('#p-bio').value=u.bio||'';$('#p-interests').value=u.interests||'';
- $('#quick-profile').textContent=u.avatar||'💜';$('#p-avatar').value=u.avatar||'💜';$('#p-intent').value=u.intent||'Rencontrer quelqu’un';$('#p-paused').checked=!!u.paused;$('#p-shared').checked=!!u.shared;$('#p-prompt').value=u.prompt||'';$('#p-answer').value=u.answer||'';profileMeter(u);
+ $('#quick-profile').textContent=u.avatar||'💜';$('#p-avatar').value=u.avatar||'💜';$('#p-intent').value=u.intent||'Rencontrer quelqu’un';$('#p-paused').checked=!!u.paused;$('#p-shared').checked=!!u.shared;$('#p-prompt').value=u.prompt||'';$('#p-answer').value=u.answer||'';profileMeter(u);updateOnboarding();
 }
 function navigate(page){
  if(state.page==='casting'&&page!=='casting')stopCasting();
@@ -234,6 +240,22 @@ $('#hero-start').addEventListener('click',()=>{
  $('#join').scrollIntoView({behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth',block:'center'});
  $('#email').focus({preventScroll:true});
 });
+$('#onboarding-profile').addEventListener('click',()=>navigate('profile'));
+$('#invite-friends').addEventListener('click',async()=>{
+ const message='Découvre CRUSHCAST, les rencontres gratuites entre adultes. C’est encore une bêta expérimentale : '+location.origin;
+ try{
+  if(navigator.share){await navigator.share({title:'CRUSHCAST — Rencontres gratuites',text:message,url:location.origin})}
+  else if(navigator.clipboard){await navigator.clipboard.writeText(message);flash('Lien de CRUSHCAST copié. Partage-le avec les personnes de ton choix.')}
+  else prompt('Copie le lien pour inviter des personnes :',location.origin);
+ }catch(e){if(e.name!=='AbortError')flash('Partage impossible pour le moment.',true)}
+});
+function updateNetwork(){
+ const offline=!navigator.onLine;
+ $('#network-status').classList.toggle('hidden',!offline);
+}
+window.addEventListener('online',updateNetwork);
+window.addEventListener('offline',updateNetwork);
+updateNetwork();
 $('#quick-profile').addEventListener('click',()=>navigate('profile'));
 $('#bottom-nav').addEventListener('click',e=>{
  const btn=e.target.closest('[data-page]');
