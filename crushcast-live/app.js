@@ -20,7 +20,7 @@ function authTab(which){
  $('#password').autocomplete=which==='register'?'new-password':'current-password';$('#auth-error').textContent='';
 }
 async function enter(u){
- state.user=u;$('#welcome').classList.add('hidden');$('#app').classList.remove('hidden');drawMe();updateUnread();
+ state.user=u;$('#welcome').classList.add('hidden');$('#app').classList.remove('hidden');drawMe();updateUnread();updateReceivedBadge();
  navigate('discover');
 }
 function leave(){state.user=null;state.conversation=null;document.title='CRUSHCAST — Les rencontres autrement';$('#app').classList.add('hidden');$('#welcome').classList.remove('hidden');$('#auth-form').reset();authTab('register')}
@@ -53,8 +53,8 @@ function navigate(page){
  state.page=page;
  document.querySelectorAll('.page').forEach(e=>e.classList.toggle('hidden',e.id!=='page-'+page));
  document.querySelectorAll('[data-page]').forEach(e=>e.classList.toggle('active',e.dataset.page===page));
- $('#page-title').textContent={discover:'À découvrir',favorites:'Tes favoris',casting:'Ton casting vidéo',matches:'Tes matchs',messages:'Vos conversations',profile:'Ton profil'}[page];
- if(page==='discover')discover();if(page==='favorites')favorites();if(page==='matches')matches();if(page==='messages')chatPage();if(page==='messages'||page==='matches')updateUnread();if(page==='profile'){drawMe();blockedList();profileStats()}
+ $('#page-title').textContent={discover:'À découvrir',favorites:'Tes favoris',received:'Qui m’a liké',casting:'Ton casting vidéo',matches:'Tes matchs',messages:'Vos conversations',profile:'Ton profil',safety:'Confidentialité'}[page];
+ if(page==='discover')discover();if(page==='favorites')favorites();if(page==='received')receivedLikes();if(page==='safety')myReports();if(page==='matches')matches();if(page==='messages')chatPage();if(page==='messages'||page==='matches')updateUnread();if(page==='profile'){drawMe();blockedList();profileStats()}
 }
 function empty(icon,title,description){
  return '<div class="empty"><div class="empty-icon">'+icon+'</div><h3>'+esc(title)+'</h3><p>'+esc(description)+'</p></div>';
@@ -95,7 +95,7 @@ async function profileStats(){
  catch{$('#profile-stats').textContent='Statistiques indisponibles pour le moment.'}
 }
 async function like(target){
- try{const d=await api('like','POST',{id:target});flash(d.matched?'C’est un match ! Vous pouvez discuter. 💖':'Like envoyé ♡');discover();}
+ try{const d=await api('like','POST',{id:target});flash(d.matched?'C’est un match ! Vous pouvez discuter. 💖':'Like envoyé ♡');updateReceivedBadge();if(d.matched)navigate('matches');else if(state.page==='received')receivedLikes();else if(state.page==='favorites')favorites();else discover();}
  catch(e){flash(e.message,true)}
 }
 async function matches(){
@@ -134,7 +134,34 @@ async function block(id){
 async function report(id){
  const reason=prompt('Pourquoi signaler cette personne ? (harcèlement, faux profil, spam…)');
  if(!reason||!reason.trim())return;
- try{await api('report','POST',{id,reason});flash('Signalement enregistré. Tu peux aussi bloquer ce profil.')}catch(e){flash(e.message,true)}
+ try{const d=await api('report','POST',{id,reason});flash((d.duplicate?'Signalement déjà enregistré. ':'Signalement enregistré. ')+'Il n’y a pas encore de modération humaine active ; bloque ce profil si nécessaire.',true);if(state.page==='safety')myReports()}catch(e){flash(e.message,true)}
+}
+
+
+async function updateReceivedBadge(){
+ if(!state.user)return;
+ try{
+  const {users}=await api('likes-received');
+  const badge=$('#received-badge');
+  badge.textContent=users.length>99?'99+':String(users.length);
+  badge.classList.toggle('hidden',!users.length);
+ }catch{}
+}
+async function receivedLikes(){
+ const root=$('#received-list');root.innerHTML=empty('♡','Recherche des likes reçus…','');
+ try{
+  const {users}=await api('likes-received');
+  root.innerHTML=users.length?users.map(personCard).join(''):empty('♡','Pas encore de like reçu','Dès que quelqu’un aura liké ton profil, il apparaîtra ici gratuitement.');
+  const badge=$('#received-badge');badge.textContent=String(Math.min(users.length,99));badge.classList.toggle('hidden',!users.length);
+ }catch(e){root.innerHTML=empty('⚠','Impossible de charger les likes',e.message)}
+}
+async function myReports(){
+ const root=$('#my-reports');
+ root.textContent='Chargement…';
+ try{
+  const {reports}=await api('reports/mine');
+  root.innerHTML=reports.length?reports.map(r=>'<div class="report-entry"><strong>'+esc(r.targetName)+'</strong><small>'+new Date(r.at).toLocaleDateString('fr-FR')+' · Enregistré, non examiné</small><p>'+esc(r.reason)+'</p></div>').join(''):'<p class="subhead">Tu n’as pas encore envoyé de signalement.</p>';
+ }catch(e){root.textContent='Impossible de charger les signalements : '+e.message}
 }
 
 async function favorites(){
@@ -145,7 +172,7 @@ async function favorite(id){
  try{const d=await api('favorites','POST',{id});flash(d.favorited?'Profil ajouté aux favoris ☆':'Profil retiré des favoris');if(state.page==='favorites')favorites()}catch(e){flash(e.message,true)}
 }
 async function pass(id){
- try{await api('pass','POST',{id});flash('Profil passé');if(state.page==='favorites')favorites();else discover()}catch(e){flash(e.message,true)}
+ try{await api('pass','POST',{id});flash('Profil passé');if(state.page==='received')receivedLikes();else if(state.page==='favorites')favorites();else discover()}catch(e){flash(e.message,true)}
 }
 async function unmatch(id){
  if(!confirm('Annuler ce match et effacer votre conversation ?'))return;
@@ -209,6 +236,14 @@ document.querySelectorAll('[data-icebreaker]').forEach(btn=>btn.addEventListener
  if(!state.conversation)return;$('#chat-input').value=btn.dataset.icebreaker;$('#chat-input').focus();
 }));
 
+$('#reset-passes').addEventListener('click',async()=>{
+ if(!confirm('Revoir les profils que tu as précédemment passés ?'))return;
+ try{await api('passes/reset','POST');flash('Les profils passés sont de nouveau disponibles.');discover()}catch(e){flash(e.message,true)}
+});
+$('#logout-others').addEventListener('click',async()=>{
+ if(!confirm('Déconnecter toutes tes autres sessions CRUSHCAST ?'))return;
+ try{await api('sessions/close-other','POST');flash('Toutes tes autres sessions ont été déconnectées.')}catch(e){flash(e.message,true)}
+});
 $('#refresh').addEventListener('click',()=>navigate(state.page));
 $('#logout').addEventListener('click',async()=>{await api('logout','POST').catch(()=>{});leave()});
 $('#profile-form').addEventListener('submit',async e=>{
@@ -367,5 +402,5 @@ $('#install-app').addEventListener('click',async()=>{
 });
 if('serviceWorker' in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('/sw.js').catch(()=>{}));
 
-setInterval(()=>{if(!state.user||document.visibilityState==='hidden')return;if(state.page==='messages'&&state.conversation)conversation();updateUnread()},12000);
+setInterval(()=>{if(!state.user||document.visibilityState==='hidden')return;if(state.page==='messages'&&state.conversation)conversation();updateUnread();updateReceivedBadge()},12000);
 (async()=>{try{const d=await api('me');enter(d.user)}catch{leave()}})();
