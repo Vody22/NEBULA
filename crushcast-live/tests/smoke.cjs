@@ -41,6 +41,18 @@ const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
   const manifest=await fetch(url+'/manifest.webmanifest');assert.equal(manifest.status,200);
   assert.equal((await manifest.json()).name,'CRUSHCAST — Rencontres gratuites');
   assert.equal((await fetch(url+'/sw.js')).status,200);
+  const home=await fetch(url+'/');
+  assert.equal(home.status,200);
+  const homeHtml=await home.text();
+  assert.ok(homeHtml.includes('id="casting-start"'),'Casting UI must be present');
+  assert.ok(homeHtml.includes('id="view-deck"'),'Swipe cards UI must be present');
+  assert.ok(homeHtml.includes('id="accept-terms"'),'Signup consent UI must be present');
+  const jsAsset=await fetch(url+'/app.js');
+  assert.equal(jsAsset.status,200);
+  assert.ok((await jsAsset.text()).includes('startCasting'),'Casting recorder must be available');
+  const mediaResponse=await fetch(url+'/');
+  assert.ok(mediaResponse.headers.get('content-security-policy').includes("media-src 'self' blob:"),'Blob preview is scoped by CSP');
+
   assert.equal((await request('/api/like','POST',{id:bid},ac)).body.matched,false);
   assert.equal((await request('/api/like','POST',{id:aid},bc)).body.matched,true);
   const matches=await request('/api/matches','GET',null,ac),id=matches.body.matches[0].id;
