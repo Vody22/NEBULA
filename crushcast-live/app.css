@@ -25,3 +25,23 @@
 .blocked-entry:last-child{border:0}
 @media(max-width:1040px){.filter-form{grid-template-columns:repeat(3,minmax(0,1fr))}.filter-form label:first-child{grid-column:span 2}}
 @media(max-width:600px){.filter-form{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.filter-form label:first-child{grid-column:span 2}.filter-form button{width:100%;height:auto;min-height:40px}.date-area{max-height:330px}.match-row{flex-wrap:wrap}.match-row .grow{min-width:40%}.match-row .primary-button{font-size:12px}.person-actions .minor{flex:0 0 29px}.person-actions button{font-size:11px}.settings-extra{padding:16px}}
+
+
+/* CRUSHCAST V5 — points communs, messages non lus, profil et échanges */
+.relevance-note{color:#cbb6d8;font-size:12px;margin:0 0 18px}
+.compatibility{display:block;margin-top:10px;padding:8px 10px;background:#ab549426;border:1px solid #ff87bd45;border-radius:9px;color:#ffcae2;font-size:11px;line-height:1.5;word-break:break-word}
+.unread-pill,.unread-bubble{display:inline-grid;place-items:center;min-width:22px;height:22px;border-radius:18px;background:#f569a4;color:#fff;font-size:11px;font-weight:800;margin-left:6px;padding:0 5px}
+.unread-count{display:block;color:#ffb0d0;font-size:11px;font-weight:800;margin:5px 0}
+.profile-progress{display:flex;justify-content:space-between;align-items:center;gap:20px;border-radius:18px;padding:17px 21px;margin:0 0 21px;max-width:780px;background:linear-gradient(108deg,#4d235b,#271b39);border:1px solid #ff80b844}
+.profile-progress strong{font-size:17px}
+.profile-progress p{font-size:12px;color:#dfc3de;margin:6px 0 0}
+.progress-visual{min-width:108px;text-align:right;font-weight:900;color:#ffb8d6}
+.progress-track{width:108px;height:8px;border-radius:20px;background:#ffffff24;overflow:hidden;margin-top:9px}
+.progress-bar{width:0%;height:100%;background:linear-gradient(90deg,#ff6ba0,#ca88ee);transition:width .25s}
+.chat-actions{display:flex;gap:15px;justify-content:flex-end;padding:4px 16px;border-bottom:1px solid var(--line)}
+.chat-actions .text-btn{font-size:12px}
+.icebreakers{display:flex;flex-wrap:wrap;gap:7px;padding:10px 14px;border-top:1px solid var(--line);align-items:center}
+.icebreakers span{font-size:12px;color:#c7afcc}
+.icebreakers button{font-size:11px;background:#ffffff15;color:#fff6fb;border:1px solid #ffffff27;padding:8px 11px;border-radius:999px}
+.icebreakers button:hover{background:#f56ba03a}
+@media(max-width:600px){.profile-progress{align-items:flex-start}.progress-visual,.progress-track{min-width:76px;width:76px}.icebreakers{padding:9px}.icebreakers button{font-size:10px}.unread-count{font-size:10px}}
