@@ -20,10 +20,10 @@ function authTab(which){
  $('#password').autocomplete=which==='register'?'new-password':'current-password';$('#auth-error').textContent='';
 }
 async function enter(u){
- state.user=u;$('#welcome').classList.add('hidden');$('#app').classList.remove('hidden');drawMe();updateUnread();updateReceivedBadge();
+ state.user=u;$('#welcome').classList.add('hidden');$('#app').classList.remove('hidden');$('#bottom-nav').classList.remove('hidden');drawMe();updateUnread();updateReceivedBadge();
  navigate('discover');
 }
-function leave(){state.user=null;state.conversation=null;document.title='CRUSHCAST — Les rencontres autrement';$('#app').classList.add('hidden');$('#welcome').classList.remove('hidden');$('#auth-form').reset();authTab('register')}
+function leave(){state.user=null;state.conversation=null;document.title='CRUSHCAST — Les rencontres autrement';$('#app').classList.add('hidden');$('#bottom-nav').classList.add('hidden');$('#welcome').classList.remove('hidden');$('#match-modal').classList.add('hidden');$('#report-modal').classList.add('hidden');reportTarget=null;$('#auth-form').reset();authTab('register')}
 function profileMeter(u){
  const tasks=[
  {done:(u.bio||'').trim().length>=20,tip:'Écris au moins deux phrases pour te présenter'},
@@ -41,12 +41,18 @@ function profileMeter(u){
 }
 async function updateUnread(){
  if(!state.user)return;
- try{const d=await api('unread');const el=$('#unread-pill');el.textContent=d.total>99?'99+':String(d.total);el.classList.toggle('hidden',!d.total);document.title=d.total?'('+d.total+') CRUSHCAST — Rencontres':'CRUSHCAST — Les rencontres autrement';}catch{}
+ try{const d=await api('unread');const el=$('#unread-pill');el.textContent=d.total>99?'99+':String(d.total);el.classList.toggle('hidden',!d.total);document.querySelectorAll('#bottom-nav [data-page="messages"]').forEach(b=>b.classList.toggle('has-notification',d.total>0));document.title=d.total?'('+d.total+') CRUSHCAST — Rencontres':'CRUSHCAST — Les rencontres autrement';}catch{}
+}
+function updateOnboarding(){
+ const banner=$('#onboarding-banner');
+ if(!state.user){banner.classList.add('hidden');return}
+ const u=state.user;
+ banner.classList.toggle('hidden',(u.bio||'').trim().length>=20&&(u.interests||'').trim().length>=3);
 }
 function drawMe(){
  const u=state.user;$('#miniuser').innerHTML='<span class="avatar">'+esc(u.avatar)+'</span><span><b>'+esc(u.name)+'</b><br><small>'+esc(u.city)+'</small></span>';
  $('#p-name').value=u.name;$('#p-city').value=u.city;$('#p-bio').value=u.bio||'';$('#p-interests').value=u.interests||'';
- $('#p-avatar').value=u.avatar||'💜';$('#p-intent').value=u.intent||'Rencontrer quelqu’un';$('#p-paused').checked=!!u.paused;$('#p-shared').checked=!!u.shared;$('#p-prompt').value=u.prompt||'';$('#p-answer').value=u.answer||'';profileMeter(u);
+ $('#quick-profile').textContent=u.avatar||'💜';$('#p-avatar').value=u.avatar||'💜';$('#p-intent').value=u.intent||'Rencontrer quelqu’un';$('#p-paused').checked=!!u.paused;$('#p-shared').checked=!!u.shared;$('#p-prompt').value=u.prompt||'';$('#p-answer').value=u.answer||'';profileMeter(u);updateOnboarding();
 }
 function navigate(page){
  if(state.page==='casting'&&page!=='casting')stopCasting();
@@ -54,6 +60,7 @@ function navigate(page){
  document.querySelectorAll('.page').forEach(e=>e.classList.toggle('hidden',e.id!=='page-'+page));
  document.querySelectorAll('[data-page]').forEach(e=>e.classList.toggle('active',e.dataset.page===page));
  $('#page-title').textContent={discover:'À découvrir',favorites:'Tes favoris',received:'Qui m’a liké',casting:'Ton casting vidéo',matches:'Tes matchs',messages:'Vos conversations',profile:'Ton profil',safety:'Confidentialité'}[page];
+ $('#page-subtitle').textContent={discover:'Les meilleures histoires commencent par un bonjour.',favorites:'Les personnalités qui ont attiré ton attention.',received:'Un like reçu, un premier pas vers une rencontre.',casting:'15 secondes pour te présenter, à ta manière.',matches:'Ce feeling partagé mérite une vraie conversation.',messages:'Les échanges qui comptent commencent ici.',profile:'Fais découvrir ce qui te rend unique.',safety:'Des rencontres où tu gardes le contrôle.'}[page];
  if(page==='discover')discover();if(page==='favorites')favorites();if(page==='received')receivedLikes();if(page==='safety')myReports();if(page==='matches')matches();if(page==='messages')chatPage();if(page==='messages'||page==='matches')updateUnread();if(page==='profile'){drawMe();blockedList();profileStats()}
 }
 function empty(icon,title,description){
@@ -95,7 +102,7 @@ async function profileStats(){
  catch{$('#profile-stats').textContent='Statistiques indisponibles pour le moment.'}
 }
 async function like(target){
- try{const d=await api('like','POST',{id:target});flash(d.matched?'C’est un match ! Vous pouvez discuter. 💖':'Like envoyé ♡');updateReceivedBadge();if(d.matched)navigate('matches');else if(state.page==='received')receivedLikes();else if(state.page==='favorites')favorites();else discover();}
+ try{const d=await api('like','POST',{id:target});flash(d.matched?'C’est un match ! Vous pouvez discuter. 💖':'Like envoyé ♡');updateReceivedBadge();if(d.matched){navigate('matches');showMatch()}else if(state.page==='received')receivedLikes();else if(state.page==='favorites')favorites();else discover();}
  catch(e){flash(e.message,true)}
 }
 async function matches(){
@@ -131,11 +138,47 @@ async function block(id){
  if(!confirm('Bloquer cette personne et supprimer un éventuel match ?'))return;
  try{await api('block','POST',{id});state.conversation=null;flash('Profil bloqué.');navigate(state.page)}catch(e){flash(e.message,true)}
 }
-async function report(id){
- const reason=prompt('Pourquoi signaler cette personne ? (harcèlement, faux profil, spam…)');
- if(!reason||!reason.trim())return;
- try{const d=await api('report','POST',{id,reason});flash((d.duplicate?'Signalement déjà enregistré. ':'Signalement enregistré. ')+'Il n’y a pas encore de modération humaine active ; bloque ce profil si nécessaire.',true);if(state.page==='safety')myReports()}catch(e){flash(e.message,true)}
+let reportTarget=null, reportPreviousFocus=null;
+function report(id){
+ if(!state.user)return;
+ reportTarget=id;
+ reportPreviousFocus=document.activeElement;
+ $('#report-form').reset();$('#report-error').textContent='';
+ $('#report-modal').classList.remove('hidden');
+ $('#report-reason').focus();
 }
+function closeReport(){
+ reportTarget=null;$('#report-modal').classList.add('hidden');
+ if(reportPreviousFocus?.isConnected)reportPreviousFocus.focus();
+ reportPreviousFocus=null;
+}
+$('#report-cancel').addEventListener('click',closeReport);
+$('#report-cancel-x').addEventListener('click',closeReport);
+$('#report-modal').addEventListener('click',e=>{if(e.target.id==='report-modal')closeReport()});
+$('#report-form').addEventListener('submit',async e=>{
+ e.preventDefault();if(!reportTarget)return;
+ const reason=$('#report-reason').value;
+ const details=$('#report-details').value.trim();
+ const fullReason=[reason,details].filter(Boolean).join(' — ').slice(0,250);
+ const submit=$('#report-form button[type="submit"]');submit.disabled=true;
+ try{
+  const d=await api('report','POST',{id:reportTarget,reason:fullReason});
+  closeReport();
+  flash((d.duplicate?'Signalement déjà enregistré. ':'Signalement enregistré. ')+'Aucun modérateur humain actif pour le moment : bloque ce profil si nécessaire.',true);
+  if(state.page==='safety')myReports();
+ }catch(ex){$('#report-error').textContent=ex.message}finally{submit.disabled=false}
+});
+document.addEventListener('keydown',e=>{
+ const modal=$('#report-modal');
+ if(modal.classList.contains('hidden'))return;
+ if(e.key==='Escape'){e.preventDefault();closeReport()}
+ if(e.key==='Tab'){
+  const focusable=[...modal.querySelectorAll('button:not([disabled]),select,textarea')];
+  const i=focusable.indexOf(document.activeElement);
+  if(!e.shiftKey&&i===focusable.length-1){e.preventDefault();focusable[0].focus()}
+  if(e.shiftKey&&(i===0||i===-1)){e.preventDefault();focusable[focusable.length-1].focus()}
+ }
+});
 
 
 async function updateReceivedBadge(){
@@ -144,7 +187,7 @@ async function updateReceivedBadge(){
   const {users}=await api('likes-received');
   const badge=$('#received-badge');
   badge.textContent=users.length>99?'99+':String(users.length);
-  badge.classList.toggle('hidden',!users.length);
+  badge.classList.toggle('hidden',!users.length);document.querySelectorAll('#bottom-nav [data-page="received"]').forEach(b=>b.classList.toggle('has-notification',users.length>0));
  }catch{}
 }
 async function receivedLikes(){
@@ -201,6 +244,59 @@ async function loadDateInvites(){
 async function respondDate(id,status){
  try{await api('date-invites/respond','POST',{id,status});flash('Réponse enregistrée');loadDateInvites()}catch(e){flash(e.message,true)}
 }
+
+
+let previousMatchFocus=null;
+function showMatch(){
+ previousMatchFocus=document.activeElement;
+ $('#match-modal').classList.remove('hidden');
+ $('#match-go').focus();
+}
+function closeMatch(){
+ $('#match-modal').classList.add('hidden');
+ if(previousMatchFocus?.isConnected)previousMatchFocus.focus();
+ previousMatchFocus=null;
+}
+$('#match-go').addEventListener('click',()=>{closeMatch();navigate('matches')});
+$('#match-close').addEventListener('click',closeMatch);
+$('#match-modal').addEventListener('click',e=>{if(e.target.id==='match-modal')closeMatch()});
+document.addEventListener('keydown',e=>{
+ const dialog=$('#match-modal');
+ if(dialog.classList.contains('hidden'))return;
+ if(e.key==='Escape'){e.preventDefault();closeMatch()}
+ if(e.key==='Tab'){
+  const items=[...dialog.querySelectorAll('button:not([disabled])')];
+  const current=items.indexOf(document.activeElement);
+  if(!e.shiftKey&&current===items.length-1){e.preventDefault();items[0].focus()}
+  if(e.shiftKey&&(current===0||current===-1)){e.preventDefault();items[items.length-1].focus()}
+ }
+});
+$('#hero-start').addEventListener('click',()=>{
+ authTab('register');
+ $('#join').scrollIntoView({behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth',block:'center'});
+ $('#email').focus({preventScroll:true});
+});
+$('#onboarding-profile').addEventListener('click',()=>navigate('profile'));
+$('#invite-friends').addEventListener('click',async()=>{
+ const message='Découvre CRUSHCAST, les rencontres gratuites entre adultes. C’est encore une bêta expérimentale : '+location.origin;
+ try{
+  if(navigator.share){await navigator.share({title:'CRUSHCAST — Rencontres gratuites',text:message,url:location.origin})}
+  else if(navigator.clipboard){await navigator.clipboard.writeText(message);flash('Lien de CRUSHCAST copié. Partage-le avec les personnes de ton choix.')}
+  else prompt('Copie le lien pour inviter des personnes :',location.origin);
+ }catch(e){if(e.name!=='AbortError')flash('Partage impossible pour le moment.',true)}
+});
+function updateNetwork(){
+ const offline=!navigator.onLine;
+ $('#network-status').classList.toggle('hidden',!offline);
+}
+window.addEventListener('online',updateNetwork);
+window.addEventListener('offline',updateNetwork);
+updateNetwork();
+$('#quick-profile').addEventListener('click',()=>navigate('profile'));
+$('#bottom-nav').addEventListener('click',e=>{
+ const btn=e.target.closest('[data-page]');
+ if(btn)navigate(btn.dataset.page);
+});
 
 $('#tab-register').addEventListener('click',()=>authTab('register'));
 $('#tab-login').addEventListener('click',()=>authTab('login'));

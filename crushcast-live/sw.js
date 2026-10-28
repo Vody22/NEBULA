@@ -1,5 +1,5 @@
 'use strict';
-const STATIC_CACHE='crushcast-v6-static';
+const STATIC_CACHE='crushcast-v8-static';
 const STATIC=['/','/app.css','/app.js','/icon.svg','/manifest.webmanifest'];
 self.addEventListener('install',e=>{
  e.waitUntil(caches.open(STATIC_CACHE).then(c=>c.addAll(STATIC)).then(()=>self.skipWaiting()));
