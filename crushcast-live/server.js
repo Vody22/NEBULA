@@ -43,7 +43,7 @@ function rate(k,max,period){const t=now(),b=limits.get(k)||{n:0,until:0};if(b.un
 setInterval(()=>{for(const [k,b]of limits)if(b.until<now())limits.delete(k);db.prepare('DELETE FROM sessions WHERE expires<?').run(now())},60000).unref();
 const str=(v,n=180)=>typeof v==='string'?v.trim().slice(0,n):'';
 function respond(res,status,data,type='application/json; charset=utf-8'){
- res.writeHead(status,{'Content-Type':type,'Cache-Control':'no-store','X-Frame-Options':'DENY','X-Content-Type-Options':'nosniff','Referrer-Policy':'strict-origin-when-cross-origin','Strict-Transport-Security':'max-age=31536000','Content-Security-Policy':"default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"});
+ res.writeHead(status,{'Content-Type':type,'Cache-Control':'no-store','X-Frame-Options':'DENY','X-Content-Type-Options':'nosniff','Referrer-Policy':'strict-origin-when-cross-origin','Strict-Transport-Security':'max-age=31536000','Content-Security-Policy':"default-src 'self'; img-src 'self' data:; media-src 'self' blob:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"});
  res.end(typeof data==='string'?data:JSON.stringify(data));
 }
 const err=(r,c,m)=>respond(r,c,{error:m});
