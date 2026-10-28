@@ -68,6 +68,7 @@ function safeHtml(t){return String(t??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<
  if(m==='GET'&&p==='/app.js')return respond(res,200,fs.readFileSync(path.join(ROOT,'app.js'),'utf8'),'application/javascript; charset=utf-8');
  if(m==='GET'&&p==='/manifest.webmanifest')return respond(res,200,fs.readFileSync(path.join(ROOT,'manifest.webmanifest'),'utf8'),'application/manifest+json; charset=utf-8');
  if(m==='GET'&&p==='/icon.svg')return respond(res,200,fs.readFileSync(path.join(ROOT,'icon.svg'),'utf8'),'image/svg+xml; charset=utf-8');
+ if(m==='GET'&&p==='/sw.js')return respond(res,200,fs.readFileSync(path.join(ROOT,'sw.js'),'utf8'),'application/javascript; charset=utf-8');
  if(m==='GET'&&p==='/health')return respond(res,200,{ok:true,version:'CRUSHCAST V6 beta',temporaryStorage:true});
  if(m==='GET'&&p==='/robots.txt')return respond(res,200,'User-agent: *\nDisallow: /api/\nDisallow: /p/\n','text/plain');
  if(m==='GET'&&p.startsWith('/p/')){
