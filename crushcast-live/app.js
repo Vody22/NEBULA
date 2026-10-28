@@ -23,7 +23,7 @@ async function enter(u){
  state.user=u;$('#welcome').classList.add('hidden');$('#app').classList.remove('hidden');$('#bottom-nav').classList.remove('hidden');drawMe();updateUnread();updateReceivedBadge();
  navigate('discover');
 }
-function leave(){state.user=null;state.conversation=null;document.title='CRUSHCAST — Les rencontres autrement';$('#app').classList.add('hidden');$('#bottom-nav').classList.add('hidden');$('#welcome').classList.remove('hidden');$('#match-modal').classList.add('hidden');$('#auth-form').reset();authTab('register')}
+function leave(){state.user=null;state.conversation=null;document.title='CRUSHCAST — Les rencontres autrement';$('#app').classList.add('hidden');$('#bottom-nav').classList.add('hidden');$('#welcome').classList.remove('hidden');$('#match-modal').classList.add('hidden');$('#report-modal').classList.add('hidden');reportTarget=null;$('#auth-form').reset();authTab('register')}
 function profileMeter(u){
  const tasks=[
  {done:(u.bio||'').trim().length>=20,tip:'Écris au moins deux phrases pour te présenter'},
@@ -138,11 +138,47 @@ async function block(id){
  if(!confirm('Bloquer cette personne et supprimer un éventuel match ?'))return;
  try{await api('block','POST',{id});state.conversation=null;flash('Profil bloqué.');navigate(state.page)}catch(e){flash(e.message,true)}
 }
-async function report(id){
- const reason=prompt('Pourquoi signaler cette personne ? (harcèlement, faux profil, spam…)');
- if(!reason||!reason.trim())return;
- try{const d=await api('report','POST',{id,reason});flash((d.duplicate?'Signalement déjà enregistré. ':'Signalement enregistré. ')+'Il n’y a pas encore de modération humaine active ; bloque ce profil si nécessaire.',true);if(state.page==='safety')myReports()}catch(e){flash(e.message,true)}
+let reportTarget=null, reportPreviousFocus=null;
+function report(id){
+ if(!state.user)return;
+ reportTarget=id;
+ reportPreviousFocus=document.activeElement;
+ $('#report-form').reset();$('#report-error').textContent='';
+ $('#report-modal').classList.remove('hidden');
+ $('#report-reason').focus();
 }
+function closeReport(){
+ reportTarget=null;$('#report-modal').classList.add('hidden');
+ if(reportPreviousFocus?.isConnected)reportPreviousFocus.focus();
+ reportPreviousFocus=null;
+}
+$('#report-cancel').addEventListener('click',closeReport);
+$('#report-cancel-x').addEventListener('click',closeReport);
+$('#report-modal').addEventListener('click',e=>{if(e.target.id==='report-modal')closeReport()});
+$('#report-form').addEventListener('submit',async e=>{
+ e.preventDefault();if(!reportTarget)return;
+ const reason=$('#report-reason').value;
+ const details=$('#report-details').value.trim();
+ const fullReason=[reason,details].filter(Boolean).join(' — ').slice(0,250);
+ const submit=$('#report-form button[type="submit"]');submit.disabled=true;
+ try{
+  const d=await api('report','POST',{id:reportTarget,reason:fullReason});
+  closeReport();
+  flash((d.duplicate?'Signalement déjà enregistré. ':'Signalement enregistré. ')+'Aucun modérateur humain actif pour le moment : bloque ce profil si nécessaire.',true);
+  if(state.page==='safety')myReports();
+ }catch(ex){$('#report-error').textContent=ex.message}finally{submit.disabled=false}
+});
+document.addEventListener('keydown',e=>{
+ const modal=$('#report-modal');
+ if(modal.classList.contains('hidden'))return;
+ if(e.key==='Escape'){e.preventDefault();closeReport()}
+ if(e.key==='Tab'){
+  const focusable=[...modal.querySelectorAll('button:not([disabled]),select,textarea')];
+  const i=focusable.indexOf(document.activeElement);
+  if(!e.shiftKey&&i===focusable.length-1){e.preventDefault();focusable[0].focus()}
+  if(e.shiftKey&&(i===0||i===-1)){e.preventDefault();focusable[focusable.length-1].focus()}
+ }
+});
 
 
 async function updateReceivedBadge(){
