@@ -1,0 +1,30 @@
+name: CRUSHCAST verification
+on:
+  push:
+    branches:
+      - crushcast-launch
+    paths:
+      - 'crushcast-live/**'
+      - '.github/workflows/crushcast-check.yml'
+  workflow_dispatch:
+jobs:
+  syntax-and-health:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Check server and browser scripts
+        run: |
+          node --check crushcast-live/server.js
+          node --check crushcast-live/app.js
+      - name: Start server and check health
+        run: |
+          PORT=33120 DATA_DIR=/tmp/crushcast-ci node crushcast-live/server.js > /tmp/crushcast-ci.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:33120/health; then break; fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:33120/health
+          curl --fail --silent http://127.0.0.1:33120/ | grep -q 'CRUSHCAST'
