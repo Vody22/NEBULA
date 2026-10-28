@@ -43,6 +43,12 @@
 <button data-page="messages" type="button"><span aria-hidden="true">✉</span><small>Messages</small></button>
 <button data-page="profile" type="button"><span aria-hidden="true">☻</span><small>Profil</small></button>
 </nav>
+<div id="report-modal" class="report-modal hidden" role="dialog" aria-modal="true" aria-labelledby="report-modal-title">
+ <div class="report-modal-content"><div class="report-modal-top"><div><span class="eyebrow">PROTÉGER LA COMMUNAUTÉ</span><h2 id="report-modal-title">Signaler un profil</h2></div><button id="report-cancel-x" class="report-x" type="button" aria-label="Fermer">✕</button></div>
+ <p class="report-intro">Décris ce qui s'est passé. Ton signalement sera enregistré mais <strong>il n'y a pas encore de modération humaine active.</strong> Bloque la personne si tu souhaites arrêter tout contact.</p>
+ <form id="report-form"><label>Motif du signalement<select id="report-reason" required><option value="">Choisir un motif</option><option>Harcèlement ou menaces</option><option>Faux profil ou usurpation</option><option>Contenu inapproprié</option><option>Spam ou publicité</option><option>Demande d'argent ou arnaque</option><option>Autre comportement inquiétant</option></select></label><label>Précisions facultatives<textarea id="report-details" rows="3" maxlength="170" placeholder="Décris brièvement les faits, sans information sensible."></textarea></label><p id="report-error" class="error" role="alert"></p><div class="report-actions"><button type="submit" class="primary-button">Envoyer le signalement</button><button type="button" id="report-cancel" class="soft-button">Annuler</button></div></form>
+ </div>
+</div>
 <div id="match-modal" class="match-modal hidden" role="dialog" aria-modal="true" aria-labelledby="match-title" aria-describedby="match-description">
  <div class="match-modal-content"><div class="match-sparkles" aria-hidden="true">✦ ♡ ✦</div><div class="match-big-heart" aria-hidden="true">♥</div><span class="eyebrow">LE FEELING EST RÉCIPROQUE</span><h2 id="match-title">C'est un match !</h2><p id="match-description">Vous vous êtes likés tous les deux. La suite de votre histoire vous appartient.</p><div class="match-modal-buttons"><button id="match-go" type="button" class="primary-button">Voir nos matchs ↗</button><button id="match-close" type="button" class="soft-button">Plus tard</button></div></div>
 </div>
