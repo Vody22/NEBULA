@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - crushcast-launch
+      - crushcast-v8
       - crushcast-v7
       - crushcast-v6
     paths:
@@ -21,6 +22,8 @@ jobs:
         run: |
           node --check crushcast-live/server.js
           node --check crushcast-live/app.js
+      - name: Check V8 interface bindings and mobile layout
+        run: node crushcast-live/tests/ui-contract.cjs
       - name: Verify real matching and safety API flow
         run: node crushcast-live/tests/smoke.cjs
       - name: Start server and check health
