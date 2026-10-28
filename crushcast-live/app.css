@@ -127,3 +127,29 @@
 :root[data-theme="light"] .casting-privacy{background:#f8eff7}
 @media(max-width:920px){.casting-layout{grid-template-columns:1fr}.casting-preview{width:min(100%,440px);max-height:500px;margin:0 auto}.casting-controls{width:100%}}
 @media(max-width:600px){.casting-intro{padding:18px}.casting-camera{font-size:45px}.casting-preview{max-height:460px}.casting-controls{padding:18px}.casting-counter>span{font-size:40px}}
+
+
+/* CRUSHCAST V7: incoming likes and safety area */
+.v7-heading{display:flex;justify-content:space-between;align-items:center;gap:25px;background:linear-gradient(110deg,#51245f,#2f203e);border:1px solid #ffffff2b;border-radius:21px;padding:24px 28px;margin-bottom:26px}
+.v7-heading h3{font-size:clamp(23px,3vw,33px);letter-spacing:-.04em;margin:0 0 8px}
+.v7-heading p{font-size:13px;line-height:1.8;max-width:650px;color:#e5c9df;margin:0}
+.v7-heading>span{font-size:50px}
+.safety-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.safety-panel{background:#21182e;border:1px solid #ffffff27;border-radius:20px;padding:24px;min-width:0}
+.safety-panel h3{font-size:20px;letter-spacing:-.03em;margin:0 0 12px}
+.safety-panel>p,.safety-advice p{color:#d1bad6;font-size:13px;line-height:1.8;margin:0 0 14px}
+.safety-panel strong{color:#ffb9d4}
+.safety-panel .report-list{border-top:1px solid #ffffff21;margin-top:18px;padding-top:16px}
+.report-entry{border:1px solid #ffffff23;background:#ffffff0b;border-radius:12px;padding:13px 15px;margin-bottom:10px}
+.report-entry strong{display:block}
+.report-entry small{font-size:11px;color:#f4adcc}
+.report-entry p{font-size:12px;line-height:1.7;color:#dcc9df;overflow-wrap:anywhere;margin:7px 0 0}
+.safety-advice{background:#ffffff0b;border-left:3px solid #ff73a6;border-radius:10px;padding:14px 16px;margin-top:24px}
+.safety-advice h4{margin:0 0 8px}
+.safety-advice p{margin:0}
+:root[data-theme="light"] .v7-heading{background:linear-gradient(110deg,#704a7b,#a66da0);color:white}
+:root[data-theme="light"] .safety-panel{background:#fff;color:#382741;border-color:#d7bfd7}
+:root[data-theme="light"] .safety-panel>p,:root[data-theme="light"] .safety-advice p,:root[data-theme="light"] .report-entry p{color:#66556e}
+:root[data-theme="light"] .safety-panel strong,:root[data-theme="light"] .report-entry small{color:#9a3571}
+:root[data-theme="light"] .safety-advice,:root[data-theme="light"] .report-entry{background:#faf3f8;border-color:#e4cfdf}
+@media(max-width:890px){.safety-grid{grid-template-columns:1fr}.v7-heading{padding:20px}.v7-heading>span{font-size:35px}}

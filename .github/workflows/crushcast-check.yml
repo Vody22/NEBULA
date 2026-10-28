@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - crushcast-launch
+      - crushcast-v7
       - crushcast-v6
     paths:
       - 'crushcast-live/**'
