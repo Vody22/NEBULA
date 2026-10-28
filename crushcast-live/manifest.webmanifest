@@ -1,0 +1,19 @@
+{
+  "name": "CRUSHCAST — Rencontres gratuites",
+  "short_name": "CRUSHCAST",
+  "description": "Bêta de rencontres gratuite réservée aux adultes",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#100d19",
+  "theme_color": "#171024",
+  "lang": "fr",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any",
+      "purpose": "any maskable"
+    }
+  ]
+}
