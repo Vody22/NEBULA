@@ -19,28 +19,49 @@ function authTab(which){
  $('#password').autocomplete=which==='register'?'new-password':'current-password';$('#auth-error').textContent='';
 }
 async function enter(u){
- state.user=u;$('#welcome').classList.add('hidden');$('#app').classList.remove('hidden');drawMe();
+ state.user=u;$('#welcome').classList.add('hidden');$('#app').classList.remove('hidden');drawMe();updateUnread();
  navigate('discover');
 }
-function leave(){state.user=null;state.conversation=null;$('#app').classList.add('hidden');$('#welcome').classList.remove('hidden');$('#auth-form').reset();authTab('register')}
+function leave(){state.user=null;state.conversation=null;document.title='CRUSHCAST — Les rencontres autrement';$('#app').classList.add('hidden');$('#welcome').classList.remove('hidden');$('#auth-form').reset();authTab('register')}
+function profileMeter(u){
+ const tasks=[
+ {done:(u.bio||'').trim().length>=20,tip:'Écris au moins deux phrases pour te présenter'},
+ {done:(u.interests||'').split(',').some(x=>x.trim()),tip:'Ajoute quelques passions'},
+ {done:u.intent!=='Rencontrer quelqu’un',tip:'Précise ce que tu recherches'},
+ {done:u.avatar!=='💜',tip:'Choisis ton avatar'},
+ {done:(u.city||'').trim().length>=2,tip:'Indique ta ville'}
+ ];
+ const complete=tasks.filter(t=>t.done).length;
+ $('#profile-pct').textContent=(complete*20)+'%';
+ $('#profile-bar').style.width=(complete*20)+'%';
+ $('#profile-advice').textContent=complete===5?'Ton profil est complet !':'Pour améliorer ton profil : '+tasks.find(t=>!t.done).tip+'.';
+}
+async function updateUnread(){
+ if(!state.user)return;
+ try{const d=await api('unread');const el=$('#unread-pill');el.textContent=d.total>99?'99+':String(d.total);el.classList.toggle('hidden',!d.total);document.title=d.total?'('+d.total+') CRUSHCAST — Rencontres':'CRUSHCAST — Les rencontres autrement';}catch{}
+}
 function drawMe(){
  const u=state.user;$('#miniuser').innerHTML='<span class="avatar">'+esc(u.avatar)+'</span><span><b>'+esc(u.name)+'</b><br><small>'+esc(u.city)+'</small></span>';
  $('#p-name').value=u.name;$('#p-city').value=u.city;$('#p-bio').value=u.bio||'';$('#p-interests').value=u.interests||'';
- $('#p-avatar').value=u.avatar||'💜';$('#p-intent').value=u.intent||'Rencontrer quelqu’un';$('#p-paused').checked=!!u.paused;$('#p-shared').checked=!!u.shared;
+ $('#p-avatar').value=u.avatar||'💜';$('#p-intent').value=u.intent||'Rencontrer quelqu’un';$('#p-paused').checked=!!u.paused;$('#p-shared').checked=!!u.shared;profileMeter(u);
 }
 function navigate(page){
  state.page=page;
  document.querySelectorAll('.page').forEach(e=>e.classList.toggle('hidden',e.id!=='page-'+page));
  document.querySelectorAll('[data-page]').forEach(e=>e.classList.toggle('active',e.dataset.page===page));
  $('#page-title').textContent={discover:'À découvrir',favorites:'Tes favoris',matches:'Tes matchs',messages:'Vos conversations',profile:'Ton profil'}[page];
- if(page==='discover')discover();if(page==='favorites')favorites();if(page==='matches')matches();if(page==='messages')chatPage();if(page==='profile'){drawMe();blockedList()}
+ if(page==='discover')discover();if(page==='favorites')favorites();if(page==='matches')matches();if(page==='messages')chatPage();if(page==='messages'||page==='matches')updateUnread();if(page==='profile'){drawMe();blockedList()}
 }
 function empty(icon,title,description){
  return '<div class="empty"><div class="empty-icon">'+icon+'</div><h3>'+esc(title)+'</h3><p>'+esc(description)+'</p></div>';
 }
 function tags(u){return String(u.interests||'').split(',').map(x=>x.trim()).filter(Boolean).slice(0,4).map(t=>'<span>'+esc(t)+'</span>').join('')}
+function compatibilityBadge(u){
+ const common=Array.isArray(u.commonInterests)?u.commonInterests.slice(0,4):[];
+ return common.length?'<div class="compatibility" title="Intérêts présents sur vos deux profils">✦ '+common.length+' point'+(common.length>1?'s':'')+' commun'+(common.length>1?'s':'')+' : '+common.map(esc).join(', ')+'</div>':'';
+}
 function personCard(u){
- return '<article class="person-card"><div class="person-cover"><span class="avatar">'+esc(u.avatar)+'</span></div><div class="person-content"><h3>'+esc(u.name)+', '+Number(u.age)+'</h3><div class="person-meta">⌁ '+esc(u.city)+' · '+esc(u.intent)+'</div><p>'+esc(u.bio||'Un nouveau visage à découvrir sur CRUSHCAST.')+'</p><div class="small-tags">'+tags(u)+'</div></div><div class="person-actions"><button data-like="'+esc(u.id)+'">♡ Liker</button><button class="minor" title="Favori" data-fav="'+esc(u.id)+'">☆</button><button class="minor" title="Passer" data-pass="'+esc(u.id)+'">→</button><button class="minor" title="Signaler" data-report="'+esc(u.id)+'">!</button><button class="minor" title="Bloquer" data-block="'+esc(u.id)+'">✕</button></div></article>';
+ return '<article class="person-card"><div class="person-cover"><span class="avatar">'+esc(u.avatar)+'</span></div><div class="person-content"><h3>'+esc(u.name)+', '+Number(u.age)+'</h3><div class="person-meta">⌁ '+esc(u.city)+' · '+esc(u.intent)+'</div><p>'+esc(u.bio||'Un nouveau visage à découvrir sur CRUSHCAST.')+'</p><div class="small-tags">'+tags(u)+'</div>'+compatibilityBadge(u)+'</div><div class="person-actions"><button data-like="'+esc(u.id)+'">♡ Liker</button><button class="minor" title="Favori" data-fav="'+esc(u.id)+'">☆</button><button class="minor" title="Passer" data-pass="'+esc(u.id)+'">→</button><button class="minor" title="Signaler" data-report="'+esc(u.id)+'">!</button><button class="minor" title="Bloquer" data-block="'+esc(u.id)+'">✕</button></div></article>';
 }
 async function discover(){
  const root=$('#discover-list');root.innerHTML=empty('♡','Recherche de profils…','');
@@ -57,13 +78,13 @@ async function matches(){
  const root=$('#matches-list');root.innerHTML=empty('♡','Chargement…','');
  try{
   const d=await api('matches');state.matches=d.matches;
-  root.innerHTML=d.matches.length?d.matches.map(m=>'<div class="match-row"><span class="avatar">'+esc(m.person.avatar)+'</span><div class="grow"><b>'+esc(m.person.name)+', '+m.person.age+'</b><small>'+esc(m.person.city)+'</small></div><button class="primary-button" data-chat="'+esc(m.id)+'">Discuter →</button><button class="soft-button" data-unmatch="'+esc(m.id)+'">Annuler</button><button class="soft-button" data-block="'+esc(m.person.id)+'">Bloquer</button></div>').join(''):empty('♡','Pas encore de match','Quand quelqu’un te like aussi, votre match apparaîtra ici.');
+  root.innerHTML=d.matches.length?d.matches.map(m=>'<div class="match-row"><span class="avatar">'+esc(m.person.avatar)+'</span><div class="grow"><b>'+esc(m.person.name)+', '+m.person.age+'</b><small>'+esc(m.person.city)+'</small>'+(m.unread?'<span class="unread-count">'+m.unread+' message'+(m.unread>1?'s':'')+' non lu'+(m.unread>1?'s':'')+'</span>':'')+compatibilityBadge(m.person)+'</div><button class="primary-button" data-chat="'+esc(m.id)+'">Discuter →</button><button class="soft-button" data-unmatch="'+esc(m.id)+'">Annuler</button><button class="soft-button" data-block="'+esc(m.person.id)+'">Bloquer</button></div>').join(''):empty('♡','Pas encore de match','Quand quelqu’un te like aussi, votre match apparaîtra ici.');
  }catch(e){root.innerHTML=empty('⚠','Erreur',e.message)}
 }
 async function chatPage(){
  try{state.matches=(await api('matches')).matches;const box=$('#chat-matches');
- box.innerHTML=state.matches.length?state.matches.map(m=>'<button data-chat="'+esc(m.id)+'" class="'+(state.conversation===m.id?'active':'')+'">♡ '+esc(m.person.name)+'</button>').join(''):'<p class="subhead">Aucun match pour le moment.</p>';
- if(state.conversation&&!state.matches.some(x=>x.id===state.conversation)){state.conversation=null;$('#chat-thread').innerHTML='';$('#chat-form').classList.add('hidden')}
+ box.innerHTML=state.matches.length?state.matches.map(m=>'<button data-chat="'+esc(m.id)+'" class="'+(state.conversation===m.id?'active':'')+'">♡ '+esc(m.person.name)+(m.unread?' <span class="unread-bubble">'+m.unread+'</span>':'')+'</button>').join(''):'<p class="subhead">Aucun match pour le moment.</p>';
+ if(state.conversation&&!state.matches.some(x=>x.id===state.conversation)){state.conversation=null;$('#chat-thread').innerHTML='';$('#chat-form').classList.add('hidden');$('#chat-actions').classList.add('hidden');$('#icebreakers').classList.add('hidden');$('#date-area').classList.add('hidden')}
  if(state.conversation){await conversation();await loadDateInvites();}
  }catch(e){flash(e.message,true)}
 }
@@ -73,13 +94,13 @@ async function selectChat(id){
 async function conversation(){
  const m=state.matches.find(x=>x.id===state.conversation);if(!m)return;
  $('#chat-heading').textContent='♥ Discussion avec '+m.person.name;
- $('#chat-form').classList.remove('hidden');$('#date-area').classList.remove('hidden');
+ $('#chat-form').classList.remove('hidden');$('#date-area').classList.remove('hidden');$('#chat-actions').classList.remove('hidden');$('#icebreakers').classList.remove('hidden');
  document.querySelectorAll('[data-chat]').forEach(x=>x.classList.toggle('active',x.dataset.chat===state.conversation));
  try{
   const {messages}=await api('messages?match='+encodeURIComponent(state.conversation));
   const thread=$('#chat-thread');const atEnd=thread.scrollHeight-thread.scrollTop-thread.clientHeight<55;
   thread.innerHTML=messages.length?messages.map(x=>'<div class="bubble '+(x.sender===state.user.id?'me':'')+'">'+esc(x.text)+'</div>').join(''):empty('✉','Dis bonjour !','La conversation commence ici.');
-  if(atEnd)thread.scrollTop=thread.scrollHeight;
+  if(atEnd)thread.scrollTop=thread.scrollHeight;updateUnread();
  }catch(e){flash(e.message,true)}
 }
 async function block(id){
@@ -153,6 +174,17 @@ document.addEventListener('click',e=>{
  if(b.dataset.report)report(b.dataset.report);
  if(b.dataset.chat)selectChat(b.dataset.chat);
 });
+
+$('#report-chat').addEventListener('click',()=>{
+ const m=state.matches.find(x=>x.id===state.conversation);if(m)report(m.person.id)
+});
+$('#block-chat').addEventListener('click',()=>{
+ const m=state.matches.find(x=>x.id===state.conversation);if(m)block(m.person.id)
+});
+document.querySelectorAll('[data-icebreaker]').forEach(btn=>btn.addEventListener('click',()=>{
+ if(!state.conversation)return;$('#chat-input').value=btn.dataset.icebreaker;$('#chat-input').focus();
+}));
+
 $('#refresh').addEventListener('click',()=>navigate(state.page));
 $('#logout').addEventListener('click',async()=>{await api('logout','POST').catch(()=>{});leave()});
 $('#profile-form').addEventListener('submit',async e=>{
@@ -194,5 +226,5 @@ $('#delete').addEventListener('click',async()=>{
  if(!confirm('Confirmer la suppression définitive ?'))return;
  try{await api('delete','DELETE');leave()}catch(e){flash(e.message,true)}
 });
-setInterval(()=>{if(state.user&&state.page==='messages'&&state.conversation)conversation()},7000);
+setInterval(()=>{if(!state.user||document.visibilityState==='hidden')return;if(state.page==='messages'&&state.conversation)conversation();updateUnread()},12000);
 (async()=>{try{const d=await api('me');enter(d.user)}catch{leave()}})();
