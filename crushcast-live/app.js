@@ -1,7 +1,7 @@
 'use strict';
 const $=s=>document.querySelector(s);
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const state={user:null,tab:'register',page:'discover',matches:[],conversation:null};
+const state={user:null,tab:'register',page:'discover',matches:[],conversation:null,mode:'deck',discovered:[]};
 async function api(route,method='GET',data){
  const r=await fetch('/api/'+route,{method,credentials:'same-origin',headers:{...(data?{'Content-Type':'application/json'}:{})},body:data?JSON.stringify(data):undefined});
  const d=await r.json().catch(()=>({error:'Réponse inconnue'}));if(!r.ok)throw Error(d.error||'Erreur réseau');return d;
@@ -29,11 +29,13 @@ function profileMeter(u){
  {done:(u.interests||'').split(',').some(x=>x.trim()),tip:'Ajoute quelques passions'},
  {done:u.intent!=='Rencontrer quelqu’un',tip:'Précise ce que tu recherches'},
  {done:u.avatar!=='💜',tip:'Choisis ton avatar'},
- {done:(u.city||'').trim().length>=2,tip:'Indique ta ville'}
+ {done:(u.city||'').trim().length>=2,tip:'Indique ta ville'},
+ {done:(u.answer||'').trim().length>=10,tip:'Réponds à une question de personnalité'}
  ];
  const complete=tasks.filter(t=>t.done).length;
- $('#profile-pct').textContent=(complete*20)+'%';
- $('#profile-bar').style.width=(complete*20)+'%';
+ const percent=Math.round((complete/tasks.length)*100);
+ $('#profile-pct').textContent=percent+'%';
+ $('#profile-bar').style.width=percent+'%';
  $('#profile-advice').textContent=complete===5?'Ton profil est complet !':'Pour améliorer ton profil : '+tasks.find(t=>!t.done).tip+'.';
 }
 async function updateUnread(){
@@ -43,14 +45,14 @@ async function updateUnread(){
 function drawMe(){
  const u=state.user;$('#miniuser').innerHTML='<span class="avatar">'+esc(u.avatar)+'</span><span><b>'+esc(u.name)+'</b><br><small>'+esc(u.city)+'</small></span>';
  $('#p-name').value=u.name;$('#p-city').value=u.city;$('#p-bio').value=u.bio||'';$('#p-interests').value=u.interests||'';
- $('#p-avatar').value=u.avatar||'💜';$('#p-intent').value=u.intent||'Rencontrer quelqu’un';$('#p-paused').checked=!!u.paused;$('#p-shared').checked=!!u.shared;profileMeter(u);
+ $('#p-avatar').value=u.avatar||'💜';$('#p-intent').value=u.intent||'Rencontrer quelqu’un';$('#p-paused').checked=!!u.paused;$('#p-shared').checked=!!u.shared;$('#p-prompt').value=u.prompt||'';$('#p-answer').value=u.answer||'';profileMeter(u);
 }
 function navigate(page){
  state.page=page;
  document.querySelectorAll('.page').forEach(e=>e.classList.toggle('hidden',e.id!=='page-'+page));
  document.querySelectorAll('[data-page]').forEach(e=>e.classList.toggle('active',e.dataset.page===page));
  $('#page-title').textContent={discover:'À découvrir',favorites:'Tes favoris',matches:'Tes matchs',messages:'Vos conversations',profile:'Ton profil'}[page];
- if(page==='discover')discover();if(page==='favorites')favorites();if(page==='matches')matches();if(page==='messages')chatPage();if(page==='messages'||page==='matches')updateUnread();if(page==='profile'){drawMe();blockedList()}
+ if(page==='discover')discover();if(page==='favorites')favorites();if(page==='matches')matches();if(page==='messages')chatPage();if(page==='messages'||page==='matches')updateUnread();if(page==='profile'){drawMe();blockedList();profileStats()}
 }
 function empty(icon,title,description){
  return '<div class="empty"><div class="empty-icon">'+icon+'</div><h3>'+esc(title)+'</h3><p>'+esc(description)+'</p></div>';
@@ -60,15 +62,35 @@ function compatibilityBadge(u){
  const common=Array.isArray(u.commonInterests)?u.commonInterests.slice(0,4):[];
  return common.length?'<div class="compatibility" title="Intérêts présents sur vos deux profils">✦ '+common.length+' point'+(common.length>1?'s':'')+' commun'+(common.length>1?'s':'')+' : '+common.map(esc).join(', ')+'</div>':'';
 }
+function questionPreview(u){
+ if(!u.prompt||!u.answer)return '';
+ return '<div class="question-preview"><small>'+esc(u.prompt)+'</small><strong>“'+esc(u.answer)+'”</strong></div>';
+}
 function personCard(u){
- return '<article class="person-card"><div class="person-cover"><span class="avatar">'+esc(u.avatar)+'</span></div><div class="person-content"><h3>'+esc(u.name)+', '+Number(u.age)+'</h3><div class="person-meta">⌁ '+esc(u.city)+' · '+esc(u.intent)+'</div><p>'+esc(u.bio||'Un nouveau visage à découvrir sur CRUSHCAST.')+'</p><div class="small-tags">'+tags(u)+'</div>'+compatibilityBadge(u)+'</div><div class="person-actions"><button data-like="'+esc(u.id)+'">♡ Liker</button><button class="minor" title="Favori" data-fav="'+esc(u.id)+'">☆</button><button class="minor" title="Passer" data-pass="'+esc(u.id)+'">→</button><button class="minor" title="Signaler" data-report="'+esc(u.id)+'">!</button><button class="minor" title="Bloquer" data-block="'+esc(u.id)+'">✕</button></div></article>';
+ return '<article class="person-card"><div class="person-cover"><span class="avatar">'+esc(u.avatar)+'</span></div><div class="person-content"><h3>'+esc(u.name)+', '+Number(u.age)+'</h3><div class="person-meta">⌁ '+esc(u.city)+' · '+esc(u.intent)+'</div><p>'+esc(u.bio||'Un nouveau visage à découvrir sur CRUSHCAST.')+'</p><div class="small-tags">'+tags(u)+'</div>'+compatibilityBadge(u)+questionPreview(u)+'</div><div class="person-actions"><button data-like="'+esc(u.id)+'">♡ Liker</button><button class="minor" title="Favori" data-fav="'+esc(u.id)+'">☆</button><button class="minor" title="Passer" data-pass="'+esc(u.id)+'">→</button><button class="minor" title="Signaler" data-report="'+esc(u.id)+'">!</button><button class="minor" title="Bloquer" data-block="'+esc(u.id)+'">✕</button></div></article>';
+}
+function renderDiscovery(){
+ const root=$('#discover-list'),users=state.discovered;
+ const deck=state.mode==='deck';
+ $('#view-deck').classList.toggle('active',deck);$('#view-grid').classList.toggle('active',!deck);
+ root.classList.toggle('deck',deck);root.classList.toggle('grid-mode',!deck);
+ $('#swipe-hint').classList.toggle('hidden',!deck);
+ $('#deck-progress').textContent=users.length?users.length+' profil'+(users.length>1?'s':'')+' à découvrir':'Aucun profil restant';
+ if(!users.length){root.innerHTML=empty('✦','De nouvelles rencontres arrivent','Il n’y a pas de profil disponible pour ces critères. Essaie une autre ville ou vérifie plus tard.');return}
+ root.innerHTML=deck?'<div class="deck-wrap"><div class="deck-ghost" aria-hidden="true"></div>'+personCard(users[0])+'</div>':users.map(personCard).join('');
 }
 async function discover(){
  const root=$('#discover-list');root.innerHTML=empty('♡','Recherche de profils…','');
  try{
-  const query=new URLSearchParams({city:$('#f-city').value,interest:$('#f-interest').value,minAge:$('#f-min').value,maxAge:$('#f-max').value});const {users}=await api('discover?'+query.toString());
-  root.innerHTML=users.length?users.map(personCard).join(''):empty('✦','Encore un peu de patience','Aucun autre profil réel disponible pour le moment. Invite une connaissance à essayer CRUSHCAST gratuitement.');
+  const query=new URLSearchParams({city:$('#f-city').value,interest:$('#f-interest').value,minAge:$('#f-min').value,maxAge:$('#f-max').value});const d=await api('discover?'+query.toString());
+  state.discovered=d.users;renderDiscovery();
  }catch(e){root.innerHTML=empty('⚠','Impossible de charger les profils',e.message)}
+}
+async function profileStats(){
+ try{const d=await api('insights');$('#profile-stats').innerHTML=[
+  ['♡',d.matches,'Matchs'],['✦',d.likes,'Likes envoyés'],['☆',d.favorites,'Favoris']
+ ].map(([icon,n,label])=>'<div class="stat"><b>'+icon+' '+Number(n)+'</b><span>'+esc(label)+'</span></div>').join('')}
+ catch{$('#profile-stats').textContent='Statistiques indisponibles pour le moment.'}
 }
 async function like(target){
  try{const d=await api('like','POST',{id:target});flash(d.matched?'C’est un match ! Vous pouvez discuter. 💖':'Like envoyé ♡');discover();}
@@ -157,7 +179,7 @@ $('#auth-form').addEventListener('submit',async e=>{
  e.preventDefault();const btn=$('#submit-auth'),error=$('#auth-error');btn.disabled=true;error.textContent='';
  try{
   const data={email:$('#email').value,password:$('#password').value};
-  if(state.tab==='register')Object.assign(data,{name:$('#name').value,birth:$('#birth').value,city:$('#city').value});
+  if(state.tab==='register'){if(!$('#accept-terms').checked)throw Error('Confirme ta majorité et accepte les conditions de la bêta.');Object.assign(data,{name:$('#name').value,birth:$('#birth').value,city:$('#city').value,acceptTerms:true});}
   const d=await api(state.tab==='register'?'register':'login','POST',data);enter(d.user);
  }catch(ex){error.textContent=ex.message}finally{btn.disabled=false}
 });
@@ -190,7 +212,7 @@ $('#logout').addEventListener('click',async()=>{await api('logout','POST').catch
 $('#profile-form').addEventListener('submit',async e=>{
  e.preventDefault();
  try{
-  const d=await api('profile','PUT',{name:$('#p-name').value,city:$('#p-city').value,avatar:$('#p-avatar').value,intent:$('#p-intent').value,bio:$('#p-bio').value,interests:$('#p-interests').value,paused:$('#p-paused').checked,shared:$('#p-shared').checked});
+  const d=await api('profile','PUT',{name:$('#p-name').value,city:$('#p-city').value,avatar:$('#p-avatar').value,intent:$('#p-intent').value,bio:$('#p-bio').value,interests:$('#p-interests').value,prompt:$('#p-prompt').value,answer:$('#p-answer').value,paused:$('#p-paused').checked,shared:$('#p-shared').checked});
   state.user=d.user;drawMe();flash('Profil enregistré !');
  }catch(ex){flash(ex.message,true)}
 });
@@ -226,5 +248,57 @@ $('#delete').addEventListener('click',async()=>{
  if(!confirm('Confirmer la suppression définitive ?'))return;
  try{await api('delete','DELETE');leave()}catch(e){flash(e.message,true)}
 });
+
+/* Swipe is an alternative to the accessible Like / Pass buttons. */
+$('#view-deck').addEventListener('click',()=>{state.mode='deck';renderDiscovery()});
+$('#view-grid').addEventListener('click',()=>{state.mode='grid';renderDiscovery()});
+(()=>{
+ const root=$('#discover-list');let gesture=null;
+ root.addEventListener('pointerdown',e=>{
+  if(state.page!=='discover'||state.mode!=='deck'||e.target.closest('button,a,input,select'))return;
+  const card=e.target.closest('.person-card');if(!card)return;
+  gesture={id:e.pointerId,x:e.clientX,y:e.clientY,card};
+  card.setPointerCapture?.(e.pointerId);
+ });
+ root.addEventListener('pointermove',e=>{
+  if(!gesture||e.pointerId!==gesture.id)return;
+  const dx=e.clientX-gesture.x,dy=e.clientY-gesture.y;
+  if(Math.abs(dx)<5&&Math.abs(dy)<5)return;
+  gesture.card.style.transform='translateX('+Math.max(-140,Math.min(140,dx))+'px) rotate('+(dx/25)+'deg)';
+  gesture.card.style.opacity=String(Math.max(.65,1-Math.abs(dx)/350));
+ });
+ root.addEventListener('pointerup',e=>{
+  if(!gesture||e.pointerId!==gesture.id)return;
+  const dx=e.clientX-gesture.x,dy=e.clientY-gesture.y;
+  const active=state.discovered[0];gesture.card.style.transform='';gesture.card.style.opacity='';
+  gesture=null;
+  if(!active||Math.abs(dx)<85||Math.abs(dy)>Math.abs(dx)*1.15)return;
+  if(dx>0)like(active.id);else pass(active.id);
+ });
+ root.addEventListener('pointercancel',()=>{if(gesture){gesture.card.style.transform='';gesture.card.style.opacity='';gesture=null}});
+ document.addEventListener('keydown',e=>{
+  if(state.page!=='discover'||state.mode!=='deck'||!state.user||!state.discovered.length||e.altKey||e.ctrlKey||e.metaKey)return;
+  if(e.target.closest('input,textarea,select,[contenteditable="true"]'))return;
+  if(e.key==='ArrowRight'){e.preventDefault();like(state.discovered[0].id)}
+  if(e.key==='ArrowLeft'){e.preventDefault();pass(state.discovered[0].id)}
+ });
+})();
+const themeKey='cc-theme';
+try{if(localStorage.getItem(themeKey)==='light')document.documentElement.dataset.theme='light'}catch{}
+function updateThemeLabel(){$('#theme-toggle').textContent=document.documentElement.dataset.theme==='light'?'☾':'☀'}
+$('#theme-toggle').addEventListener('click',()=>{
+ const next=document.documentElement.dataset.theme==='light'?'dark':'light';
+ document.documentElement.dataset.theme=next;updateThemeLabel();
+ try{localStorage.setItem(themeKey,next)}catch{}
+});
+updateThemeLabel();
+let installEvent=null;
+window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvent=e;$('#install-app').classList.remove('hidden')});
+$('#install-app').addEventListener('click',async()=>{
+ if(!installEvent)return;
+ installEvent.prompt();await installEvent.userChoice;installEvent=null;$('#install-app').classList.add('hidden');
+});
+if('serviceWorker' in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('/sw.js').catch(()=>{}));
+
 setInterval(()=>{if(!state.user||document.visibilityState==='hidden')return;if(state.page==='messages'&&state.conversation)conversation();updateUnread()},12000);
 (async()=>{try{const d=await api('me');enter(d.user)}catch{leave()}})();
